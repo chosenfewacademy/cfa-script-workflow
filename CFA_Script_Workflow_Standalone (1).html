@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>CFA Script Workflow</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0c0c0e;--surface:#131316;--surface2:#1c1c21;--border:#2a2a32;--accent:#f59e0b;--accent2:#fb923c;--text:#e8e8f0;--muted:#6b7280;--success:#34d399;--error:#f87171;--review:#6366f1;--radius:14px}
+html,body{height:100%;overflow:hidden}
+body{font-family:'Syne',sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:14px;padding:0 24px;height:58px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;z-index:10}
+.logo{width:34px;height:34px;border-radius:8px;flex-shrink:0;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#000}
+.app-title{font-size:14px;font-weight:700}
+.app-sub{font-size:11px;color:var(--muted);font-family:'DM Mono',monospace}
+.pills{display:flex;align-items:center;gap:6px;margin-left:auto}
+.pill{display:flex;align-items:center;gap:6px;padding:4px 10px 4px 6px;border-radius:20px;border:1px solid var(--border);font-size:11px;font-weight:600;color:var(--muted);font-family:'DM Mono',monospace;transition:all .25s;white-space:nowrap}
+.pdot{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;background:var(--border);color:var(--muted);flex-shrink:0;transition:all .25s}
+.pill.pa{border-color:var(--accent);background:rgba(245,158,11,.08);color:var(--accent)}
+.pill.pa .pdot{background:var(--accent);color:#000}
+.pill.pr3{border-color:var(--review);background:rgba(99,102,241,.08);color:var(--review)}
+.pill.pr3 .pdot{background:var(--review);color:#fff}
+.pill.pd{border-color:var(--success);background:rgba(52,211,153,.06);color:var(--success)}
+.pill.pd .pdot{background:var(--success);color:#000}
+.psep{width:14px;height:1px;background:var(--border);flex-shrink:0}
+.rbtn{margin-left:12px;background:none;border:1px solid var(--border);color:var(--muted);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer;padding:5px 10px;border-radius:6px;transition:all .2s;white-space:nowrap}
+.rbtn:hover{color:var(--text);border-color:var(--muted)}
+.screens{flex:1;position:relative;overflow:hidden}
+.screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:28px 24px 40px;display:flex;flex-direction:column;transition:transform .38s cubic-bezier(.4,0,.2,1),opacity .38s ease;will-change:transform,opacity}
+.screen.hl{transform:translateX(-100%);opacity:0;pointer-events:none}
+.screen.hr{transform:translateX(100%);opacity:0;pointer-events:none}
+.screen.vis{transform:translateX(0);opacity:1}
+.screen::-webkit-scrollbar{width:5px}
+.screen::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:14px}
+.ch{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--border);background:var(--surface2)}
+.ct{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.cb{padding:18px}
+.sh{margin-bottom:22px}
+.sh h2{font-size:22px;font-weight:800;line-height:1.15;margin-bottom:6px}
+.sh p{font-size:13px;color:var(--muted);line-height:1.6}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 24px;border-radius:10px;font-family:'Syne',sans-serif;font-size:13px;font-weight:700;cursor:pointer;border:none;transition:all .2s;letter-spacing:.02em}
+.bprim{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000;box-shadow:0 4px 16px rgba(245,158,11,.25)}
+.bprim:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 22px rgba(245,158,11,.4)}
+.bprim:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.brev{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;box-shadow:0 4px 14px rgba(99,102,241,.3)}
+.brev:hover:not(:disabled){transform:translateY(-1px)}
+.brev:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.bsec{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+.bsec:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.bsec:disabled{opacity:.4;cursor:not-allowed}
+.bgh{background:transparent;color:var(--muted);border:1px solid var(--border);font-size:12px;padding:10px 18px}
+.bgh:hover:not(:disabled){color:var(--text);border-color:var(--muted)}
+.bnot{background:#fff;color:#000}
+.bnot:hover:not(:disabled){background:#f0f0f0;transform:translateY(-1px)}
+.bnot:disabled{opacity:.4;cursor:not-allowed}
+.brow{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:18px}
+.fl{margin-bottom:14px}
+.fl label{display:block;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+.dg{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.inp{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:10px 14px;outline:none;transition:border-color .2s}
+.inp:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(245,158,11,.1)}
+.inp.key-ok{border-color:var(--success)}
+.inp.key-err{border-color:var(--error)}
+select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;padding:10px 14px;outline:none;-webkit-appearance:none;cursor:pointer;transition:border-color .2s}
+select:focus{border-color:var(--accent)}
+select option{background:var(--surface2)}
+.aw{background:var(--bg);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px}
+.cr{border-bottom:1px solid var(--border)}
+.cr:last-child{border-bottom:none}
+.cb2{width:100%;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:transparent;border:none;cursor:pointer;transition:background .15s;text-align:left}
+.cb2:hover{background:rgba(255,255,255,.03)}
+.cb2.open{background:rgba(245,158,11,.04)}
+.cl2{display:flex;align-items:center;gap:9px}
+.cn2{font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:var(--accent);background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);padding:2px 6px;border-radius:3px;white-space:nowrap}
+.cnm{font-size:13px;font-weight:700;color:var(--text)}
+.cct{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)}
+.car{font-size:10px;color:var(--muted);transition:transform .2s;flex-shrink:0}
+.cb2.open .car{transform:rotate(180deg);color:var(--accent)}
+.vl{display:none}
+.vl.open{display:block}
+.vo{display:flex;align-items:center;gap:10px;padding:9px 14px 9px 18px;cursor:pointer;transition:background .15s;border-top:1px solid var(--border)}
+.vo:hover{background:rgba(255,255,255,.025)}
+.vo.sel{background:rgba(245,158,11,.06)}
+.vnn{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);flex-shrink:0;min-width:20px}
+.vtx{font-size:12px;color:var(--text);line-height:1.4;font-weight:500;flex:1}
+.vo.sel .vtx{color:var(--accent);font-weight:600}
+.vck{color:var(--accent);font-size:12px;flex-shrink:0;opacity:0;transition:opacity .15s}
+.vo.sel .vck{opacity:1}
+.selb{display:none;padding:10px 14px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.22);border-radius:8px;margin-bottom:12px;align-items:flex-start;gap:10px}
+.selb.show{display:flex}
+.sll{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);flex-shrink:0;margin-top:2px}
+.slv{font-size:13px;color:var(--text);font-weight:600;line-height:1.4}
+.plb{background:rgba(245,158,11,.04);border:1px solid rgba(245,158,11,.18);border-radius:10px;padding:14px;margin-bottom:14px;display:none}
+.plb.show{display:block}
+.pll{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:10px}
+.plt{font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px;line-height:1.4}
+.bgr{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.bti{background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:9px 11px}
+.btl{font-family:'DM Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}
+.btl.ov{color:#f87171}.btl.cl{color:#60a5fa}.btl.ca{color:#34d399}.btl.st{color:var(--accent)}
+.btt{font-size:11px;color:var(--muted);line-height:1.5}
+/* STREAMING screen */
+.lc{flex:1;display:flex;flex-direction:column;align-items:center;padding:32px 0 20px}
+.spw{position:relative;width:72px;height:72px;margin-bottom:22px}
+.spo,.spi{position:absolute;border-radius:50%;border:3px solid transparent}
+.spo{inset:0;border-top-color:var(--accent);border-right-color:var(--accent2);animation:spn 1.1s linear infinite}
+.spi{inset:10px;border:2px solid transparent;border-bottom-color:rgba(245,158,11,.35);animation:spn 2.2s linear infinite reverse}
+.spe{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:26px}
+@keyframes spn{to{transform:rotate(360deg)}}
+.ltl{font-size:18px;font-weight:800;color:var(--text);margin-bottom:6px;text-align:center}
+.lsb{font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);padding:5px 16px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:20px;margin-bottom:20px;display:inline-block;text-align:center}
+/* live token stream display */
+.stream-box{width:100%;max-width:680px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;font-family:'DM Mono',monospace;font-size:12px;font-weight:300;color:var(--text);line-height:1.85;min-height:160px;white-space:pre-wrap;word-break:break-word;overflow-y:auto;max-height:340px;margin-bottom:14px}
+.stream-box::-webkit-scrollbar{width:4px}
+.stream-box::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.stream-cursor{display:inline-block;width:2px;height:14px;background:var(--accent);animation:blink .7s step-end infinite;vertical-align:text-bottom;margin-left:1px}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.stream-meta{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);display:flex;gap:16px;margin-bottom:20px}
+.stream-meta span{display:flex;align-items:center;gap:5px}
+.stream-dot{width:7px;height:7px;border-radius:50%;background:var(--success);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+/* stage items */
+.stg{display:flex;flex-direction:column;gap:6px;width:100%;max-width:680px;margin-top:4px}
+.sti{display:flex;align-items:center;gap:10px;padding:7px 14px;border-radius:8px;background:var(--surface2);border:1px solid var(--border);transition:all .35s}
+.sti.sa{background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.3)}
+.sti.sd{background:rgba(52,211,153,.05);border-color:rgba(52,211,153,.2)}
+.stik{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:2px solid var(--border);color:var(--muted);flex-shrink:0;transition:all .35s}
+.sti.sa .stik{border-color:var(--accent);background:rgba(245,158,11,.15);color:var(--accent)}
+.sti.sd .stik{border-color:var(--success);background:rgba(52,211,153,.15);color:var(--success)}
+.stlb{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);transition:color .35s}
+.sti.sa .stlb{color:var(--accent);font-weight:500}
+.sti.sd .stlb{color:var(--success)}
+.sspin{margin-left:auto;width:12px;height:12px;border:2px solid rgba(245,158,11,.25);border-top-color:var(--accent);border-radius:50%;animation:spn .7s linear infinite;flex-shrink:0}
+/* review */
+.rinf{padding:12px 14px;background:rgba(99,102,241,.07);border:1px solid rgba(99,102,241,.2);border-radius:8px;font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:14px;display:flex;gap:10px}
+.rinf strong{color:var(--text)}
+.rmt{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.chip{font-family:'DM Mono',monospace;font-size:10px;padding:3px 9px;border-radius:4px;background:var(--surface2);border:1px solid var(--border);color:var(--muted)}
+.txed{width:100%;background:var(--bg);border:1px solid rgba(99,102,241,.35);border-radius:8px;padding:16px;font-family:'DM Mono',monospace;font-size:12px;font-weight:300;color:var(--text);line-height:1.85;resize:vertical;min-height:320px;outline:none;transition:border-color .2s,box-shadow .2s}
+.txed:focus{border-color:var(--review);box-shadow:0 0 0 3px rgba(99,102,241,.12)}
+.edf{display:flex;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap;gap:8px}
+.wcw{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.wcn{color:var(--review);font-weight:500}
+.wbr{flex:1;min-width:100px;max-width:180px;height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.wb{height:100%;border-radius:2px;background:var(--review);transition:width .3s}
+.dbg{font-family:'DM Mono',monospace;font-size:10px;padding:2px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:4px}
+.dbu{background:rgba(112,112,160,.12);color:var(--muted);border:1px solid rgba(112,112,160,.2)}
+.dbm{background:rgba(99,102,241,.12);color:var(--review);border:1px solid rgba(99,102,241,.3)}
+/* seg */
+.sout{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:15px;font-family:'DM Mono',monospace;font-size:12px;font-weight:300;color:var(--text);line-height:1.8;max-height:420px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+.sout::-webkit-scrollbar{width:5px}
+.sout::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.stag{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:11px;padding:3px 10px;border-radius:20px}
+.tgok{background:rgba(52,211,153,.1);color:var(--success);border:1px solid rgba(52,211,153,.28)}
+/* notion */
+.sucb{padding:14px 16px;background:rgba(52,211,153,.07);border:1px solid rgba(52,211,153,.28);border-radius:8px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--success);margin-bottom:14px}
+.nout{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);line-height:1.65;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;max-height:200px;overflow-y:auto;white-space:pre-wrap}
+.nld{display:flex;align-items:center;gap:10px;padding:12px 14px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.2);border-radius:8px}
+.nsp{width:15px;height:15px;border:2px solid rgba(245,158,11,.25);border-top-color:var(--accent);border-radius:50%;animation:spn .75s linear infinite;flex-shrink:0}
+.ntx{font-family:'DM Mono',monospace;font-size:12px;color:var(--accent)}
+/* seg loading */
+.seg-load{display:flex;flex-direction:column;align-items:center;text-align:center;padding:24px 0}
+.seg-stream{width:100%;max-width:680px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;font-family:'DM Mono',monospace;font-size:11px;font-weight:300;color:var(--muted);line-height:1.8;min-height:80px;white-space:pre-wrap;word-break:break-word;overflow-y:auto;max-height:260px;margin-bottom:12px}
+/* api key banner */
+.key-banner{background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:10px;padding:14px 16px;margin-bottom:18px;display:flex;align-items:center;gap:12px}
+.key-banner-icon{font-size:18px;flex-shrink:0}
+.key-banner-text{font-size:12px;color:var(--muted);line-height:1.55}
+.key-banner-text strong{color:var(--text)}
+.key-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+.key-row .inp{flex:1;font-size:12px;letter-spacing:.05em}
+.key-save{padding:8px 14px;border-radius:7px;font-family:'Syne',sans-serif;font-size:12px;font-weight:700;background:var(--accent);color:#000;border:none;cursor:pointer;transition:all .2s;white-space:nowrap}
+.key-save:hover{background:var(--accent2)}
+.key-ok-msg{font-size:11px;color:var(--success);font-family:'DM Mono',monospace;display:none}
+.err{padding:11px 14px;background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.3);border-radius:8px;font-family:'DM Mono',monospace;font-size:12px;color:var(--error);margin-top:12px;line-height:1.5;display:none}
+.err.show{display:block}
+@media(max-width:600px){.dg,.bgr{grid-template-columns:1fr}.pills{display:none}.screen{padding:18px 16px 32px}.topbar{padding:0 16px}}
+
+/* ── S1 SPLIT LAYOUT ── */
+.s1-layout{display:grid;grid-template-columns:1fr 1fr;gap:16px;flex:1;min-height:0}
+.s1-col{display:flex;flex-direction:column;min-height:0}
+.s1-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;min-height:0}
+.s1-section-head{padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface2);flex-shrink:0;display:flex;align-items:center;justify-content:space-between}
+.s1-section-num{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;background:var(--accent);color:#000;flex-shrink:0;margin-right:8px}
+.s1-section-title{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text);display:flex;align-items:center}
+.s1-section-sub{font-size:10px;font-weight:400;color:var(--muted);font-family:"DM Mono",monospace;text-transform:none;letter-spacing:0;margin-left:8px}
+
+/* Accordion inside section — scrolls independently */
+.acc-scroll{overflow-y:auto;flex:1;min-height:0}
+.acc-scroll::-webkit-scrollbar{width:4px}
+.acc-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* Chapter rows */
+.cr{border-bottom:1px solid var(--border)}
+.cr:last-child{border-bottom:none}
+.cb2{width:100%;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:transparent;border:none;cursor:pointer;transition:background .15s;text-align:left}
+.cb2:hover{background:rgba(255,255,255,.03)}
+.cb2.open{background:rgba(245,158,11,.06);border-left:2px solid var(--accent)}
+.cl2{display:flex;align-items:center;gap:9px}
+.cn2{font-family:"DM Mono",monospace;font-size:9px;font-weight:500;color:var(--accent);background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);padding:2px 6px;border-radius:3px;white-space:nowrap}
+.cnm{font-size:12px;font-weight:700;color:var(--text)}
+.cct{font-family:"DM Mono",monospace;font-size:10px;color:var(--muted);background:var(--border);padding:1px 6px;border-radius:3px}
+.car{font-size:10px;color:var(--muted);transition:transform .2s;flex-shrink:0}
+.cb2.open .car{transform:rotate(180deg);color:var(--accent)}
+
+/* Video list — scrollable within chapter */
+.vl{display:none;border-top:1px solid var(--border);max-height:220px;overflow-y:auto}
+.vl::-webkit-scrollbar{width:4px}
+.vl::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.vl.open{display:block}
+.vo{display:flex;align-items:center;gap:10px;padding:8px 14px 8px 18px;cursor:pointer;transition:background .12s;border-bottom:1px solid rgba(255,255,255,.03)}
+.vo:last-child{border-bottom:none}
+.vo:hover{background:rgba(255,255,255,.03)}
+.vo.sel{background:rgba(245,158,11,.07);border-left:2px solid var(--accent)}
+.vnn{font-family:"DM Mono",monospace;font-size:9px;color:var(--muted);flex-shrink:0;min-width:18px}
+.vtx{font-size:11px;color:var(--text);line-height:1.4;font-weight:500;flex:1}
+.vo.sel .vtx{color:var(--accent);font-weight:600}
+.vck{color:var(--success);font-size:11px;flex-shrink:0;opacity:0;transition:opacity .12s}
+.vo.sel .vck{opacity:1}
+
+/* Right column: plot context + dials */
+.s1-right{display:flex;flex-direction:column;gap:14px;min-height:0}
+
+/* Plot context section */
+.plot-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;flex:1;display:flex;flex-direction:column;min-height:0}
+.plot-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:8px;padding:24px}
+.plot-empty-icon{font-size:28px;opacity:.3}
+.plot-empty-text{font-size:12px;color:var(--muted);text-align:center;font-family:"DM Mono",monospace}
+.plot-content{display:none;flex-direction:column;flex:1;overflow-y:auto;padding:16px}
+.plot-content::-webkit-scrollbar{width:4px}
+.plot-content::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.plot-content.show{display:flex}
+.plot-vid-title{font-size:13px;font-weight:700;color:var(--text);line-height:1.4;margin-bottom:10px}
+.plot-cq{font-size:11px;color:var(--muted);font-family:"DM Mono",monospace;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:12px;line-height:1.5}
+.plot-beats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.beat{background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:9px 11px}
+.btl{font-family:"DM Mono",monospace;font-size:8px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin-bottom:5px}
+.btl.ov{color:#f87171}.btl.cl{color:#60a5fa}.btl.ca{color:#34d399}.btl.st{color:var(--accent)}
+.btt{font-size:10px;color:var(--muted);line-height:1.55}
+.next-vid-chip{font-size:10px;color:var(--muted);font-family:"DM Mono",monospace;margin-top:12px;padding:6px 10px;background:rgba(99,102,241,.07);border:1px solid rgba(99,102,241,.2);border-radius:6px;line-height:1.5}
+.next-vid-chip strong{color:var(--review)}
+
+/* Dials section — fixed at bottom of right col */
+.dials-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;flex-shrink:0}
+.dials-body{padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-family:"Syne",sans-serif;font-size:12px;padding:8px 12px;outline:none;-webkit-appearance:none;cursor:pointer;transition:border-color .2s}
+select:focus{border-color:var(--accent)}
+select option{background:var(--surface2)}
+
+/* S1 bottom bar */
+.s1-bottom{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:14px}
+
+@media(max-width:700px){
+  .s1-layout{grid-template-columns:1fr}
+  .plot-beats{grid-template-columns:1fr}
+  .dials-body{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">CFA</div>
+  <div><div class="app-title">Script Workflow</div><div class="app-sub">Chosen Few Academy</div></div>
+  <div class="pills">
+    <div class="pill pa" id="p1"><div class="pdot" id="pd1">1</div>Select</div>
+    <div class="psep"></div>
+    <div class="pill" id="p2"><div class="pdot" id="pd2">2</div>Generate</div>
+    <div class="psep"></div>
+    <div class="pill" id="p3"><div class="pdot" id="pd3">3</div>Review</div>
+    <div class="psep"></div>
+    <div class="pill" id="p4"><div class="pdot" id="pd4">4</div>Segment</div>
+    <div class="psep"></div>
+    <div class="pill" id="p5"><div class="pdot" id="pd5">5</div>Notion</div>
+  </div>
+  <button class="rbtn" onclick="restart()">&#x21BA; Restart</button>
+</div>
+
+<div class="screens">
+
+<!-- S1: SELECT -->
+<div class="screen vis" id="s1" style="padding-bottom:20px">
+
+  <!-- API Key banner (compact, full width) -->
+  <div class="key-banner" style="margin-bottom:14px">
+    <span class="key-banner-icon">&#x1F511;</span>
+    <div style="flex:1">
+      <div class="key-banner-text"><strong>Anthropic API Key required.</strong> Used directly from your browser — never stored on any server.</div>
+      <div class="key-row">
+        <input class="inp" id="apikey" type="password" placeholder="sk-ant-..." autocomplete="off" oninput="onKeyInput()"/>
+        <button class="key-save" onclick="saveKey()">Save Key</button>
+      </div>
+      <div class="key-ok-msg" id="key-ok">&#x2713; Key saved for this session</div>
+    </div>
+  </div>
+
+  <!-- Three-zone split layout -->
+  <div class="s1-layout">
+
+    <!-- ZONE 1: Video selection (left col) -->
+    <div class="s1-col">
+      <div class="s1-section" style="flex:1">
+        <div class="s1-section-head">
+          <div class="s1-section-title">
+            <div class="s1-section-num">1</div>
+            Select Video
+            <span class="s1-section-sub">52 videos &middot; 8 chapters</span>
+          </div>
+          <span id="sel-count" style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted)">none selected</span>
+        </div>
+        <div class="acc-scroll" id="acc">
+
+    <div class="cr"><button class="cb2" onclick="tc(this)"><div class="cl2"><span class="cn2">Ch 1</span><span class="cnm">Crypto Curiosity</span></div><div style="display:flex;align-items:center;gap:8px"><span class="cct">7</span><span class="car">&#9660;</span></div></button><div class="vl">
+      <div class="vo" onclick="sv(this,'v01')"><span class="vnn">01</span><span class="vtx">What Is Crypto and Why Is Everyone Talking About It?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v02')"><span class="vnn">02</span><span class="vtx">Why Was Bitcoin Created After the 2008 Financial Crisis?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v03')"><span class="vnn">03</span><span class="vtx">Why Do Some People Trust Bitcoin More Than Banks?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v04')"><span class="vnn">04</span><span class="vtx">Is Crypto Just Digital Money or Something Completely Different?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v05')"><span class="vnn">05</span><span class="vtx">Why Do Crypto Prices Go Up and Down So Much?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v06')"><span class="vnn">06</span><span class="vtx">Why Are So Many People Suddenly Interested in Crypto?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v07')"><span class="vnn">07</span><span class="vtx">What Do People Actually Use Crypto For in Real Life?</span><span class="vck">&#10003;</span></div>
+    </div></div>
+    <div class="cr"><button class="cb2" onclick="tc(this)"><div class="cl2"><span class="cn2">Ch 2</span><span class="cnm">Making Sense of Crypto</span></div><div style="display:flex;align-items:center;gap:8px"><span class="cct">7</span><span class="car">&#9660;</span></div></button><div class="vl">
+      <div class="vo" onclick="sv(this,'v08')"><span class="vnn">08</span><span class="vtx">What Actually Happens When Someone Sends Crypto?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v09')"><span class="vnn">09</span><span class="vtx">What a Crypto Wallet Actually Does (Most Beginners Get This Wrong)</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v10')"><span class="vnn">10</span><span class="vtx">Why Every Crypto Wallet Has a Public Address</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v11')"><span class="vnn">11</span><span class="vtx">Why Crypto Can Run on Different Networks</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v12')"><span class="vnn">12</span><span class="vtx">What Transaction Fees Are and Why You Have to Pay Them</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v13')"><span class="vnn">13</span><span class="vtx">Why Crypto Transactions Cannot Usually Be Reversed</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v14')"><span class="vnn">14</span><span class="vtx">Who Actually Keeps Track of Who Owns Crypto?</span><span class="vck">&#10003;</span></div>
+    </div></div>
+    <div class="cr"><button class="cb2" onclick="tc(this)"><div class="cl2"><span class="cn2">Ch 3</span><span class="cnm">Buying Your First Crypto</span></div><div style="display:flex;align-items:center;gap:8px"><span class="cct">6</span><span class="car">&#9660;</span></div></button><div class="vl">
+      <div class="vo" onclick="sv(this,'v15')"><span class="vnn">15</span><span class="vtx">How Do People Actually Buy Crypto for the First Time?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v16')"><span class="vnn">16</span><span class="vtx">What a Crypto Exchange Really Does</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v17')"><span class="vnn">17</span><span class="vtx">What Actually Happens After You Buy Crypto on an App?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v18')"><span class="vnn">18</span><span class="vtx">The Mistake Many Beginners Make After Buying Crypto</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v19')"><span class="vnn">19</span><span class="vtx">Why Crypto Exchanges Charge Fees</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v20')"><span class="vnn">20</span><span class="vtx">The Simple Checks to Do Before Buying Crypto</span><span class="vck">&#10003;</span></div>
+    </div></div>
+    <div class="cr"><button class="cb2" onclick="tc(this)"><div class="cl2"><span class="cn2">Ch 4</span><span class="cnm">Storing Crypto Safely</span></div><div style="display:flex;align-items:center;gap:8px"><span class="cct">7</span><span class="car">&#9660;</span></div></button><div class="vl">
+      <div class="vo" onclick="sv(this,'v21')"><span class="vnn">21</span><span class="vtx">What It Really Means to Own Your Crypto</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v22')"><span class="vnn">22</span><span class="vtx">What a Private Key Is and Why It Matters So Much</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v23')"><span class="vnn">23</span><span class="vtx">What a Seed Phrase Is and Why Losing It Is a Big Problem</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v24')"><span class="vnn">24</span><span class="vtx">What Happens If You Lose Your Crypto Seed Phrase?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v25')"><span class="vnn">25</span><span class="vtx">Hot Wallets vs Cold Wallets Explained Simply</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v26')"><span class="vnn">26</span><span class="vtx">Why Some People Move Their Crypto Off Exchanges</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v27')"><span class="vnn">27</span><span class="vtx">The Simple Rule for Keeping Your Crypto Safe</span><span class="vck">&#10003;</span></div>
+    </div></div>
+    <div class="cr"><button class="cb2" onclick="tc(this)"><div class="cl2"><span class="cn2">Ch 5</span><span class="cnm">Sending and Receiving Crypto</span></div><div style="display:flex;align-items:center;gap:8px"><span class="cct">7</span><span class="car">&#9660;</span></div></button><div class="vl">
+      <div class="vo" onclick="sv(this,'v28')"><span class="vnn">28</span><span class="vtx">What Actually Happens When You Send Crypto?</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v29')"><span class="vnn">29</span><span class="vtx">How to Receive Crypto Without Making a Mistake</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v30')"><span class="vnn">30</span><span class="vtx">Why Checking the Wallet Address Is So Important</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v31')"><span class="vnn">31</span><span class="vtx">The Mistake People Make When Choosing the Wrong Network</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v32')"><span class="vnn">32</span><span class="vtx">Why Some Crypto Transactions Take Longer Than Others</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v33')"><span class="vnn">33</span><span class="vtx">Why Sending Crypto Feels Risky for Beginners</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v34')"><span class="vnn">34</span><span class="vtx">Three Things to Check Before You Send Crypto</span><span class="vck">&#10003;</span></div>
+    </div></div>
+    <div class="cr"><button class="cb2" onclick="tc(this)"><div class="cl2"><span class="cn2">Ch 6</span><span class="cnm">Avoiding Costly Mistakes</span></div><div style="display:flex;align-items:center;gap:8px"><span class="cct">7</span><span class="car">&#9660;</span></div></button><div class="vl">
+      <div class="vo" onclick="sv(this,'v35')"><span class="vnn">35</span><span class="vtx">The Most Common Crypto Mistake Beginners Make</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v36')"><span class="vnn">36</span><span class="vtx">How People Accidentally Send Crypto to the Wrong Network</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v37')"><span class="vnn">37</span><span class="vtx">How Crypto Scams Trick Beginners</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v38')"><span class="vnn">38</span><span class="vtx">How Fake Customer Support Scams Steal Crypto</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v39')"><span class="vnn">39</span><span class="vtx">How Phishing Attacks Target Crypto Users</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v40')"><span class="vnn">40</span><span class="vtx">Why &quot;Free Crypto&quot; Offers Are Usually Scams</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v41')"><span class="vnn">41</span><span class="vtx">How Hackers Try to Access Crypto Wallets</span><span class="vck">&#10003;</span></div>
+    </div></div>
+    <div class="cr"><button class="cb2" onclick="tc(this)"><div class="cl2"><span class="cn2">Ch 7</span><span class="cnm">Staying Organised</span></div><div style="display:flex;align-items:center;gap:8px"><span class="cct">5</span><span class="car">&#9660;</span></div></button><div class="vl">
+      <div class="vo" onclick="sv(this,'v42')"><span class="vnn">42</span><span class="vtx">Why Keeping Records of Your Crypto Matters</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v43')"><span class="vnn">43</span><span class="vtx">How to Keep Track of What Crypto You Own</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v44')"><span class="vnn">44</span><span class="vtx">Why Knowing Where Your Crypto Is Stored Is Important</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v45')"><span class="vnn">45</span><span class="vtx">The Simple Security Habits Crypto Users Follow</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v46')"><span class="vnn">46</span><span class="vtx">A Simple System for Staying in Control of Your Crypto</span><span class="vck">&#10003;</span></div>
+    </div></div>
+    <div class="cr"><button class="cb2" onclick="tc(this)"><div class="cl2"><span class="cn2">Ch 8</span><span class="cnm">Thinking Long Term</span></div><div style="display:flex;align-items:center;gap:8px"><span class="cct">6</span><span class="car">&#9660;</span></div></button><div class="vl">
+      <div class="vo" onclick="sv(this,'v47')"><span class="vnn">47</span><span class="vtx">Why Many Crypto Investors Think Long Term</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v48')"><span class="vnn">48</span><span class="vtx">Why Patience Matters in Crypto</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v49')"><span class="vnn">49</span><span class="vtx">Why Following Crypto Hype Can Be Dangerous</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v50')"><span class="vnn">50</span><span class="vtx">How Experienced Crypto Users Think About Risk</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v51')"><span class="vnn">51</span><span class="vtx">What a Calm, Structured Approach to Crypto Looks Like</span><span class="vck">&#10003;</span></div>
+      <div class="vo" onclick="sv(this,'v52')"><span class="vnn">52</span><span class="vtx">The One Habit That Prevents Most Crypto Mistakes</span><span class="vck">&#10003;</span></div>
+    </div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ZONE 2 + 3: Right column -->
+    <div class="s1-col" style="gap:14px">
+
+      <!-- ZONE 2: Plot context -->
+      <div class="plot-section" style="flex:1">
+        <div class="s1-section-head">
+          <div class="s1-section-title">
+            <div class="s1-section-num" style="background:var(--review);color:#fff">2</div>
+            Video Plot Context
+          </div>
+        </div>
+        <div class="plot-empty" id="plot-empty">
+          <div class="plot-empty-icon">&#x1F4CB;</div>
+          <div class="plot-empty-text">Select a video on the left<br>to see its plot context</div>
+        </div>
+        <div class="plot-content" id="plot-content">
+          <div class="plot-vid-title" id="pbt"></div>
+          <div class="plot-cq" id="pbq"></div>
+          <div class="plot-beats">
+            <div class="beat"><div class="btl ov">Overwhelmed</div><div class="btt" id="pbo"></div></div>
+            <div class="beat"><div class="btl cl">Clear</div><div class="btt" id="pbcl"></div></div>
+            <div class="beat"><div class="btl ca">Calm</div><div class="btt" id="pbca"></div></div>
+            <div class="beat"><div class="btl st">Structured</div><div class="btt" id="pbst"></div></div>
+          </div>
+          <div class="next-vid-chip" id="next-vid-chip" style="display:none">
+            <strong>Next &rarr;</strong> <span id="next-vid-title"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ZONE 3: Creative dials -->
+      <div class="dials-section">
+        <div class="s1-section-head">
+          <div class="s1-section-title">
+            <div class="s1-section-num" style="background:var(--success);color:#000">3</div>
+            Creative Dials
+            <span class="s1-section-sub">optional &mdash; auto-inferred if blank</span>
+          </div>
+        </div>
+        <div class="dials-body">
+          <select id="d-emotion"><option value="">Audience Emotion &mdash; auto</option><option>curiosity</option><option>tension</option><option>inspiration</option><option>calm urgency</option></select>
+          <select id="d-narrative"><option value="">Narrative Style &mdash; auto</option><option>story-first</option><option>educational</option><option>cinematic</option><option>investigative</option></select>
+          <select id="d-presence"><option value="">Creator Presence &mdash; auto</option><option>mentor</option><option>relatable</option><option>calm authority</option></select>
+          <select id="d-pacing"><option value="">Pacing Style &mdash; auto</option><option>fast-cut</option><option>balanced</option><option>slow burn</option></select>
+        </div>
+      </div>
+
+    </div><!-- /right col -->
+  </div><!-- /s1-layout -->
+
+  <div class="s1-bottom">
+    <div id="e1" class="err" style="margin-top:0;flex:1"></div>
+    <button class="btn bprim" id="bgen" onclick="startGen()">&#x26A1; Generate Script</button>
+  </div>
+
+</div>
+
+
+<!-- S2: STREAMING GENERATION -->
+<div class="screen hr" id="s2">
+  <div class="sh"><h2>Generating Script</h2><p>Streaming live — tokens arrive as the model writes them.</p></div>
+  <div class="lc">
+    <div class="spw"><div class="spo"></div><div class="spi"></div><div class="spe">&#x270D;&#xFE0F;</div></div>
+    <div class="ltl" id="s2vt">Writing&#x2026;</div>
+    <div class="lsb" id="s2-stat">Connecting&#x2026;</div>
+    <div class="stream-meta">
+      <span><div class="stream-dot" id="stream-dot"></div><span id="s2-words">0 words</span></span>
+      <span id="s2-speed"></span>
+      <span id="s2-elapsed"></span>
+    </div>
+    <div class="stream-box" id="stream-box"><span class="stream-cursor"></span></div>
+    <div class="stg">
+      <div class="sti" id="gs0"><div class="stik" id="gi0">1</div><span class="stlb">Connecting to Anthropic API</span></div>
+      <div class="sti" id="gs1"><div class="stik" id="gi1">2</div><span class="stlb">First tokens arriving</span></div>
+      <div class="sti" id="gs2"><div class="stik" id="gi2">3</div><span class="stlb">Building script body</span></div>
+      <div class="sti" id="gs3"><div class="stik" id="gi3">4</div><span class="stlb">Writing closing section</span></div>
+      <div class="sti" id="gs4"><div class="stik" id="gi4">5</div><span class="stlb">Script complete</span></div>
+    </div>
+  </div>
+  <div id="e2" class="err"></div>
+  <div class="brow" id="s2-abort-row" style="justify-content:center">
+    <button class="btn bgh" onclick="abortGen()">&#x2715; Cancel</button>
+  </div>
+</div>
+
+<!-- S3: REVIEW -->
+<div class="screen hr" id="s3">
+  <div class="sh"><h2>Review &amp; Edit Script</h2><p>Read through the generated script. Edit anything directly below, then submit for segmentation.</p></div>
+  <div class="rinf"><span style="font-size:16px;flex-shrink:0">&#x1F4A1;</span><div><strong>Your editing workspace.</strong> Make any changes, then click <strong>Submit for Segmentation</strong>.</div></div>
+  <div class="rmt"><span class="chip" id="rwc">&mdash;</span><span class="chip" id="rvid"></span><span class="dbg dbu" id="rdb">&middot; No changes</span></div>
+  <textarea class="txed" id="txed" spellcheck="true" oninput="onEd()"></textarea>
+  <div class="edf">
+    <div class="wcw"><span>Words:</span><span class="wcn" id="wcn">0</span><div class="wbr"><div class="wb" id="wb"></div></div><span style="color:var(--muted)">650&ndash;900</span></div>
+    <span class="dbg dbu" id="rdb2">&middot; No changes</span>
+  </div>
+  <div id="e3" class="err"></div>
+  <div class="brow">
+    <button class="btn brev" id="bseg" onclick="startSeg()">&#x1F680; Submit for Segmentation</button>
+    <button class="btn bgh" onclick="restSc()">&#x21BA; Restore Original</button>
+    <button class="btn bsec" onclick="cpySc()">Copy Script</button>
+  </div>
+</div>
+
+<!-- S4: SEGMENT -->
+<div class="screen hr" id="s4">
+  <div id="s4l">
+    <div class="sh"><h2>Segmenting Script</h2><p>Splitting into 4&ndash;6 second spoken beats.</p></div>
+    <div class="seg-load">
+      <div class="spw" style="width:56px;height:56px;margin-bottom:18px"><div class="spo"></div><div class="spi"></div><div class="spe" style="font-size:20px">&#x2702;&#xFE0F;</div></div>
+      <div class="ltl" style="font-size:16px;margin-bottom:6px">Segmenting</div>
+      <div class="lsb" style="margin-bottom:16px" id="seg-stat">Streaming segments&#x2026;</div>
+      <div class="stream-meta"><span><div class="stream-dot"></div><span id="seg-lines">0 segments</span></span><span id="seg-elapsed"></span></div>
+      <div class="seg-stream" id="seg-stream-box"></div>
+    </div>
+  </div>
+  <div id="s4r" style="display:none">
+    <div class="sh"><h2>Segmented Script</h2><p>Numbered spoken beats ready for production.</p></div>
+    <div class="rmt"><span class="stag tgok">&#10003; Ready</span><span class="chip" id="sgcc"></span><span class="chip">4&ndash;6 sec per beat</span></div>
+    <div class="sout" id="sgo"></div>
+    <div id="e4" class="err"></div>
+    <div class="brow">
+      <button class="btn bprim" onclick="goN()">&#x25FC; Save to Notion</button>
+      <button class="btn bsec" onclick="cpySg()">Copy Segments</button>
+    </div>
+  </div>
+</div>
+
+<!-- S5: NOTION -->
+<div class="screen hr" id="s5">
+  <div class="sh"><h2>Save to Notion</h2><p>Enter your Notion integration token and the parent page ID to create a new page directly in your workspace.</p></div>
+
+  <div class="key-banner" style="margin-bottom:16px">
+    <span class="key-banner-icon">&#x1F4D3;</span>
+    <div style="flex:1">
+      <div class="key-banner-text"><strong>How to get your Notion token.</strong> Go to <strong>notion.so/my-integrations</strong> &rarr; New Integration &rarr; copy the Internal Integration Token. Then open the Notion page you want to save into, click the &hellip; menu, and share it with your integration.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+        <div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:5px">Integration Token</div>
+          <input class="inp" id="notion-token" type="password" placeholder="ntn_..." autocomplete="off" value="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"/>
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:5px">Parent Page ID</div>
+          <input class="inp" id="notion-page-id" type="text" placeholder="32-char page ID" autocomplete="off" value="32f2d4d2db808031990dc6b7f8a5b7ba"/>
+        </div>
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace">Token and page ID are pre-filled. Update anytime if you switch pages.</div>
+        <button onclick="saveNotionCreds()" style="padding:5px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer;transition:all .2s" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">&#x1F4BE; Save credentials</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><div class="ct">&#x1F4C4; What will be saved</div></div>
+    <div class="cb" style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px"><span style="font-size:16px">&#x1F4DD;</span><div><div style="font-size:13px;font-weight:700">Final Script</div><div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace" id="nsi">&mdash;</div></div></div>
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px"><span style="font-size:16px">&#x2702;&#xFE0F;</span><div><div style="font-size:13px;font-weight:700">Segmented Script</div><div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace" id="nsgi">&mdash;</div></div></div>
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px"><span style="font-size:16px">&#x25FC;</span><div><div style="font-size:13px;font-weight:700">Page Title</div><div style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace" id="npt">&mdash;</div></div></div>
+    </div>
+  </div>
+
+  <div id="s5l" style="display:none" class="nld"><div class="nsp"></div><span class="ntx">Creating page in Notion&#x2026;</span></div>
+  <div id="s5s" style="display:none">
+    <div class="sucb">&#10003; Page created in Notion</div>
+    <div class="nout" id="nout"></div>
+  </div>
+  <div id="e5" class="err"></div>
+  <div id="s5b" class="brow">
+    <button class="btn bnot" id="bnotion" onclick="saveN()">&#x25FC; Save to Notion</button>
+    <button class="btn bgh" onclick="goTo(4,'left')">&#x2190; Back</button>
+  </div>
+  <div id="s5d" style="display:none" class="brow">
+    <button class="btn bprim" onclick="restart()">&#xFF0B; New Script</button>
+  </div>
+</div>
+
+</div><!-- /screens -->
+<script>
+// ═══ VIDEO DATABASE ═══
+const V={
+  v01:{title:"What Is Crypto and Why Is Everyone Talking About It?",cq:"What actually is cryptocurrency?",scenario:"A beginner hearing about crypto everywhere but not understanding what it is.",overwhelmed:"You keep hearing people talk about crypto but no one explains what it actually is. It sounds complicated, risky, and full of strange terms.",clear:"Cryptocurrency is digital money that can be sent and stored online without needing a bank. A shared digital system keeps track of who owns what.",calm:"This is why people talk about crypto differently from normal money. It is a new way of recording ownership and moving value online.",structured:"When thinking about crypto: It is digital. It moves online. Ownership is recorded on a shared system."},
+  v02:{title:"Why Was Bitcoin Created After the 2008 Financial Crisis?",cq:"Why was Bitcoin created?",scenario:"A beginner wondering why cryptocurrency exists at all.",overwhelmed:"You wonder why someone would create a new kind of money. We already have banks, cards, and online payments.",clear:"Bitcoin was created in 2008 during a global financial crisis. Many people had lost trust in banks. The idea was to create money that could move between people without relying on banks.",calm:"Instead of trusting a bank, Bitcoin uses a shared system anyone can verify. People can send money directly to each other online.",structured:"Bitcoin in three parts: Money that works online. No bank required. A shared system anyone can verify."},
+  v03:{title:"Why Do Some People Trust Bitcoin More Than Banks?",cq:"Why do some people prefer crypto to traditional banking?",scenario:"A beginner hearing people say 'don't trust banks, trust Bitcoin'.",overwhelmed:"You may have heard 'Bitcoin is better than banks' or 'crypto lets you control your own money.' That can sound confusing if you have always relied on banks.",clear:"Traditional banks control accounts and transactions. Bitcoin works differently. Instead of one organisation controlling everything, the system is shared across many computers.",calm:"This does not mean banks disappear. It simply means people now have another option for storing and sending value online.",structured:"Comparing Bitcoin and banks: Banks control accounts. Bitcoin uses a shared system. People can choose which they prefer."},
+  v04:{title:"Is Crypto Just Digital Money or Something Completely Different?",cq:"Is cryptocurrency simply online money?",scenario:"A beginner assuming crypto is just another payment method like PayPal.",overwhelmed:"At first glance, crypto might seem like just another digital payment system, similar to online banking or payment apps.",clear:"Crypto is slightly different. While it can be used as money, it also represents digital ownership. It allows people to directly own and transfer digital assets.",calm:"This is why crypto can be used for more than payments. It can represent ownership, access, or value in online systems.",structured:"Think about crypto as: It can act like money. It can represent ownership. It moves directly between people."},
+  v05:{title:"Why Do Crypto Prices Go Up and Down So Much?",cq:"Why are crypto prices so volatile?",scenario:"A beginner seeing large price changes and assuming crypto is chaotic.",overwhelmed:"Crypto prices often move up and down very quickly. One day they rise, the next they fall. This makes the whole space seem unpredictable.",clear:"Crypto prices change because people are constantly buying and selling. When more people want to buy, prices rise. When more want to sell, prices fall.",calm:"Large price movements are common in newer markets where technology is still developing and adoption is growing.",structured:"About price changes: Prices move when people buy and sell. New markets move more quickly. Price movement does not change how the technology works."},
+  v06:{title:"Why Are So Many People Suddenly Interested in Crypto?",cq:"Why has cryptocurrency become so popular?",scenario:"A beginner noticing crypto appearing everywhere in media and conversations.",overwhelmed:"It can feel like crypto suddenly appeared everywhere — in news, advertisements, social media, and conversations.",clear:"Interest in crypto has grown because more people are learning about digital ownership, online finance, and new technology that allows value to move across the internet.",calm:"As with many new technologies, interest often grows in waves as people explore how it works and what it can be used for.",structured:"When you hear about crypto becoming popular: New technology attracts attention. More people are exploring digital ownership. Interest grows as understanding grows."},
+  v07:{title:"What Do People Actually Use Crypto For in Real Life?",cq:"What practical uses does crypto have?",scenario:"A beginner assuming crypto is only used for investing.",overwhelmed:"Many people first hear about crypto through price stories or investing discussions, making it seem like crypto is only about buying and selling.",clear:"In reality, crypto can be used for sending money across borders, storing value digitally, and interacting with new types of online services.",calm:"Not everyone uses crypto the same way. Some use it for payments, others for technology platforms, and some simply explore the system.",structured:"Three common uses of crypto today: Sending value online. Storing digital assets. Using new online services built on crypto networks."},
+  v08:{title:"What Actually Happens When Someone Sends Crypto?",cq:"What happens behind the scenes when crypto is sent?",scenario:"A beginner pressing send in a wallet app and wondering what actually happens next.",overwhelmed:"You open a crypto app, type in a wallet address, press send, and within seconds the money is gone from your screen. But where did it actually go?",clear:"When you send crypto, the transaction is recorded on a shared digital system. Computers around the world verify the transaction and update the record of who owns what.",calm:"This process usually happens quickly, which is why crypto transfers can feel almost instant compared with bank transfers.",structured:"When crypto is sent: A transaction request is created. The network verifies it. The shared record updates ownership."},
+  v09:{title:"What a Crypto Wallet Actually Does (Most Beginners Get This Wrong)",cq:"What does a crypto wallet actually do?",scenario:"A beginner assuming a wallet physically stores crypto like a bank account.",overwhelmed:"The word wallet makes it sound like crypto sits inside an app or device, just like money inside a physical wallet.",clear:"A crypto wallet does not store the crypto itself. Instead, it stores the keys that allow you to access and control your crypto on the network.",calm:"Think of the wallet more like a keychain than a container. The crypto remains on the shared system, and your wallet holds the keys that prove it belongs to you.",structured:"When thinking about wallets: Crypto lives on the network. Wallets store the keys. Keys allow you to control your crypto."},
+  v10:{title:"Why Every Crypto Wallet Has a Public Address",cq:"What is a wallet address?",scenario:"A beginner seeing a long string of letters and numbers and not knowing what it means.",overwhelmed:"When you open a crypto wallet, you will usually see a long string of letters and numbers called an address. At first glance it looks confusing.",clear:"A wallet address is simply the place where someone can send crypto to you. It works a bit like an account number.",calm:"Sharing your wallet address is safe because it only allows people to send crypto to you — it does not give them control of your funds.",structured:"When thinking about wallet addresses: It is where crypto is sent. It is safe to share for receiving. It does not control your crypto."},
+  v11:{title:"Why Crypto Can Run on Different Networks",cq:"Why are there different crypto networks?",scenario:"A beginner seeing multiple network options when sending crypto.",overwhelmed:"When sending crypto, you might notice several network options in your wallet or exchange. Choosing the wrong one can feel confusing.",clear:"Crypto networks are different systems that process and record transactions. Some coins exist on specific networks, and some tokens can move across multiple networks.",calm:"This is similar to sending a package through different delivery services. Each network processes transactions in its own way.",structured:"Before sending crypto: Check the receiving network. Match the sending network. Confirm both sides are compatible."},
+  v12:{title:"What Transaction Fees Are and Why You Have to Pay Them",cq:"Why do crypto transactions have fees?",scenario:"A beginner surprised by the fee shown before sending crypto.",overwhelmed:"Just before sending crypto, a transaction fee appears. Many beginners wonder why they have to pay extra just to move their own money.",clear:"Transaction fees are paid to the network to process and verify transactions. They help keep the system running and ensure transactions are recorded.",calm:"Fees usually vary depending on how busy the network is and how quickly you want the transaction processed.",structured:"When you see a transaction fee: It pays the network processing the transaction. Busier networks often have higher fees. Fees help keep the system secure."},
+  v13:{title:"Why Crypto Transactions Cannot Usually Be Reversed",cq:"Why can not crypto transactions be reversed like bank payments?",scenario:"A beginner realising that crypto transfers cannot easily be undone.",overwhelmed:"When sending money through banks, mistakes can sometimes be corrected. With crypto, once a transaction is confirmed, reversing it can be very difficult.",clear:"This happens because crypto transactions are recorded on a shared system that cannot easily be changed after the fact.",calm:"While this might seem risky at first, it also means transactions cannot be easily manipulated or reversed by others.",structured:"Because crypto transactions are permanent: Always double-check the address. Confirm the network. Send a small test transaction first."},
+  v14:{title:"Who Actually Keeps Track of Who Owns Crypto?",cq:"Who records ownership of crypto?",scenario:"A beginner wondering who controls the system if there is no bank involved.",overwhelmed:"If there is no bank running crypto, it raises a natural question — who actually keeps track of who owns what?",clear:"Ownership is recorded on a shared digital record called a blockchain. Many computers around the world maintain copies of this record.",calm:"Because the record is shared and verified by many participants, no single organisation controls it.",structured:"To understand crypto ownership: The blockchain records transactions. Many computers verify the record. The shared system tracks ownership."},
+  v15:{title:"How Do People Actually Buy Crypto for the First Time?",cq:"How do beginners buy cryptocurrency?",scenario:"Someone hearing about crypto and wondering how people actually get it.",overwhelmed:"You have heard about crypto and seen people talking about it, but one question keeps coming up: how do people actually buy it?",clear:"Most beginners buy crypto through platforms called exchanges. These apps allow people to exchange traditional money for cryptocurrency.",calm:"The process is similar to using many other online financial apps. You create an account, connect a payment method, and choose the amount you want to buy.",structured:"When buying crypto for the first time: Use a trusted exchange. Start with a small amount. Make sure you understand what you are buying."},
+  v16:{title:"What a Crypto Exchange Really Does",cq:"What is a crypto exchange?",scenario:"A beginner opening an exchange app but not understanding what the platform actually does.",overwhelmed:"When people first open a crypto exchange app, they often see charts, prices, and many different coins. It can feel confusing.",clear:"A crypto exchange is simply a platform where people buy and sell cryptocurrency. It acts as a marketplace connecting buyers and sellers.",calm:"This is similar to how stock exchanges connect people buying and selling shares.",structured:"Think of a crypto exchange as: A marketplace. Where buyers meet sellers. Where prices are set by supply and demand."},
+  v17:{title:"What Actually Happens After You Buy Crypto on an App?",cq:"What happens behind the scenes when you buy crypto?",scenario:"A beginner buying crypto and wondering where it actually goes.",overwhelmed:"After buying crypto on an exchange app, the balance appears in your account almost instantly. But where is the crypto actually stored?",clear:"In many cases, the exchange holds the crypto on your behalf. Your account shows the balance, but the platform is managing the underlying wallets.",calm:"This makes things easier for beginners, but it also means the exchange is temporarily holding your crypto.",structured:"After buying crypto on an exchange: The exchange processes the purchase. Your account shows the balance. The platform often holds the crypto for you."},
+  v18:{title:"The Mistake Many Beginners Make After Buying Crypto",cq:"What common mistake do beginners make after purchasing crypto?",scenario:"A beginner leaving crypto on an exchange without understanding ownership.",overwhelmed:"After buying crypto, many beginners simply leave it sitting on the exchange app without thinking about where it is stored.",clear:"When crypto stays on an exchange, the platform is holding it on your behalf rather than you controlling it directly.",calm:"While this can be convenient at first, many people eventually learn how to move their crypto to their own wallets for greater control.",structured:"After buying crypto: Exchanges make buying easy. Exchanges often hold the crypto. Learning about wallets gives you more control."},
+  v19:{title:"Why Crypto Exchanges Charge Fees",cq:"Why do exchanges charge fees?",scenario:"A beginner noticing small fees when buying crypto.",overwhelmed:"When buying crypto on an exchange, beginners often notice small fees added to the transaction.",clear:"Exchanges charge fees to operate the platform, process transactions, and provide the service of connecting buyers and sellers.",calm:"These fees vary between platforms and can depend on how the purchase is made.",structured:"When using an exchange: Fees help run the platform. Different exchanges charge different fees. It is useful to check the fee before buying."},
+  v20:{title:"The Simple Checks to Do Before Buying Crypto",cq:"What should beginners check before making their first purchase?",scenario:"A beginner about to buy crypto without understanding what to look for.",overwhelmed:"With so many coins, apps, and opinions online, buying crypto for the first time can feel overwhelming.",clear:"Before making a purchase, it helps to take a moment to understand what the asset is and how the platform works.",calm:"Taking a few simple steps beforehand can prevent many beginner mistakes.",structured:"Before buying crypto: Understand what the asset is. Use a trusted platform. Start with a small amount."},
+  v21:{title:"What It Really Means to Own Your Crypto",cq:"What does it mean to truly own cryptocurrency?",scenario:"A beginner who bought crypto on an exchange but assumes they fully control it.",overwhelmed:"You buy crypto on an exchange app and see the balance appear. It feels like the crypto belongs to you, just like money in a bank account.",clear:"When crypto is stored on an exchange, the platform is often holding it for you. True ownership happens when you control the keys that access the crypto.",calm:"This does not mean exchanges are bad — they simply act as a service provider. Many beginners start this way before learning more about wallets.",structured:"When thinking about crypto ownership: Exchanges can hold crypto for you. Wallets give you direct control. Ownership comes from controlling the keys."},
+  v22:{title:"What a Private Key Is and Why It Matters So Much",cq:"What is a private key?",scenario:"A beginner hearing the term private key but not understanding its importance.",overwhelmed:"In many crypto guides you will hear people mention something called a private key. At first, it can sound technical and difficult to understand.",clear:"A private key is a secret piece of information that allows you to access and control your crypto.",calm:"Anyone who has the private key can move the crypto connected to it. That is why keeping it secure is so important.",structured:"When thinking about private keys: They control access to your crypto. They must stay secret. Whoever has the key controls the funds."},
+  v23:{title:"What a Seed Phrase Is and Why Losing It Is a Big Problem",cq:"What is a seed phrase?",scenario:"A beginner setting up a wallet and seeing a list of recovery words.",overwhelmed:"When setting up a wallet, you are often shown a list of 12 or 24 random words called a seed phrase. Many beginners do not realise how important this step is.",clear:"A seed phrase is a backup that can restore your wallet and recover access to your crypto.",calm:"If your device is lost or broken, the seed phrase allows you to restore your wallet somewhere else.",structured:"When dealing with seed phrases: It is the backup to your wallet. It restores access to your crypto. It should be stored safely offline."},
+  v24:{title:"What Happens If You Lose Your Crypto Seed Phrase?",cq:"What happens if a seed phrase is lost?",scenario:"A beginner misplacing their recovery phrase.",overwhelmed:"Imagine losing access to your phone or wallet app and realising you never saved your seed phrase.",clear:"Without the seed phrase, it may be impossible to restore access to that wallet and the crypto connected to it.",calm:"This is why many experienced users treat their seed phrase as one of the most important pieces of information they own.",structured:"To protect your seed phrase: Write it down securely. Store it somewhere safe. Never share it with anyone."},
+  v25:{title:"Hot Wallets vs Cold Wallets Explained Simply",cq:"What is the difference between hot and cold wallets?",scenario:"A beginner hearing the terms but not understanding the difference.",overwhelmed:"As people explore crypto wallets, they often hear two terms: hot wallets and cold wallets.",clear:"Hot wallets are connected to the internet and easy to use for everyday transactions. Cold wallets store keys offline, offering stronger security.",calm:"Both types of wallets serve different purposes depending on how someone wants to store their crypto.",structured:"A simple way to remember: Hot wallets are connected to the internet. Cold wallets are offline. Cold wallets offer stronger long-term security."},
+  v26:{title:"Why Some People Move Their Crypto Off Exchanges",cq:"Why do people transfer crypto from exchanges to wallets?",scenario:"A beginner seeing people withdraw crypto from exchanges.",overwhelmed:"After buying crypto on an exchange, you may see people talking about moving it to a wallet.",clear:"When crypto is stored on an exchange, the platform holds the keys. Moving crypto to a personal wallet allows you to control those keys yourself.",calm:"Many beginners keep crypto on exchanges at first, but later learn how wallets give them more direct control.",structured:"When thinking about storage: Exchanges hold crypto for convenience. Wallets give personal control. Learning both helps you manage risk."},
+  v27:{title:"The Simple Rule for Keeping Your Crypto Safe",cq:"What basic rule helps keep crypto safe?",scenario:"A beginner overwhelmed by security advice.",overwhelmed:"When learning about crypto security, beginners often hear many warnings and complicated advice.",clear:"Most crypto safety comes down to one simple idea: protecting the keys that control your crypto.",calm:"If your keys and recovery phrases are secure, your crypto is far more likely to stay safe.",structured:"A simple safety rule: Protect your private keys. Protect your seed phrase. Never share them with anyone."},
+  v28:{title:"What Actually Happens When You Send Crypto?",cq:"What happens behind the scenes when crypto is sent?",scenario:"A beginner pressing send in a wallet app and wondering what happens next.",overwhelmed:"You type in a wallet address, press send, and within seconds the crypto disappears from your wallet balance. It can feel strange sending something you cannot physically see.",clear:"When you send crypto, the network records the transaction and updates who owns the crypto. Computers around the world verify the transaction before it becomes permanent.",calm:"Although the process happens quickly, several steps are taking place behind the scenes to confirm the transfer.",structured:"When crypto is sent: A transaction request is created. The network verifies it. Ownership is updated on the shared record."},
+  v29:{title:"How to Receive Crypto Without Making a Mistake",cq:"How do you receive crypto safely?",scenario:"A beginner sharing their wallet address for the first time.",overwhelmed:"Someone asks you to send them your wallet address so they can transfer crypto to you. You open your wallet and see a long string of letters and numbers.",clear:"Your wallet address is the destination where crypto is sent. Sharing it allows others to transfer crypto to your wallet.",calm:"Receiving crypto is usually straightforward, but it is still important to double-check that the address is correct.",structured:"When receiving crypto: Copy the address directly. Double-check it matches your wallet. Confirm the correct network."},
+  v30:{title:"Why Checking the Wallet Address Is So Important",cq:"Why should wallet addresses always be checked carefully?",scenario:"A beginner copying and pasting an address when sending crypto.",overwhelmed:"Crypto wallet addresses are long and complicated, which makes beginners nervous about making a mistake.",clear:"If crypto is sent to the wrong address, it usually cannot be recovered. This is why checking the address carefully is so important.",calm:"Most people avoid mistakes simply by double-checking the address before sending.",structured:"Before sending crypto: Check the first few characters. Check the last few characters. Confirm the address matches the receiver."},
+  v31:{title:"The Mistake People Make When Choosing the Wrong Network",cq:"Why does the network matter when sending crypto?",scenario:"A beginner selecting the wrong network option in a wallet or exchange.",overwhelmed:"When sending crypto from an exchange or wallet, you may see multiple network options. Many beginners are not sure which one to choose.",clear:"Crypto networks are different systems that process transactions. If the sender and receiver use different networks, the transaction may fail or become difficult to recover.",calm:"This is one of the most common beginner mistakes, and it usually happens simply because the options look similar.",structured:"Before sending crypto: Confirm the receiving network. Match the sending network. Send a small test amount first."},
+  v32:{title:"Why Some Crypto Transactions Take Longer Than Others",cq:"Why do some transactions take longer to confirm?",scenario:"A beginner waiting for a transfer to appear in their wallet.",overwhelmed:"After sending crypto, you may expect it to appear instantly. But sometimes the transaction takes longer than expected.",clear:"Transaction speed depends on how busy the network is and how quickly the transaction can be verified.",calm:"Most transactions are confirmed within minutes, but delays can happen during periods of heavy activity.",structured:"When waiting for a transaction: Check the transaction status. Be patient while the network verifies it. Confirm the correct address and network were used."},
+  v33:{title:"Why Sending Crypto Feels Risky for Beginners",cq:"Why does sending crypto feel stressful at first?",scenario:"A beginner nervous before pressing the send button.",overwhelmed:"Many beginners hesitate before sending crypto for the first time because they know transactions cannot easily be reversed.",clear:"This caution is actually helpful. Crypto requires users to take responsibility for checking details before sending.",calm:"Once people understand the process and follow a simple routine, sending crypto becomes much more comfortable.",structured:"Before sending crypto: Confirm the address. Confirm the network. Start with a small test transaction."},
+  v34:{title:"Three Things to Check Before You Send Crypto",cq:"What simple checks prevent most sending mistakes?",scenario:"A beginner preparing to send crypto for the first time.",overwhelmed:"With wallet addresses, networks, and fees to consider, sending crypto can feel complicated for beginners.",clear:"In reality, most mistakes are prevented by checking a few key details before pressing send.",calm:"Experienced users follow the same simple checks every time they make a transfer.",structured:"Before sending crypto, always check: The wallet address. The correct network. The transaction amount."},
+  v35:{title:"The Most Common Crypto Mistake Beginners Make",cq:"What mistake causes many beginners to lose crypto?",scenario:"A beginner rushing into crypto without understanding the basics.",overwhelmed:"When people first discover crypto, they often feel pressure to act quickly. Prices move and it can feel like you need to jump in immediately.",clear:"The most common beginner mistake is moving too quickly without understanding how the system works.",calm:"Crypto rewards patience and understanding more than speed. Taking time to learn the basics helps avoid many early mistakes.",structured:"Before taking action in crypto: Learn how the system works. Start small. Take time to understand each step."},
+  v36:{title:"How People Accidentally Send Crypto to the Wrong Network",cq:"How does the wrong network mistake happen?",scenario:"A beginner selecting the wrong network when transferring funds.",overwhelmed:"When sending crypto, multiple network options can appear. Many beginners assume they all work the same way.",clear:"Each crypto network processes transactions separately. If a transaction is sent using the wrong network, it may not arrive at the intended wallet.",calm:"This mistake usually happens because the networks have similar names or because the sender moves too quickly.",structured:"To avoid this mistake: Check the receiving network. Match it with the sending network. Send a small test amount first."},
+  v37:{title:"How Crypto Scams Trick Beginners",cq:"Why do crypto scams work so often?",scenario:"A beginner encountering suspicious offers or messages online.",overwhelmed:"Crypto scams often appear as exciting opportunities, urgent messages, or offers that seem too good to ignore.",clear:"Scammers rely on pressure and excitement to convince people to act quickly before they have time to think carefully.",calm:"Learning how these scams work makes them much easier to recognise.",structured:"When evaluating crypto offers: Be cautious of urgency. Be suspicious of guaranteed returns. Take time to verify information."},
+  v38:{title:"How Fake Customer Support Scams Steal Crypto",cq:"How do fake support scams work?",scenario:"A beginner asking for help online and being contacted by a scammer pretending to be support staff.",overwhelmed:"A common situation occurs when someone asks a question online about a wallet or exchange and receives a message from someone claiming to be customer support.",clear:"Scammers often pretend to be support agents and ask for private information like seed phrases or private keys.",calm:"Legitimate support teams will never ask for this information.",structured:"When dealing with support requests: Never share your seed phrase. Never share your private keys. Contact official support channels directly."},
+  v39:{title:"How Phishing Attacks Target Crypto Users",cq:"What is phishing and how does it work in crypto?",scenario:"A beginner clicking a link that looks like a legitimate crypto website.",overwhelmed:"A website may look exactly like a real wallet or exchange login page. Many beginners do not realise these pages can be fake.",clear:"Phishing attacks use fake websites or messages to trick people into entering sensitive information.",calm:"These attacks work because they copy the design of real services very closely.",structured:"To avoid phishing attacks: Always check the website address. Use official bookmarks. Avoid clicking unknown links."},
+  v40:{title:'Why "Free Crypto" Offers Are Usually Scams',cq:"Why are giveaway offers often fraudulent?",scenario:"A beginner seeing a message promising free crypto.",overwhelmed:"Social media posts sometimes claim you can receive free crypto simply by sending a small amount first.",clear:"These offers are designed to trick people into sending funds that will never be returned.",calm:"Real promotions do exist, but legitimate organisations never ask people to send crypto first.",structured:"When evaluating offers: Be cautious of giveaways. Never send crypto to receive more. Verify offers through official sources."},
+  v41:{title:"How Hackers Try to Access Crypto Wallets",cq:"How do attackers attempt to access wallets?",scenario:"A beginner concerned about wallet security.",overwhelmed:"Stories about hacked accounts can make beginners feel that crypto is unsafe.",clear:"In most cases, hackers gain access through stolen passwords, phishing links, or exposed recovery phrases.",calm:"Strong security habits greatly reduce these risks.",structured:"Basic wallet security includes: Protecting your recovery phrase. Using strong passwords. Avoiding suspicious links."},
+  v42:{title:"Why Keeping Records of Your Crypto Matters",cq:"Why should crypto users keep records of what they own?",scenario:"A beginner buying crypto across different apps and losing track of what they own.",overwhelmed:"After buying crypto on a few different apps, it becomes easy to forget exactly what you bought, where it is stored, or when you bought it.",clear:"Keeping simple records helps you track your crypto activity and understand your holdings.",calm:"Many experienced users keep a basic record of purchases, transfers, and wallet locations.",structured:"A simple record should include: What crypto you bought. When you bought it. Where it is stored."},
+  v43:{title:"How to Keep Track of What Crypto You Own",cq:"How do people keep track of their crypto holdings?",scenario:"A beginner unsure how to monitor crypto stored across multiple wallets or exchanges.",overwhelmed:"As people explore crypto, they may end up using several wallets or exchanges. It can quickly become difficult to remember where everything is.",clear:"Tracking tools or simple records help people see all their holdings in one place.",calm:"Even a basic list of wallets and balances can make managing crypto much easier.",structured:"To stay organised: List the wallets and exchanges you use. Track what is stored in each one. Update the list when things change."},
+  v44:{title:"Why Knowing Where Your Crypto Is Stored Is Important",cq:"Why should users know where their crypto is stored?",scenario:"A beginner forgetting whether funds are on an exchange or in a wallet.",overwhelmed:"After using several crypto platforms, beginners sometimes struggle to remember where their funds are stored.",clear:"Crypto can exist in different places: exchanges, mobile wallets, hardware wallets, or other services.",calm:"Knowing exactly where your crypto is stored helps you stay in control and avoid confusion.",structured:"To stay aware of your storage: Know which platforms you use. Know which wallets you control. Keep a simple list of locations."},
+  v45:{title:"The Simple Security Habits Crypto Users Follow",cq:"What habits help protect crypto accounts?",scenario:"A beginner wondering how experienced users protect their crypto.",overwhelmed:"When learning about crypto security, beginners may feel overwhelmed by the number of precautions mentioned online.",clear:"In reality, most users rely on a few consistent security habits.",calm:"These habits are simple but effective when practiced regularly.",structured:"Common security habits include: Using strong passwords. Enabling two-factor authentication. Protecting recovery phrases."},
+  v46:{title:"A Simple System for Staying in Control of Your Crypto",cq:"How can beginners manage crypto in a simple, organised way?",scenario:"A beginner trying to build a simple routine for managing crypto safely.",overwhelmed:"Without a system, crypto activity can feel scattered across different apps, wallets, and transactions.",clear:"A simple personal system helps users track activity and stay organised.",calm:"Most people eventually develop a routine that works for them.",structured:"A basic crypto system might include: Tracking purchases. Tracking storage locations. Reviewing accounts regularly."},
+  v47:{title:"Why Many Crypto Investors Think Long Term",cq:"Why do many people focus on long-term thinking in crypto?",scenario:"A beginner noticing constant price discussions and wondering if crypto is only about quick gains.",overwhelmed:"When first exploring crypto, it can feel like everything revolves around price movements and quick opportunities.",clear:"Many experienced crypto users focus less on short-term price changes and more on the long-term development of the technology.",calm:"Markets naturally move up and down, but understanding the underlying technology can help people stay calm during these changes.",structured:"A long-term mindset focuses on: Learning how the technology works. Understanding risk. Avoiding emotional decisions."},
+  v48:{title:"Why Patience Matters in Crypto",cq:"Why is patience important in the crypto space?",scenario:"A beginner feeling pressure to act quickly because others appear to be making money.",overwhelmed:"In fast-moving markets, it can feel like you need to act immediately to avoid missing opportunities.",clear:"Many mistakes happen when people make decisions based on urgency rather than understanding.",calm:"Patience allows people to learn the system, understand risks, and make more thoughtful decisions.",structured:"To practice patience: Take time to learn. Avoid rushed decisions. Focus on understanding the system."},
+  v49:{title:"Why Following Crypto Hype Can Be Dangerous",cq:"Why can hype be risky in crypto?",scenario:"A beginner seeing viral social media posts promoting certain coins.",overwhelmed:"Social media often amplifies excitement around certain cryptocurrencies, making it seem like everyone is talking about the same opportunity.",clear:"Hype cycles can cause people to act quickly without understanding what they are investing in.",calm:"Taking time to research and understand projects helps reduce the impact of hype-driven decisions.",structured:"When you see crypto hype: Pause before acting. Research the project. Focus on understanding rather than excitement."},
+  v50:{title:"How Experienced Crypto Users Think About Risk",cq:"How do experienced users approach risk?",scenario:"A beginner wondering how people manage uncertainty in crypto markets.",overwhelmed:"Crypto markets can appear unpredictable, which makes beginners wonder how experienced users manage risk.",clear:"Experienced users usually approach crypto with a clear understanding that prices can change and that risk is always present.",calm:"Instead of trying to eliminate risk completely, they focus on managing it carefully.",structured:"A balanced approach to risk includes: Understanding the technology. Avoiding overexposure. Taking time to learn before acting."},
+  v51:{title:"What a Calm, Structured Approach to Crypto Looks Like",cq:"What does a healthy approach to crypto look like?",scenario:"A beginner reflecting on everything learned throughout the roadmap.",overwhelmed:"When people first enter the crypto space, the amount of information and opinions can feel overwhelming.",clear:"Over time, understanding how crypto works helps people move from confusion to confidence.",calm:"The goal is not to rush decisions but to build knowledge and approach the space thoughtfully.",structured:"A structured approach to crypto means: Understanding how the system works. Taking steps to stay secure. Making decisions calmly and thoughtfully."},
+  v52:{title:"The One Habit That Prevents Most Crypto Mistakes",cq:"What simple habit reduces risk in crypto?",scenario:"A beginner trying to avoid mistakes in a complex system.",overwhelmed:"With so many warnings about scams and mistakes, beginners can feel unsure about how to stay safe.",clear:"Most crypto problems happen when people move too quickly without checking the details.",calm:"Taking a moment to slow down and review each step can prevent many common mistakes.",structured:"Before every crypto action: Pause and review the details. Double-check addresses and networks. Only proceed when everything is clear."}
+};
+
+// ═══ SYSTEM PROMPTS ═══
+const SYS_GEN=`You are the official cinematic narrative architect for Chosen Few Academy (CFA) — a trust-first digital asset education brand built for beginners.
+
+THE CFA VOICE
+Write as one calm, experienced founder speaking directly to one overwhelmed beginner. Clear without condescending. Warm without soft. Strategic without technical. Honest without alarming. Never a hype man, guru, or salesperson.
+
+FIVE BRAND PILLARS — embed through story, never state as headers:
+1. Education over hype
+2. Security before opportunity
+3. Structure over noise
+4. Long-term thinking over urgency
+5. Transformation: overwhelmed → calm → confident → structured
+
+STORY ARCHITECTURE — apply all rules before writing:
+
+Rule 1 — Title-Locked Storytelling (non-negotiable)
+Derive the story directly from the video title — not a generic crypto narrative. Extract the specific mistake or scenario, the exact asset/market context, the emotional hook, and the manipulation angle. Use 3-5 title-specific details woven across the full script. If the title is broad, pick one narrow scenario and keep it consistent end-to-end.
+
+Rule 2 — The Character Pair (fixed across every script)
+Two characters appear in every script. Their names and roles never change:
+
+MARCUS — the structured, patient one. The viewer's goal state.
+Marcus pauses before acting. He checks details, asks questions, and moves only when he understands what he is doing. He is not smarter than Jordan — he simply has a system. Show him feeling the same pull Jordan feels, but making a different choice. Marcus is never smug or superior. He is just one step ahead.
+
+JORDAN — the reactive one. Where the viewer currently is.
+Jordan moves fast on emotion, urgency, or borrowed confidence. He is not reckless or foolish — he is human. He feels what the viewer feels. Show his inner thoughts: the excitement, the hesitation he overrides, the moment he commits without full understanding. Jordan is the character the viewer recognises as themselves.
+
+Rules for both characters in every script:
+- Same starting situation — the contrast comes entirely from their different choices, not different circumstances
+- Give each: a Starting Belief, a Trigger Moment, a Decision Point, and a Consequence (short-term feeling + long-term outcome)
+- Include 1-2 concrete setting details (where they are, what they're looking at, what they're doing)
+- Include 2-4 short inner-dialogue lines from Jordan — realistic, not dramatic — that make the psychology feel human
+- Never use generic references: always Marcus or Jordan, never "the first person," "the second person," "the structured one," or "the lost one"
+- Never reuse the same scene setup, decision point, or twist from a prior script
+
+Rule 3 — Psychological Forces (show, don't explain)
+Weave in 2-4 of these without naming them directly: FOMO/urgency loops, social proof ("everyone is winning but me"), authority mimicry (influencers performing expertise), loss aversion and panic decisions, recency bias ("it went up yesterday"), overconfidence from early wins. Show the manipulation in-scene (comment sections, DMs, screenshot gains, countdown timers, algorithmic feeds) before explaining the lesson.
+
+Rule 4 — Numbers as Plot
+Use concrete simple numbers to create clarity without hype. Always translate numbers into meaning. No price predictions. No implied guarantees. Define any technical term in plain English the first time.
+
+Rule 5 — Story Beat Pattern (run at least once per segment)
+Observation → Tension → Choice → Result → Lesson
+
+Rule 6 — Transformation Arc (traceable across full script)
+Overwhelmed → Clear → Calm → Structured Next Step
+
+CINEMATIC FLOW + RETENTION SYSTEM
+- Every 60-90 seconds deliver one of: a clearer understanding, a calmer perspective, or a structured next step
+- Place one pattern interrupt per segment — a tone shift, surprising comparison, or rhetorical question
+- In each segment include one contrast line: "The Lost did X — got Y. The Guided did X — got Y."
+- Every paragraph must advance understanding, reduce anxiety, or increase clarity. If it does none, cut it.
+- By the final segment, the Guided path must produce a simple repeatable 3-step framework
+
+LANGUAGE GUARDRAILS
+Always use: plain English, story-based analogies, beginner-safe vocabulary, reflective grounded pacing, educational framing ("here's how to think about this" / "what to consider").
+Never use: "You need to act now" / "This is your chance" / "Most people don't know this" / hype language / price predictions / guaranteed outcomes / direct buy/sell commands / commands implying certainty.
+
+STRUCTURE — write as five continuous prose sections, no headers or labels:
+- Hook (0:00-0:25): Belief challenge + emotional entry point
+- Segment 1 (0:25-1:45): Story setup, core misunderstanding introduced
+- Segment 2 (1:45-3:00): Tension, manipulation forces at play
+- Segment 3 (3:00-4:15): The guided path revealed, contrast shown
+- Final Segment (4:15-5:00): Transformation payoff, 3-step framework, sequential overlap ending
+
+Rule 7 — Sequential Overlap Ending (non-negotiable)
+Every script ends with a bridge to the next video in the series. This creates a sense of order and progression — Marcus and Jordan are on a continuing journey, not a series of disconnected lessons.
+
+The overlap ending must:
+- Settle the current lesson with calm and clarity — one concrete takeaway Marcus now carries
+- Show Jordan absorbing the same lesson, one beat slower — he now understands what he didn't before
+- Introduce the next question naturally — not as a cliffhanger, not as a tease, but as the honest next thing a person in their position would need to understand
+- Use the NEXT VIDEO title (provided in the user prompt) as the seed for this final question — the viewer should feel that the next video is the natural continuation of this one, not a separate topic
+- If no NEXT VIDEO is provided (final video in the series), close with Marcus and Jordan reflecting on how far they've come — the journey from confused to structured — and leave the viewer with a sense that this understanding compounds over time
+
+The bridge line should feel like a thought the viewer is already having, not a promotional tease. It is the last thing the narrator says before the video ends.
+
+PRE-OUTPUT SELF-AUDIT (run silently before writing):
+□ Story is derived from the title — not generic
+□ 3-5 title-specific details woven across the script
+□ Both characters have all 4 required elements
+□ 2+ psychological forces shown through story (not labeled)
+□ One primary manipulation tactic shown in-scene
+□ No hype language, price predictions, or urgency manipulation
+□ Transformation arc is traceable
+□ Every paragraph advances understanding, reduces anxiety, or increases clarity
+□ Overlap ending leads to continued learning — not pressure
+If any box fails, revise before outputting.
+
+TARGET: 650-900 words of spoken narration.
+
+OUTPUT: Raw spoken words only. One continuous block of plain paragraphs. No section labels, headers, timestamps, metadata, dopamine levels, visual directions, or BINGE elements in the output. No preamble. No commentary. Write the first word of the script immediately.`;
+
+const SYS_SEG=`You are a script segmentation tool. Your only job is to split a spoken script into numbered lines — one natural spoken beat per line, each 4-6 seconds when read aloud.
+
+RULES:
+- Copy the words exactly. Do not change, add, or remove any words.
+- Each numbered line must be a complete sentence or natural spoken phrase. Never cut mid-sentence.
+- Break at periods, question marks, exclamation points, or strong natural pauses.
+- Keep each line to roughly 10-20 words. If a sentence is longer, keep it whole.
+- Number every line starting from 1. No gaps in numbering.
+
+OUTPUT: Only the numbered lines. Nothing else — no title, no header, no totals, no preamble.
+
+EXAMPLE FORMAT:
+1. If you have ever tried to learn digital assets online, you already know how it feels.
+2. Too many voices. Too many opinions.
+3. And somehow, the more you watch, the less certain you feel.
+4. Chosen Few Academy exists for one simple reason — to make learning this space feel clear, safe, and human again.
+
+Begin numbering immediately. Output nothing except the numbered lines.`;
+
+// ═══ STATE ═══
+let selId='', genScript='', finalScript='', segScript='', apiKey='';
+let curScreen=1, genAbort=null, segAbort=null;
+let elapsedTimer=null, genStart=null;
+
+// ═══ API KEY ═══
+function onKeyInput(){
+  const v=document.getElementById('apikey').value.trim();
+  document.getElementById('apikey').className='inp'+(v.startsWith('sk-ant-')?' key-ok':v.length>5?' key-err':'');
+}
+function saveKey(){
+  const v=document.getElementById('apikey').value.trim();
+  if(!v.startsWith('sk-ant-')){showErr('e1','Key must start with sk-ant-');return;}
+  apiKey=v;
+  sessionStorage.setItem('cfa_key',v);
+  document.getElementById('key-ok').style.display='block';
+  showErr('e1','');
+}
+// Restore key from session
+(function(){
+  const k=sessionStorage.getItem('cfa_key');
+  if(k){apiKey=k;document.getElementById('apikey').value=k;document.getElementById('apikey').className='inp key-ok';document.getElementById('key-ok').style.display='block';}
+})();
+
+// ═══ NAVIGATION ═══
+function goTo(n,dir){
+  dir=dir||'right';
+  document.getElementById('s'+curScreen).classList.remove('vis');
+  document.getElementById('s'+curScreen).classList.add(dir==='right'?'hl':'hr');
+  const to=document.getElementById('s'+n);
+  to.classList.remove('hl','hr');
+  to.classList.add('vis');
+  to.scrollTop=0;
+  curScreen=n;
+  updatePills(n);
+}
+function updatePills(n){
+  for(let i=1;i<=5;i++){
+    const p=document.getElementById('p'+i),d=document.getElementById('pd'+i);
+    p.className='pill';d.textContent=i<n?'✓':i;
+    if(i<n)p.classList.add('pd');
+    else if(i===n)p.classList.add(i===3?'pr3':'pa');
+  }
+}
+
+// ═══ SCREEN 1: SELECT ═══
+function tc(btn){
+  const list=btn.nextElementSibling,open=list.classList.contains('open');
+  document.querySelectorAll('.vl').forEach(l=>l.classList.remove('open'));
+  document.querySelectorAll('.cb2').forEach(b=>b.classList.remove('open'));
+  if(!open){list.classList.add('open');btn.classList.add('open');}
+}
+function sv(el,id){
+  document.querySelectorAll('.vo').forEach(o=>o.classList.remove('sel'));
+  el.classList.add('sel');
+  selId=id;
+  const v=V[id];
+
+  // Zone 1: update selection counter
+  const keys=Object.keys(V);
+  const idx=keys.indexOf(id);
+  document.getElementById('sel-count').textContent='#'+(idx+1)+' of 52 selected';
+
+  // Zone 2: populate plot context
+  document.getElementById('plot-empty').style.display='none';
+  document.getElementById('plot-content').classList.add('show');
+  document.getElementById('pbt').textContent=v.title;
+  document.getElementById('pbq').textContent=v.cq;
+  document.getElementById('pbo').textContent=v.overwhelmed;
+  document.getElementById('pbcl').textContent=v.clear;
+  document.getElementById('pbca').textContent=v.calm;
+  document.getElementById('pbst').textContent=v.structured;
+
+  // Show next video chip
+  const nextKey=idx<keys.length-1?keys[idx+1]:null;
+  const chip=document.getElementById('next-vid-chip');
+  if(nextKey){
+    document.getElementById('next-vid-title').textContent=V[nextKey].title;
+    chip.style.display='block';
+  } else {
+    chip.style.display='none';
+  }
+
+  showErr('e1','');
+}
+function buildPrompt(id){
+  const v=V[id];
+
+  // Determine next video in sequence for the overlap ending
+  const keys = Object.keys(V);
+  const currentIdx = keys.indexOf(id);
+  const nextKey = currentIdx < keys.length - 1 ? keys[currentIdx + 1] : null;
+  const nextTitle = nextKey ? V[nextKey].title : null;
+
+  const emotion   = document.getElementById('d-emotion')?.value   || '';
+  const narrative = document.getElementById('d-narrative')?.value || '';
+  const presence  = document.getElementById('d-presence')?.value  || '';
+  const pacing    = document.getElementById('d-pacing')?.value    || '';
+
+
+  const dials = [
+    emotion   ? `Audience Emotion Target: ${emotion}`     : '',
+    narrative ? `Narrative Style: ${narrative}`            : '',
+    presence  ? `Creator Presence: ${presence}`            : '',
+    pacing    ? `Pacing Style: ${pacing}`                  : '',
+  ].filter(Boolean).join('\n');
+
+
+
+  return [
+    `VIDEO TITLE: ${v.title}`,
+    `CORE QUESTION: ${v.cq}`,
+    `SCENARIO: ${v.scenario}`,
+    ``,
+    `NARRATIVE PLOT BEATS:`,
+    `OVERWHELMED: ${v.overwhelmed}`,
+    `CLEAR: ${v.clear}`,
+    `CALM: ${v.calm}`,
+    `STRUCTURED: ${v.structured}`,
+    dials ? `\nCREATIVE DIALS:\n${dials}` : '',
+    nextTitle ? `\nNEXT VIDEO IN SERIES: ${nextTitle}` : '\nSERIES POSITION: Final video — close the journey.',
+  ].filter(Boolean).join('\n').trim();
+}
+
+// ═══ SCREEN 2: STREAMING GENERATION ═══
+const GSTAGES=['Connecting to Anthropic API','First tokens arriving','Building script body','Writing closing section','Script complete'];
+const GSEC=[0,1,5,15,25];
+
+function setGStage(idx){
+  for(let i=0;i<5;i++){
+    const el=document.getElementById('gs'+i),ic=document.getElementById('gi'+i);
+    const sp=el.querySelector('.sspin');if(sp)sp.remove();
+    if(i<idx){el.className='sti sd';ic.textContent='✓';}
+    else if(i===idx){el.className='sti sa';ic.textContent='';const s=document.createElement('div');s.className='sspin';ic.appendChild(s);}
+    else{el.className='sti';ic.textContent=i+1;}
+  }
+}
+function allStagesDone(){
+  for(let i=0;i<5;i++){
+    const el=document.getElementById('gs'+i),ic=document.getElementById('gi'+i);
+    const sp=el.querySelector('.sspin');if(sp)sp.remove();
+    el.className='sti sd';ic.textContent='✓';
+  }
+}
+
+async function startGen(){
+  if(!apiKey){showErr('e1','Paste and save your Anthropic API key first.');return;}
+  if(!selId){showErr('e1','Select a video first.');return;}
+  showErr('e1','');
+  document.getElementById('bgen').disabled=true;
+
+  // Reset stream screen
+  document.getElementById('s2vt').textContent=V[selId].title;
+  document.getElementById('s2-stat').textContent='Connecting…';
+  document.getElementById('stream-box').innerHTML='<span class="stream-cursor"></span>';
+  document.getElementById('s2-words').textContent='0 words';
+  document.getElementById('s2-speed').textContent='';
+  document.getElementById('s2-elapsed').textContent='';
+  setGStage(0);
+
+  goTo(2);
+  genStart=performance.now();
+
+  // Live elapsed timer
+  elapsedTimer=setInterval(()=>{
+    const s=((performance.now()-genStart)/1000).toFixed(1);
+    document.getElementById('s2-elapsed').textContent=s+'s';
+  },100);
+
+  genAbort=new AbortController();
+  let accumulated='', stage=0, tokenCount=0;
+
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-api-key':apiKey,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true'
+      },
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:1500,
+        stream:true,
+        system:SYS_GEN,
+        messages:[{role:'user',content:buildPrompt(selId)}]
+      })
+    });
+
+    if(!resp.ok){
+      const err=await resp.json().catch(()=>({}));
+      throw new Error(err?.error?.message||'HTTP '+resp.status);
+    }
+
+    document.getElementById('s2-stat').textContent='Streaming…';
+    setGStage(1);
+
+    genAbort._reader=resp.body.getReader();
+    const reader=genAbort._reader;
+    const dec=new TextDecoder();
+    let buf='';
+
+    while(true){
+      const {done,value}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n');
+      buf=lines.pop();
+
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        const raw=line.slice(6).trim();
+        if(raw==='[DONE]'||!raw)continue;
+        let evt;try{evt=JSON.parse(raw);}catch{continue;}
+        if(evt.type==='error')throw new Error(evt.error?.message||'Stream error');
+        if(evt.type==='content_block_delta'&&evt.delta?.type==='text_delta'){
+          accumulated+=evt.delta.text;
+          tokenCount++;
+
+          // Update live stream display
+          const box=document.getElementById('stream-box');
+          box.innerHTML=accumulated+'<span class="stream-cursor"></span>';
+          box.scrollTop=box.scrollHeight;
+
+          // Word count + speed
+          const wc=accumulated.trim().split(/\s+/).filter(Boolean).length;
+          const elapsed=(performance.now()-genStart)/1000;
+          document.getElementById('s2-words').textContent=wc+' words';
+          if(elapsed>1)document.getElementById('s2-speed').textContent=Math.round(wc/elapsed)+' w/s';
+
+          // Stage transitions by word count
+          if(wc>0&&stage<1){stage=1;setGStage(1);}
+          if(wc>60&&stage<2){stage=2;setGStage(2);document.getElementById('s2-stat').textContent='Building script…';}
+          if(wc>160&&stage<3){stage=3;setGStage(3);document.getElementById('s2-stat').textContent='Writing closing…';}
+          if(wc>240&&stage<4){stage=4;setGStage(4);document.getElementById('s2-stat').textContent='Almost done…';}
+        }
+      }
+    }
+
+    if(!accumulated)throw new Error('No content received — please try again');
+
+    clearInterval(elapsedTimer);
+    allStagesDone();
+    document.getElementById('s2-stat').textContent='Complete ✓';
+    genScript=accumulated;
+    await sleep(400);
+    openReview();
+
+  }catch(err){
+    clearInterval(elapsedTimer);
+    if(err.name==='AbortError')return; // user cancelled — stay on s2 or already navigated
+    document.getElementById('bgen').disabled=false;
+    showErr('e2',err.message);
+    await sleep(1500);
+    goTo(1,'left');
+    showErr('e1','Generation failed: '+err.message);
+  }
+}
+
+function abortGen(){
+  clearInterval(elapsedTimer);
+  if(genAbort&&genAbort._reader){try{genAbort._reader.cancel();}catch(e){}}
+  genAbort=null;
+  document.getElementById('bgen').disabled=false;
+  goTo(1,'left');
+}
+
+// ═══ SCREEN 3: REVIEW ═══
+function openReview(){
+  const wc=genScript.trim().split(/\s+/).length;
+  document.getElementById('txed').value=genScript;
+  document.getElementById('rwc').textContent='~'+wc+' words';
+  const t=V[selId].title;
+  document.getElementById('rvid').textContent=t.length>44?t.slice(0,44)+'…':t;
+  setDiff(false);onEd();goTo(3);
+  setTimeout(()=>document.getElementById('txed').focus(),350);
+}
+function onEd(){
+  const txt=document.getElementById('txed').value;
+  const wc=txt.trim()===''?0:txt.trim().split(/\s+/).length;
+  document.getElementById('wcn').textContent=wc;
+  const bar=document.getElementById('wb');
+  bar.style.width=Math.min(100,Math.round(wc/900*100))+'%';
+  bar.style.background=wc<500?'#f59e0b':wc<=900?'#34d399':'#f87171';
+  setDiff(txt.trim()!==genScript.trim(),wc-(genScript.trim().split(/\s+/).length||0));
+}
+function setDiff(mod,delta){
+  delta=delta||0;
+  const b1=document.getElementById('rdb'),b2=document.getElementById('rdb2');
+  if(!mod){[b1,b2].forEach(b=>{b.className='dbg dbu';b.textContent='· No changes';});}
+  else{const t='✎ Modified · '+(delta>=0?'+':'')+delta+' words';[b1,b2].forEach(b=>{b.className='dbg dbm';b.textContent=t;});}
+}
+function restSc(){if(!confirm('Restore the original generated script?'))return;document.getElementById('txed').value=genScript;onEd();}
+function cpySc(){navigator.clipboard.writeText(document.getElementById('txed').value).then(()=>alert('Copied.')).catch(()=>alert('Copy failed.'));}
+
+// ═══ SCREEN 4: STREAMING SEGMENTATION ═══
+async function startSeg(){
+  const txt=document.getElementById('txed').value.trim();
+  if(!txt){showErr('e3','Script is empty.');return;}
+  if(!apiKey){showErr('e3','API key missing — go back to Step 1.');return;}
+  showErr('e3','');finalScript=txt;
+  document.getElementById('bseg').disabled=true;
+  document.getElementById('s4l').style.display='';
+  document.getElementById('s4r').style.display='none';
+  document.getElementById('seg-stream-box').textContent='';
+  document.getElementById('seg-stat').textContent='Streaming segments…';
+  document.getElementById('seg-lines').textContent='0 segments';
+  document.getElementById('seg-elapsed').textContent='';
+
+  goTo(4);
+  const segStart=performance.now();
+  const segElTimer=setInterval(()=>{
+    document.getElementById('seg-elapsed').textContent=((performance.now()-segStart)/1000).toFixed(1)+'s';
+  },100);
+
+  segAbort=new AbortController();
+  let accumulated='';
+
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:3000,stream:true,system:SYS_SEG,messages:[{role:'user',content:'BEGIN SCRIPT\n'+finalScript+'\nEND SCRIPT'}]})
+    });
+    if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e?.error?.message||'HTTP '+resp.status);}
+
+    genAbort._reader=resp.body.getReader();
+    const reader=genAbort._reader;const dec=new TextDecoder();let buf='';
+    while(true){
+      const {done,value}=await reader.read();if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n');buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        const raw=line.slice(6).trim();if(raw==='[DONE]'||!raw)continue;
+        let evt;try{evt=JSON.parse(raw);}catch{continue;}
+        if(evt.type==='content_block_delta'&&evt.delta?.type==='text_delta'){
+          accumulated+=evt.delta.text;
+          const box=document.getElementById('seg-stream-box');
+          box.textContent=accumulated;box.scrollTop=box.scrollHeight;
+          const sc=(accumulated.match(/^\d+\./gm)||[]).length;
+          document.getElementById('seg-lines').textContent=sc+' segments';
+        }
+      }
+    }
+
+    clearInterval(segElTimer);
+    if(!accumulated)throw new Error('No segmentation received — please try again');
+    segScript=accumulated;
+    const sc=(segScript.match(/^\d+\./gm)||[]).length;
+    document.getElementById('seg-stat').textContent='Complete ✓';
+    await sleep(400);
+    document.getElementById('s4l').style.display='none';
+    document.getElementById('s4r').style.display='';
+    document.getElementById('sgo').textContent=segScript;
+    document.getElementById('sgcc').textContent='~'+sc+' segments';
+    document.getElementById('bseg').disabled=false;
+
+  }catch(err){
+    clearInterval(segElTimer);
+    if(err.name==='AbortError')return;
+    document.getElementById('bseg').disabled=false;
+    goTo(3,'left');
+    showErr('e3','Segmentation failed: '+err.message);
+  }
+}
+function cpySg(){navigator.clipboard.writeText(segScript).then(()=>alert('Copied.')).catch(()=>alert('Copy failed.'));}
+
+// ═══ SCREEN 5: NOTION ═══
+function goN(){
+  const wc=finalScript.trim().split(/\s+/).length;
+  const sc=(segScript.match(/^\d+\./gm)||[]).length;
+  document.getElementById('nsi').textContent='~'+wc+' words';
+  document.getElementById('nsgi').textContent='~'+sc+' segments';
+  document.getElementById('npt').textContent=V[selId].title+' — CFA Script';
+  document.getElementById('s5l').style.display='none';
+  document.getElementById('s5s').style.display='none';
+  document.getElementById('s5b').style.display='';
+  document.getElementById('s5d').style.display='none';
+  document.getElementById('bnotion').disabled=false;
+  showErr('e5','');goTo(5);
+}
+async function saveN(){
+  const nToken  = document.getElementById('notion-token').value.trim();
+  const nPageId = document.getElementById('notion-page-id').value.trim().replace(/[^a-f0-9]/gi,'');
+
+  if(!nToken||(!nToken.startsWith('secret_')&&!nToken.startsWith('ntn_'))){
+    showErr('e5','Enter a valid Notion integration token (starts with ntn_ or secret_).');return;
+  }
+  if(nPageId.length < 32){
+    showErr('e5','Enter a valid Notion page ID (32 characters from the page URL).');return;
+  }
+
+  document.getElementById('bnotion').disabled=true;
+  document.getElementById('s5l').style.display='';
+  showErr('e5','');
+
+  const title = V[selId].title + ' — CFA Script';
+
+  try{
+    // Route through Cloudflare Worker — no CORS issues
+    const resp = await fetch('https://summer-mountain-bb3c.twilight-haze-012f.workers.dev/',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        token:   nToken,
+        pageId:  nPageId,
+        title:   title,
+        finalScript:  finalScript,
+        segScript:    segScript
+      })
+    });
+
+    const data = await resp.json();
+
+    if(!resp.ok || data.error){
+      throw new Error(data.error || 'HTTP '+resp.status);
+    }
+
+    document.getElementById('s5l').style.display='none';
+    document.getElementById('s5s').style.display='';
+    document.getElementById('nout').textContent='Page created: '+title+'\nNotion ID: '+(data.id||'created');
+    document.getElementById('s5b').style.display='none';
+    document.getElementById('s5d').style.display='';
+
+  }catch(err){
+    document.getElementById('s5l').style.display='none';
+    document.getElementById('bnotion').disabled=false;
+    showErr('e5','Notion save failed: '+err.message);
+  }
+}
+
+// ═══ HELPERS ═══
+function saveNotionCreds(){
+  const t=document.getElementById('notion-token').value.trim();
+  const p=document.getElementById('notion-page-id').value.trim();
+  if(t) sessionStorage.setItem('cfa_notion_token',t);
+  if(p) sessionStorage.setItem('cfa_notion_page',p);
+  // Visual confirmation
+  const btn=event.target;
+  const orig=btn.textContent;
+  btn.textContent='✓ Saved';
+  btn.style.color='var(--success)';
+  setTimeout(()=>{btn.textContent=orig;btn.style.color='var(--muted)';},1500);
+}
+// Restore notion creds from session
+(function(){
+  const t=sessionStorage.getItem('cfa_notion_token');
+  const p=sessionStorage.getItem('cfa_notion_page');
+  if(t)document.getElementById('notion-token').value=t;
+  if(p)document.getElementById('notion-page-id').value=p;
+})();
+function showErr(id,msg){const el=document.getElementById(id);if(!el)return;el.textContent=msg?'⚠ '+msg:'';el.className='err'+(msg?' show':'');}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+function restart(){
+  selId='';genScript='';finalScript='';segScript='';
+  if(genAbort){genAbort.abort();genAbort=null;}
+  if(segAbort){segAbort.abort();segAbort=null;}
+  clearInterval(elapsedTimer);
+  document.querySelectorAll('.vo').forEach(o=>o.classList.remove('sel'));
+  document.getElementById('sel-count').textContent='none selected';
+  document.getElementById('plot-empty').style.display='';
+  document.getElementById('plot-content').classList.remove('show');
+  document.getElementById('next-vid-chip').style.display='none';
+  document.querySelectorAll('.vl').forEach(l=>l.classList.remove('open'));
+  document.querySelectorAll('.cb2').forEach(b=>b.classList.remove('open'));
+  document.getElementById('bgen').disabled=false;
+  document.getElementById('bseg').disabled=false;
+  document.getElementById('txed').value='';
+  ['e1','e2','e3','e4','e5'].forEach(id=>showErr(id,''));
+  [2,3,4,5].forEach(n=>{const el=document.getElementById('s'+n);el.classList.remove('vis','hl');el.classList.add('hr');});
+  const s1=document.getElementById('s1');s1.classList.remove('hl','hr');s1.classList.add('vis');s1.scrollTop=0;
+  curScreen=1;updatePills(1);
+}
+</script>
+</body>
+</html>
