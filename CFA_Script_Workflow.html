@@ -995,7 +995,7 @@ select option{background:var(--surface2)}
 
     <!-- Prompt -->
     <div style="margin-bottom:14px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px" id="s6-prompt-label">Kling Image Prompt</div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px" id="s6-prompt-label">Flux Pro Image Prompt</div>
       <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:8px;line-height:1.6">When using the o1 reference model, refer to your uploaded images by their assigned number — e.g. <span style="color:var(--accent);font-weight:700">@Image1</span>, <span style="color:var(--accent);font-weight:700">@Image2</span>. Check the <strong style="color:var(--text)">@Image Map</strong> below the slots to see which number belongs to which image.</div>
       <textarea class="txed" id="s6-prompt" aria-labelledby="s6-prompt-label" style="min-height:120px;border-color:rgba(245,158,11,.35)" spellcheck="false"></textarea>
     </div>
@@ -1120,7 +1120,7 @@ select option{background:var(--surface2)}
     <!-- Generate button -->
     <div class="action-zone">
       <div class="next-step-block">
-        <div class="next-step-label" id="s6-gen-label">Generate</div>
+        <div class="next-step-label" id="s6-gen-label">Generate Image (Flux Pro) or Video (Kling)</div>
         <button class="btn bprim" id="btn-generate-scene" onclick="generateScene()">Generate Image</button>
       </div>
     </div>
@@ -1217,12 +1217,16 @@ select option{background:var(--surface2)}
           <div class="ks-dot miss" id="sm-ks-fal" style="width:8px;height:8px"></div>
           fal.ai API Key
         </div>
-        <div class="settings-section-desc">Used for Kling image and video generation. Get yours at fal.ai &rarr; Dashboard &rarr; API Keys.</div>
+        <div class="settings-section-desc">Used for Flux Pro image and Kling video generation. Get yours at fal.ai &rarr; Dashboard &rarr; API Keys.</div>
         <div class="settings-row">
           <input class="inp" id="sm-fal-key" type="password" placeholder="your-fal-api-key" autocomplete="off" aria-label="fal.ai API key"/>
           <button class="settings-save" onclick="smSaveFal()">Save</button>
         </div>
         <div class="settings-ok" id="sm-fal-ok">&#x2713; Key saved for this session</div>
+        <div style="margin-top:12px">
+          <button class="settings-save" id="btn-test-endpoints" onclick="testEndpoints()" style="width:100%;margin-top:0">Test fal.ai Endpoints</button>
+          <div id="endpoint-test-results" style="display:none;margin-top:10px;font-size:11px;font-family:'DM Mono',monospace;line-height:1.9"></div>
+        </div>
       </div>
 
     </div>
@@ -1558,6 +1562,73 @@ function smSaveFal(){
   sessionStorage.setItem('cfa_fal_key',v);
   document.getElementById('sm-fal-ok').classList.add('show');
   updateKeyStatus();
+}
+async function testEndpoints(){
+  const falKey=sessionStorage.getItem('cfa_fal_key');
+  const btn=document.getElementById('btn-test-endpoints');
+  const results=document.getElementById('endpoint-test-results');
+  if(!falKey){
+    results.style.display='';
+    results.innerHTML='<span style="color:var(--error)">⚠ Save your fal.ai API key first.</span>';
+    return;
+  }
+  btn.disabled=true;
+  btn.textContent='Testing…';
+  results.style.display='';
+  results.innerHTML='<span style="color:var(--muted)">Running 3 tests in parallel…</span>';
+  const t0=Date.now();
+  const canvas=document.createElement('canvas');
+  canvas.width=1;canvas.height=1;
+  const testBlob=await new Promise(r=>canvas.toBlob(r,'image/jpeg'));
+  const authHeaders={'Authorization':'Key '+falKey,'Content-Type':'application/json'};
+  const [r1,r2,r3]=await Promise.allSettled([
+    (async()=>{
+      const t=Date.now();
+      const {fal}=await import('https://esm.sh/@fal-ai/client@1');
+      fal.config({credentials:falKey});
+      const url=await fal.storage.upload(testBlob);
+      if(url&&url.startsWith('https://')) return {ms:Date.now()-t};
+      throw new Error('No URL returned');
+    })(),
+    (async()=>{
+      const t=Date.now();
+      const resp=await fetch('https://fal.run/fal-ai/flux-pro/v1.1',{
+        method:'POST',headers:authHeaders,
+        body:JSON.stringify({prompt:'test',image_size:'landscape_16_9',num_images:1,safety_tolerance:'2',output_format:'jpeg'})
+      });
+      const data=await resp.json().catch(()=>({}));
+      if(resp.ok&&data.images) return {ms:Date.now()-t};
+      const msg=typeof data?.detail==='string'?data.detail:typeof data?.error==='string'?data.error:'HTTP '+resp.status;
+      throw new Error(msg);
+    })(),
+    (async()=>{
+      const t=Date.now();
+      const resp=await fetch('https://fal.run/fal-ai/kling-video/v1.6/pro/image-to-video',{
+        method:'POST',headers:authHeaders,
+        body:JSON.stringify({prompt:'test',duration:5,aspect_ratio:'16:9'})
+      });
+      const data=await resp.json().catch(()=>({}));
+      if(resp.ok||resp.status===422) return {ms:Date.now()-t,note:resp.status===422?'(422 — endpoint live)':''};
+      const msg=typeof data?.detail==='string'?data.detail:typeof data?.error==='string'?data.error:'HTTP '+resp.status;
+      throw new Error(msg);
+    })()
+  ]);
+  const total=Date.now()-t0;
+  const labels=['File upload (SDK)','Flux Pro image','Kling video'];
+  let html='';
+  [r1,r2,r3].forEach((r,i)=>{
+    if(r.status==='fulfilled'){
+      const note=r.value.note?' <span style="color:var(--muted)">'+r.value.note+'</span>':'';
+      html+='<div style="color:var(--success)">✓ '+labels[i]+' — live ('+r.value.ms+'ms)'+note+'</div>';
+    } else {
+      const msg=r.reason instanceof Error?r.reason.message:String(r.reason);
+      html+='<div style="color:var(--error)">✗ '+labels[i]+' — failed: '+msg+'</div>';
+    }
+  });
+  html+='<div style="color:var(--muted);margin-top:4px">Total: '+total+'ms</div>';
+  results.innerHTML=html;
+  btn.disabled=false;
+  btn.textContent='Test fal.ai Endpoints';
 }
 function updateKeyStatus(){
   const hasAnt=!!sessionStorage.getItem('cfa_key');
@@ -2288,7 +2359,7 @@ Output only the classifications. One per line. No explanation.`;
 
 const SYS_KLING_IMAGE = `You are generating a Kling AI image generation prompt for a 2D illustrated crypto education video. Write 3-5 sentences of pure scene description. Lead with setting and action. Include character pose and expression. Include 2-3 key props that support the meaning of the line. Include one orange accent object naturally in the scene. Match the emotional tone of the line. No style directives. No hex codes. No cartoon or 2D language — Kling handles style. Output only the scene description.`;
 
-const SYS_KLING_VIDEO = `You are generating a Kling AI video generation prompt for a crypto education video clip. Write 3-5 sentences describing what moves, how it moves, and how the camera behaves. Lead with the character action. Describe movement precisely — not vague words like 'dynamic' but specific actions like 'leans forward slowly' or 'glances down at phone'. Describe camera direction using cinematography language. Include lighting and mood. Everything must imply motion — no static description. Output only the motion description. Do not include camera preset language — that is added separately.`;
+const SYS_KLING_VIDEO = `You are generating a Kling AI video motion prompt for a 2D illustrated crypto education video. The visual style is non-negotiable: 2D illustrated characters with bold clean outlines, flat color shading, and consistent line weight throughout all motion — do not drift toward photorealism at any point in the clip. Write 3-5 sentences describing what moves, how it moves, and how the camera behaves. Lead with the character action. Describe movement precisely — not vague words like 'dynamic' but specific actions like 'leans forward slowly' or 'glances down at phone'. Include one specific facial micro-expression change during the clip. Describe camera direction using cinematography language — dolly, push, pull, pan, static hold. Include lighting mood — warm amber, cold blue, soft natural. Everything must imply motion — no static description. The 2D illustrated style must be explicitly maintained throughout all motion in every prompt you write. Output only the motion description. Do not include camera preset language — that is added separately.`;
 
 async function enterSceneGeneration(){
   if(!segScript){showErr('e6','No segmented script found — go back to Step 4.');return;}
@@ -2411,7 +2482,11 @@ async function generatePromptForScene(i){
       const readyEl=document.getElementById('prompt-ready-'+i);
       if(readyEl)readyEl.style.display='';
     }
-  }catch(e){}
+  }catch(e){
+    // Surface prompt generation failures in the scene row
+    const row=document.getElementById('prompt-ready-'+i);
+    if(row){row.textContent='⚠ Prompt failed';row.style.display='';}
+  }
 }
 
 function startSceneGeneration(){
@@ -2438,10 +2513,10 @@ function loadScene(i){
 
   document.getElementById('s6-script-line').textContent=s.line;
 
-  document.getElementById('s6-prompt-label').textContent=isVideo?'Kling Video Prompt':'Kling Image Prompt';
+  document.getElementById('s6-prompt-label').textContent=isVideo?'Kling Video Prompt':'Flux Pro Image Prompt';
   document.getElementById('s6-prompt').value=s.prompt||'';
 
-  document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image';
+  document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image (Flux Pro)';
   document.getElementById('btn-generate-scene').textContent=isVideo?'Generate Video Clip':'Generate Image';
 
   document.getElementById('s6-video-settings').style.display=isVideo?'':'none';
@@ -2518,7 +2593,8 @@ async function handleUpload(slot,input){
     delete sceneRefs[slot];
     slotEl.classList.remove('has-image');
     if(img)img.remove();
-    statusEl.textContent='✗ '+(err.message||'Upload failed');
+    const uploadErrMsg=err instanceof Error?err.message:typeof err==='string'?err:'Upload failed';
+    statusEl.textContent='✗ '+uploadErrMsg;
     statusEl.style.color='var(--error)';
     slotEl.style.borderColor='var(--error)';
     input.value='';
@@ -2722,27 +2798,23 @@ async function generateScene(){
     let resultType='';
 
     if(!isVideo){
-      const body={prompt:finalPrompt,aspect_ratio:'16:9',num_images:1};
-      // Add uploaded reference images if available as HTTPS URLs (plain string array)
-      const refImages=[];
-      if(sceneRefs['scene']&&sceneRefs['scene'].url&&sceneRefs['scene'].url.startsWith('https://')){
-        refImages.push(sceneRefs['scene'].url);
+      // Flux Pro image generation
+      // Produces stronger 2D illustrated character consistency than Kling Image
+      const body={
+        prompt:finalPrompt,
+        image_size:'landscape_16_9',
+        num_images:1,
+        safety_tolerance:'2',
+        output_format:'jpeg'
+      };
+      // Pass subject reference if uploaded as HTTPS URL
+      if(sceneRefs['subject']&&sceneRefs['subject'].url&&
+        sceneRefs['subject'].url.startsWith('https://')){
+        body.reference_image_url=sceneRefs['subject'].url;
       }
-      if(sceneRefs['style']&&sceneRefs['style'].url&&sceneRefs['style'].url.startsWith('https://')){
-        refImages.push(sceneRefs['style'].url);
-      }
-      // kling-image/o1 requires image_urls (reference model); fall back to
-      // kling-image (text-to-image) when no references are provided.
-      let imgEndpoint;
-      if(refImages.length>0){
-        body.image_urls=refImages;
-        imgEndpoint='https://fal.run/fal-ai/kling-image/o1';
-      } else {
-        imgEndpoint='https://fal.run/fal-ai/kling-image/v3/text-to-image';
-      }
-      document.getElementById('s6-gen-label').textContent='Generating image…';
+      document.getElementById('s6-gen-label').textContent='Generating image with Flux Pro…';
 
-      const resp=await fetch(imgEndpoint,{
+      const resp=await fetch('https://fal.run/fal-ai/flux-pro/v1.1',{
         method:'POST',
         headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},
         body:JSON.stringify(body)
@@ -2751,7 +2823,7 @@ async function generateScene(){
       if(!resp.ok){const e=await resp.json().catch(()=>({}));const msg=typeof e?.detail==='string'?e.detail:typeof e?.error==='string'?e.error:typeof e?.message==='string'?e.message:JSON.stringify(e)||'HTTP '+resp.status;throw new Error(msg);}
 
       const data=await resp.json();
-      resultURL=data.images?.[0]?.url||data.image?.url||'';
+      resultURL=data.images?.[0]?.url||data.image?.url||data.images?.[0]||'';
       resultType='image';
 
     } else {
@@ -2794,12 +2866,12 @@ async function generateScene(){
       container.innerHTML='<video src="'+resultURL+'" controls autoplay muted loop style="width:100%;border-radius:8px"></video>';
     }
     document.getElementById('s6-result-area').style.display='';
-    document.getElementById('s6-gen-label').textContent=resultType==='image'?'Generate Image':'Generate Video';
+    document.getElementById('s6-gen-label').textContent=resultType==='image'?'Generate Image (Flux Pro)':'Generate Video';
 
   }catch(err){
     const display=err instanceof Error?err.message:typeof err==='string'?err:JSON.stringify(err);
     showErr('e6',display);
-    document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image';
+    document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image (Flux Pro)';
   }finally{
     document.getElementById('btn-generate-scene').disabled=false;
   }
