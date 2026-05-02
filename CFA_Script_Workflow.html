@@ -1594,9 +1594,9 @@ async function testEndpoints(){
     })(),
     (async()=>{
       const t=Date.now();
-      const resp=await fetch('https://fal.run/fal-ai/flux-pro/v1.1',{
+      const resp=await fetch('https://fal.run/fal-ai/kling-image/v3/text-to-image',{
         method:'POST',headers:authHeaders,
-        body:JSON.stringify({prompt:'test',image_size:'landscape_16_9',num_images:1,safety_tolerance:'2',output_format:'jpeg'})
+        body:JSON.stringify({prompt:'test',aspect_ratio:'16:9',num_images:1})
       });
       const data=await resp.json().catch(()=>({}));
       if(resp.ok&&data.images) return {ms:Date.now()-t};
@@ -1605,18 +1605,18 @@ async function testEndpoints(){
     })(),
     (async()=>{
       const t=Date.now();
-      const resp=await fetch('https://fal.run/fal-ai/kling-video/v1.6/pro/image-to-video',{
+      const resp=await fetch('https://fal.run/fal-ai/kling-video/v1.6/pro/text-to-video',{
         method:'POST',headers:authHeaders,
         body:JSON.stringify({prompt:'test',duration:5,aspect_ratio:'16:9'})
       });
       const data=await resp.json().catch(()=>({}));
-      if(resp.ok||resp.status===422) return {ms:Date.now()-t,note:resp.status===422?'(422 — endpoint live)':''};
+      if(resp.ok&&data.video) return {ms:Date.now()-t};
       const msg=typeof data?.detail==='string'?data.detail:typeof data?.error==='string'?data.error:'HTTP '+resp.status;
       throw new Error(msg);
     })()
   ]);
   const total=Date.now()-t0;
-  const labels=['File upload (SDK)','Flux Pro image','Kling video'];
+  const labels=['File upload (SDK)','Kling image','Kling video'];
   let html='';
   [r1,r2,r3].forEach((r,i)=>{
     if(r.status==='fulfilled'){
@@ -2886,13 +2886,20 @@ async function generateScene(){
       if(sceneRefs['startframe']&&sceneRefs['startframe'].url&&sceneRefs['startframe'].url.startsWith('https://')){
         body.image_url=sceneRefs['startframe'].url;
       }
-      if(sceneRefs['subject']&&sceneRefs['subject'].url&&sceneRefs['subject'].url.startsWith('https://')){
+      // subject_reference_image_url only supported by image-to-video endpoint
+      if(body.image_url&&sceneRefs['subject']&&sceneRefs['subject'].url&&sceneRefs['subject'].url.startsWith('https://')){
         body.subject_reference_image_url=sceneRefs['subject'].url;
       }
 
+      // Route to the correct Kling video endpoint:
+      // image-to-video requires image_url — text-to-video does not
+      const vidEndpoint=body.image_url
+        ?'https://fal.run/fal-ai/kling-video/v1.6/pro/image-to-video'
+        :'https://fal.run/fal-ai/kling-video/v1.6/pro/text-to-video';
+
       document.getElementById('s6-gen-label').textContent='Generating video… (~60-90 seconds)';
 
-      const resp=await fetch('https://fal.run/fal-ai/kling-video/v1.6/pro/image-to-video',{
+      const resp=await fetch(vidEndpoint,{
         method:'POST',
         headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},
         body:JSON.stringify(body)
