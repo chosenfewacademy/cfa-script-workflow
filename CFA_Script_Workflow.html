@@ -1200,6 +1200,16 @@ select option{background:var(--surface2)}
         <div class="s6-step-title">Result</div>
         <div class="s6-step-sub">review &amp; confirm</div>
       </div>
+      <!-- Quality review checklist -->
+      <div style="background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.2);border-radius:8px;padding:11px 14px;margin-bottom:12px;font-family:'DM Mono',monospace;font-size:10px">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:7px">&#x1F50D; Before you confirm — check these</div>
+        <div style="display:flex;flex-direction:column;gap:5px;line-height:1.6">
+          <div><span style="color:var(--success);font-weight:700;margin-right:6px">①</span><span style="color:var(--text)">Is the character rendered in <strong>2D illustrated style</strong> — bold outlines, flat color? If it looks photorealistic, go Back and check that the Subject slot was ✓ Ready before generating.</span></div>
+          <div><span style="color:var(--success);font-weight:700;margin-right:6px">②</span><span style="color:var(--text)">Does the <strong>character's face match</strong> Marcus or Jordan? If not, regenerate.</span></div>
+          <div><span style="color:var(--success);font-weight:700;margin-right:6px">③</span><span style="color:var(--text)">Does the <strong>scene and setting</strong> match the script line above?</span></div>
+          <div><span style="color:var(--accent);font-weight:700;margin-right:6px">④</span><span style="color:var(--text)"><strong>Download before confirming.</strong> Once you move to the next scene you cannot come back to this result.</span></div>
+        </div>
+      </div>
       <div id="s6-result-content" style="margin-bottom:12px"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn bsec" onclick="regenerateScene()" style="font-size:12px;padding:9px 18px">&#x21BA; Regenerate</button>
@@ -2669,12 +2679,17 @@ async function handleUpload(slot,input){
   try{
     const httpsUrl=await uploadToFal(file);
     sceneRefs[slot]={url:httpsUrl,file:file};
-    statusEl.textContent='✓ Uploaded';
+    statusEl.textContent= slot==='startframe'
+      ? '✓ Start Frame set — this image will be frame 1 of your video'
+      : '✓ Uploaded';
     statusEl.style.color='var(--success)';
     slotEl.style.borderColor='var(--success)';
     updateImageState();
     updateReadiness();
-    setTimeout(()=>{statusEl.remove();},2000);
+    // Keep start frame confirmation visible longer; auto-clear others
+    setTimeout(()=>{
+      if(slot!=='startframe') statusEl.remove();
+    }, slot==='startframe' ? 99999 : 2000);
   }catch(err){
     // Upload failed — clear the slot, show error
     delete sceneRefs[slot];
@@ -2795,7 +2810,7 @@ function updateReadiness(){
   } else if(subjReady){
     rows.push({icon:'✓',color:'var(--success)',text:'<strong>Character ready.</strong> Kling o1 will use the uploaded reference to generate in 2D illustrated style.'});
   } else {
-    rows.push({icon:'✗',color:'var(--error)',text:'<strong>No character image loaded.</strong> Output will be photorealistic — not 2D illustrated. The scene auto-loads characters when you navigate scenes. If Subject still shows empty, reload the scene or manually upload the character image.'});
+    rows.push({icon:'✗',color:'var(--error)',text:'<strong>No character image loaded.</strong> Output will be photorealistic — not 2D illustrated. <span style="color:var(--text)">Fix: click the Subject slot above to upload a character photo manually, then wait for ✓ Ready.</span>'});
   }
 
   if(isVideo){
@@ -2810,9 +2825,25 @@ function updateReadiness(){
   const bgColor=subjUploading?'rgba(245,158,11,.06)':subjReady?'rgba(52,211,153,.05)':'rgba(248,113,113,.05)';
 
   el.innerHTML=`<div style="background:${bgColor};border:1px solid ${borderColor};border-radius:8px;padding:11px 14px;margin-bottom:14px;font-family:'DM Mono',monospace;font-size:10px">
-<div style="font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">⚡ Generation Status</div>
+<div style="font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">⚡ Character Status</div>
 ${rows.map(r=>`<div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:4px;line-height:1.6"><span style="color:${r.color};flex-shrink:0;font-weight:700">${r.icon}</span><span style="color:${r.color}">${r.text}</span></div>`).join('')}
 </div>`;
+
+  // ── Drive the Next button state from upload status ──────────────────────
+  const nextBtn=document.getElementById('btn-chars-next');
+  if(nextBtn){
+    if(subjUploading){
+      nextBtn.disabled=true;
+      nextBtn.textContent='⏳ Uploading…';
+      nextBtn.style.opacity='0.5';
+      nextBtn.style.cursor='not-allowed';
+    } else {
+      nextBtn.disabled=false;
+      nextBtn.textContent='Next →';
+      nextBtn.style.opacity='';
+      nextBtn.style.cursor='';
+    }
+  }
 }
 
 // Set slot mode — upload or text — for Scene and Style
@@ -2940,7 +2971,7 @@ async function autoPopulateCharacters(characters){
       setTimeout(()=>{ statusEl.textContent=''; statusEl.className='ref-slot-upload-status'; }, 2000);
     }catch(err){
       // Upload failed — base64 stays, show persistent warning
-      statusEl.textContent = '⚠ Upload failed — character may not appear in generation';
+      statusEl.textContent = '✗ Upload failed — click this slot to upload manually';
       statusEl.className = 'ref-slot-upload-status error';
       updateReadiness();
       console.warn('Character upload failed:', altText, err.message);
