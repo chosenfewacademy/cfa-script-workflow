@@ -478,6 +478,23 @@ select option{background:var(--surface2)}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:0.01ms !important;animation-iteration-count:1 !important;transition-duration:0.01ms !important}
 }
+/* ─── Scene Generation Step Panels ─────────────────────────────────────── */
+.s6-step-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px}
+.s6-step-header{display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.s6-step-num{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.s6-step-title{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text)}
+.s6-step-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-left:auto}
+.s6-step-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:16px}
+.s6-step-indicator{display:flex;align-items:center;gap:3px;margin-bottom:14px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
+.s6-ind-dot{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;transition:all .2s}
+.s6-ind-dot.waiting{background:var(--border);color:var(--muted)}
+.s6-ind-dot.active{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000}
+.s6-ind-dot.done{background:var(--success);color:#000}
+.s6-ind-label{font-family:'DM Mono',monospace;font-size:9px;transition:color .2s;white-space:nowrap}
+.s6-ind-label.waiting{color:var(--muted)}
+.s6-ind-label.active{color:var(--accent);font-weight:700}
+.s6-ind-label.done{color:var(--success)}
+.s6-ind-sep{flex:1;height:1px;background:var(--border);min-width:8px;max-width:24px}
 </style>
 </head>
 <body>
@@ -973,11 +990,11 @@ select option{background:var(--surface2)}
     </div>
   </div>
 
-  <!-- PHASE 2: SCENE BY SCENE -->
+  <!-- PHASE 2: SCENE BY SCENE — step-by-step wizard -->
   <div id="s6-phase2" style="display:none">
 
-    <!-- Scene header -->
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+    <!-- Scene header — always visible -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
       <div id="s6-scene-badge" class="scene-tag image">&#x1F5BC; IMAGE</div>
       <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">
         Scene <span id="s6-scene-num">1</span> of <span id="s6-scene-total">0</span>
@@ -990,178 +1007,213 @@ select option{background:var(--surface2)}
       <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)" id="s6-progress-text">0 done</div>
     </div>
 
-    <!-- Script line -->
-    <div style="padding:12px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);line-height:1.6;margin-bottom:14px" id="s6-script-line"></div>
+    <!-- Script line — always visible -->
+    <div style="padding:12px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);line-height:1.6;margin-bottom:12px" id="s6-script-line"></div>
 
-    <!-- Prompt -->
-    <div style="margin-bottom:14px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px" id="s6-prompt-label">Kling Image Prompt</div>
-      <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:8px;line-height:1.6">When using the o1 reference model, refer to your uploaded images by their assigned number — e.g. <span style="color:var(--accent);font-weight:700">@Image1</span>, <span style="color:var(--accent);font-weight:700">@Image2</span>. Check the <strong style="color:var(--text)">@Image Map</strong> below the slots to see which number belongs to which image.</div>
-      <textarea class="txed" id="s6-prompt" aria-labelledby="s6-prompt-label" style="min-height:120px;border-color:rgba(245,158,11,.35)" spellcheck="false"></textarea>
+    <!-- Step indicator (renders dynamically) -->
+    <div class="s6-step-indicator" id="s6-step-indicator"></div>
+
+    <!-- ═══ STEP 1: CHARACTERS ═══ -->
+    <div id="s6-panel-chars" class="s6-step-panel">
+      <div class="s6-step-header">
+        <div class="s6-step-num">1</div>
+        <div class="s6-step-title">Characters</div>
+        <div class="s6-step-sub">auto-loads from your script</div>
+      </div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:12px;line-height:1.7">
+        Character photos are uploading automatically based on who appears in this scene. Wait for <span style="color:var(--success);font-weight:700">✓ Ready</span> before clicking Next.<br><br>
+        <span style="color:var(--text)">The uploaded photo is what tells Kling to render in <strong style="color:var(--accent)">2D illustrated style</strong>. Without it, every generation will be photorealistic — no matter what the prompt says.</span>
+      </div>
+      <div class="ref-slots" style="margin-bottom:12px">
+        <!-- Subject -->
+        <div class="ref-slot" id="slot-subject" role="button" tabindex="0" onclick="triggerUpload('subject')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();triggerUpload('subject')}">
+          <input type="file" id="upload-subject" accept="image/*" style="display:none" onchange="handleUpload('subject',this)"/>
+          <div class="ref-slot-img-num" id="imgnum-subject"></div>
+          <div class="ref-slot-badge ref-badge-required">required</div>
+          <div class="ref-slot-label">Subject</div>
+          <div class="ref-slot-helper">Primary character — drives the 2D illustrated style.</div>
+          <div class="ref-slot-upload-status" id="subject-upload-status"></div>
+          <button class="ref-slot-clear" aria-label="Clear subject image" onclick="clearSlot(event,'subject')">&#x00D7;</button>
+        </div>
+        <!-- Co-Subject -->
+        <div class="ref-slot" id="slot-cosubject" role="button" tabindex="0" onclick="triggerUpload('cosubject')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();triggerUpload('cosubject')}">
+          <input type="file" id="upload-cosubject" accept="image/*" style="display:none" onchange="handleUpload('cosubject',this)"/>
+          <div class="ref-slot-img-num" id="imgnum-cosubject"></div>
+          <div class="ref-slot-badge ref-badge-optional">optional</div>
+          <div class="ref-slot-label">Co-Subject</div>
+          <div class="ref-slot-helper">Second character — only needed for two-person scenes.</div>
+          <div class="ref-slot-upload-status" id="cosubject-upload-status"></div>
+          <button class="ref-slot-clear" aria-label="Clear co-subject image" onclick="clearSlot(event,'cosubject')">&#x00D7;</button>
+        </div>
+      </div>
+      <!-- Live readiness indicator -->
+      <div id="s6-readiness"></div>
+      <div class="s6-step-nav">
+        <button class="btn bgh" id="btn-prev-scene" onclick="prevScene()" style="font-size:11px;padding:7px 14px;display:none">&#x2190; Prev Scene</button>
+        <div style="margin-left:auto">
+          <button class="btn bprim" id="btn-chars-next" onclick="s6NextFromChars()" style="font-size:13px;padding:11px 24px">Next &#x2192;</button>
+        </div>
+      </div>
     </div>
 
-    <!-- Reference image slots -->
-
-    <!-- ═══ CHARACTER ALIGNMENT GUIDE ═══ -->
-    <div style="background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.35);border-radius:10px;padding:14px 16px;margin-bottom:14px">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:10px">🎨 2D Character Alignment — Read Before Generating</div>
-      <div style="font-family:'DM Mono',monospace;font-size:10px;line-height:1.8;color:var(--text)">
-        <div style="display:flex;gap:10px;margin-bottom:7px;align-items:flex-start"><span style="color:var(--success);font-weight:700;flex-shrink:0">①</span><span><strong>Characters (Subject / Co-Subject) control the 2D style.</strong> These slots must show <span style="color:var(--success);font-weight:700">✓ Ready</span> before you hit Generate. The uploaded character photo is what tells Kling o1 to work in 2D illustrated style. Without it, the output will be <span style="color:var(--error)">photorealistic</span> — every time, no matter what the prompt says.</span></div>
-        <div style="display:flex;gap:10px;margin-bottom:7px;align-items:flex-start"><span style="color:var(--success);font-weight:700;flex-shrink:0">②</span><span><strong>Scene and Style slots only set the environment and mood.</strong> They do not determine whether the output is 2D illustrated. Only the character slots do that. You can have a perfect scene reference and still get a photorealistic person if Subject is empty.</span></div>
-        <div style="display:flex;gap:10px;margin-bottom:7px;align-items:flex-start"><span style="color:var(--accent);font-weight:700;flex-shrink:0">③</span><span><strong>For VIDEO — always set a Start Frame.</strong> Generate your image first, confirm it looks right, then upload it as the Start Frame. This locks the 2D character appearance into the first frame of the video. Text-to-video with no Start Frame uses a text-only path that may produce inconsistent or photorealistic output.</span></div>
-        <div style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--accent);font-weight:700;flex-shrink:0">④</span><span><strong>Two-person scenes — use both slots and reference them by number in the prompt.</strong> Subject = <span style="color:var(--accent);font-weight:700">@Image1</span>, Co-Subject = <span style="color:var(--accent);font-weight:700">@Image2</span>. Check the @Image Map below the slots to confirm which number is which. Both slots must show ✓ Ready for both characters to appear in 2D style.</span></div>
+    <!-- ═══ STEP 2 (VIDEO): START FRAME ═══ -->
+    <div id="s6-panel-startframe" style="display:none" class="s6-step-panel">
+      <div class="s6-step-header">
+        <div class="s6-step-num">2</div>
+        <div class="s6-step-title">Start Frame</div>
+        <div class="s6-step-sub">locks 2D style into the video</div>
       </div>
-    </div>
-
-    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Reference Images</div>
-
-    <div class="ref-slots" id="s6-ref-slots">
-
-      <!-- Subject -->
-      <div class="ref-slot" id="slot-subject" role="button" tabindex="0" onclick="triggerUpload('subject')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();triggerUpload('subject')}">
-        <input type="file" id="upload-subject" accept="image/*" style="display:none" onchange="handleUpload('subject',this)"/>
-        <div class="ref-slot-img-num" id="imgnum-subject"></div>
-        <div class="ref-slot-badge ref-badge-required">required</div>
-        <div class="ref-slot-label">Subject</div>
-        <div class="ref-slot-helper">Primary character &#x2014; clear front-facing image. Locks who appears in the scene.</div>
-        <div class="ref-slot-upload-status" id="subject-upload-status"></div>
-        <button class="ref-slot-clear" aria-label="Clear subject image" onclick="clearSlot(event,'subject')">&#x00D7;</button>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;line-height:1.8;margin-bottom:14px">
+        <div style="color:var(--accent);font-weight:700;margin-bottom:6px">Why this matters</div>
+        <div style="color:var(--text);margin-bottom:8px">Upload the confirmed image for this scene as the Start Frame. Kling uses it as the exact first frame of your video and extends it into motion — keeping the 2D character style locked throughout the clip.</div>
+        <div style="color:var(--muted)">Without a Start Frame, Kling generates the opening frame from text only — your character may appear photorealistic or look inconsistent with the image you generated.</div>
       </div>
-
-      <!-- Co-Subject -->
-      <div class="ref-slot" id="slot-cosubject" role="button" tabindex="0" onclick="triggerUpload('cosubject')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();triggerUpload('cosubject')}">
-        <input type="file" id="upload-cosubject" accept="image/*" style="display:none" onchange="handleUpload('cosubject',this)"/>
-        <div class="ref-slot-img-num" id="imgnum-cosubject"></div>
-        <div class="ref-slot-badge ref-badge-optional">optional</div>
-        <div class="ref-slot-label">Co-Subject</div>
-        <div class="ref-slot-helper">Second character only &#x2014; use when two people appear together in this scene.</div>
-        <div class="ref-slot-upload-status" id="cosubject-upload-status"></div>
-        <button class="ref-slot-clear" aria-label="Clear co-subject image" onclick="clearSlot(event,'cosubject')">&#x00D7;</button>
-      </div>
-
-      <!-- Scene -->
-      <div class="ref-slot" id="slot-scene">
-        <input type="file" id="upload-scene" accept="image/*" style="display:none" onchange="handleUpload('scene',this)"/>
-        <div class="ref-slot-img-num" id="imgnum-scene"></div>
-        <div class="ref-slot-badge ref-badge-required">required</div>
-        <div class="ref-slot-label">Scene</div>
-        <div class="ref-slot-helper">Background or environment reference. Tells Kling where the action takes place.</div>
-        <div class="ref-slot-mode-toggle">
-          <button class="ref-mode-btn active" id="scene-mode-upload" onclick="setSlotMode('scene','upload')" aria-label="Upload scene image">&#x1F4C1; Upload</button>
-          <button class="ref-mode-btn" id="scene-mode-text" onclick="setSlotMode('scene','text')" aria-label="Describe scene in text">&#x270F; Describe</button>
-        </div>
-        <div id="scene-upload-area" onclick="triggerUpload('scene')" style="cursor:pointer">
-          <div id="scene-upload-hint" style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:4px">tap to upload image</div>
-        </div>
-        <textarea class="ref-slot-textarea" id="scene-text-input" placeholder="Describe the setting... e.g. Modern home office, warm desk lamp on left, city skyline through window, evening blue light" style="display:none" aria-label="Scene description" oninput="handleTextInput('scene',this)"></textarea>
-        <div class="ref-slot-upload-status" id="scene-upload-status"></div>
-        <button class="ref-slot-clear" aria-label="Clear scene reference" onclick="clearSlot(event,'scene')">&#x00D7;</button>
-      </div>
-
-      <!-- Style -->
-      <div class="ref-slot" id="slot-style">
-        <input type="file" id="upload-style" accept="image/*" style="display:none" onchange="handleUpload('style',this)"/>
-        <div class="ref-slot-img-num" id="imgnum-style"></div>
-        <div class="ref-slot-badge ref-badge-required">required</div>
-        <div class="ref-slot-label">Style</div>
-        <div class="ref-slot-helper">Visual tone reference &#x2014; color, mood, and feel you want to match.</div>
-        <div class="ref-slot-mode-toggle">
-          <button class="ref-mode-btn active" id="style-mode-upload" onclick="setSlotMode('style','upload')" aria-label="Upload style image">&#x1F4C1; Upload</button>
-          <button class="ref-mode-btn" id="style-mode-text" onclick="setSlotMode('style','text')" aria-label="Describe style in text">&#x270F; Describe</button>
-        </div>
-        <div id="style-upload-area" onclick="triggerUpload('style')" style="cursor:pointer">
-          <div id="style-upload-hint" style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:4px">tap to upload image</div>
-        </div>
-        <textarea class="ref-slot-textarea" id="style-text-input" placeholder="Describe the visual style... e.g. Warm cinematic, muted amber tones, soft shadows, clean and minimal, 2D illustrated feel" style="display:none" aria-label="Style description" oninput="handleTextInput('style',this)"></textarea>
-        <div class="ref-slot-upload-status" id="style-upload-status"></div>
-        <button class="ref-slot-clear" aria-label="Clear style reference" onclick="clearSlot(event,'style')">&#x00D7;</button>
-      </div>
-
-    </div>
-
-    <!-- @Image live map — appears when images are uploaded -->
-    <div class="img-legend" id="s6-img-legend">
-      <div class="img-legend-title">📌 @Image Reference Map — use these numbers in your prompt above</div>
-      <div id="s6-img-legend-rows"></div>
-      <div class="img-legend-footer">Slots using text descriptions (✏ Describe mode) are appended to the prompt automatically — no @Image tag needed for those.</div>
-    </div>
-
-    <!-- Start Frame — video only -->
-    <div id="slot-startframe-wrap" style="display:none;margin-bottom:14px">
-      <div class="ref-slot start-frame" id="slot-startframe" role="button" tabindex="0" onclick="triggerUpload('startframe')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();triggerUpload('startframe')}" style="width:100%">
+      <div class="ref-slot start-frame" id="slot-startframe" role="button" tabindex="0" onclick="triggerUpload('startframe')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();triggerUpload('startframe')}" style="width:100%;margin-bottom:4px">
         <input type="file" id="upload-startframe" accept="image/*" style="display:none" onchange="handleUpload('startframe',this)"/>
-        <div class="ref-slot-badge ref-badge-required">required for video</div>
+        <div class="ref-slot-badge" style="background:rgba(245,158,11,.12);color:var(--accent);font-size:9px;font-family:'DM Mono',monospace;padding:2px 6px;border-radius:3px;display:inline-block;margin-bottom:6px">recommended — keeps 2D style</div>
         <div class="ref-slot-label">Start Frame</div>
-        <div class="ref-slot-helper">Upload the confirmed image from this scene, or the final frame of the previous video clip.<br><br><strong style="color:var(--accent)">This becomes the first frame of the video clip.</strong> Without it, Kling invents the opening frame and your character may drift between clips.</div>
-        <button class="ref-slot-clear" aria-label="Clear start frame image" onclick="clearSlot(event,'startframe')">&#x00D7;</button>
+        <div class="ref-slot-helper">Upload the generated image for this scene. It becomes the first frame of the video clip.</div>
+        <button class="ref-slot-clear" aria-label="Clear start frame" onclick="clearSlot(event,'startframe')">&#x00D7;</button>
+      </div>
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:4px;padding:0 2px">Don't have the image yet? Click Skip — you can come back and generate the image first, then return to this video scene.</div>
+      <div class="s6-step-nav">
+        <button class="btn bgh" onclick="s6ShowPanel('chars')" style="font-size:12px;padding:9px 16px">&#x2190; Back</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn bsec" onclick="s6ShowPanel('prompt')" style="font-size:12px;padding:9px 18px">Skip</button>
+          <button class="btn bprim" onclick="s6ShowPanel('prompt')" style="font-size:13px;padding:11px 24px">Next &#x2192;</button>
+        </div>
       </div>
     </div>
 
-    <!-- Video settings — video only -->
-    <div id="s6-video-settings" style="display:none">
-      <div class="video-settings">
-        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Video Settings</div>
+    <!-- ═══ STEP 2 (IMAGE) / STEP 3 (VIDEO): PROMPT & SCENE ═══ -->
+    <div id="s6-panel-prompt" style="display:none" class="s6-step-panel">
+      <div class="s6-step-header">
+        <div class="s6-step-num" id="s6-prompt-stepnum">2</div>
+        <div class="s6-step-title" id="s6-prompt-panel-title">Prompt &amp; Scene</div>
+        <div class="s6-step-sub" id="s6-prompt-panel-sub">write the scene prompt</div>
+      </div>
 
-        <!-- Duration -->
-        <div style="margin-bottom:12px">
-          <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:6px">Duration</div>
-          <div class="duration-toggle">
-            <button class="dur-btn active" id="dur-5" onclick="setDuration(5)">5 seconds</button>
-            <button class="dur-btn" id="dur-10" onclick="setDuration(10)">10 seconds</button>
+      <!-- Scene & Style (image scenes) / Camera & Duration (video) both live here -->
+      <div id="s6-scene-style-slots" style="margin-bottom:14px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Scene &amp; Style <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional — image or text description)</span></div>
+        <div class="ref-slots">
+          <!-- Scene -->
+          <div class="ref-slot" id="slot-scene">
+            <input type="file" id="upload-scene" accept="image/*" style="display:none" onchange="handleUpload('scene',this)"/>
+            <div class="ref-slot-img-num" id="imgnum-scene"></div>
+            <div class="ref-slot-badge ref-badge-optional">optional</div>
+            <div class="ref-slot-label">Scene</div>
+            <div class="ref-slot-helper">Background or environment reference.</div>
+            <div class="ref-slot-mode-toggle">
+              <button class="ref-mode-btn active" id="scene-mode-upload" onclick="setSlotMode('scene','upload')" aria-label="Upload scene image">&#x1F4C1; Upload</button>
+              <button class="ref-mode-btn" id="scene-mode-text" onclick="setSlotMode('scene','text')" aria-label="Describe scene in text">&#x270F; Describe</button>
+            </div>
+            <div id="scene-upload-area" onclick="triggerUpload('scene')" style="cursor:pointer">
+              <div id="scene-upload-hint" style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:4px">tap to upload image</div>
+            </div>
+            <textarea class="ref-slot-textarea" id="scene-text-input" placeholder="Describe the setting... e.g. Modern home office, warm desk lamp on left, city skyline through window, evening light" style="display:none" aria-label="Scene description" oninput="handleTextInput('scene',this)"></textarea>
+            <div class="ref-slot-upload-status" id="scene-upload-status"></div>
+            <button class="ref-slot-clear" aria-label="Clear scene reference" onclick="clearSlot(event,'scene')">&#x00D7;</button>
+          </div>
+          <!-- Style -->
+          <div class="ref-slot" id="slot-style">
+            <input type="file" id="upload-style" accept="image/*" style="display:none" onchange="handleUpload('style',this)"/>
+            <div class="ref-slot-img-num" id="imgnum-style"></div>
+            <div class="ref-slot-badge ref-badge-optional">optional</div>
+            <div class="ref-slot-label">Style</div>
+            <div class="ref-slot-helper">Visual tone — color, mood, feel.</div>
+            <div class="ref-slot-mode-toggle">
+              <button class="ref-mode-btn active" id="style-mode-upload" onclick="setSlotMode('style','upload')" aria-label="Upload style image">&#x1F4C1; Upload</button>
+              <button class="ref-mode-btn" id="style-mode-text" onclick="setSlotMode('style','text')" aria-label="Describe style in text">&#x270F; Describe</button>
+            </div>
+            <div id="style-upload-area" onclick="triggerUpload('style')" style="cursor:pointer">
+              <div id="style-upload-hint" style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:4px">tap to upload image</div>
+            </div>
+            <textarea class="ref-slot-textarea" id="style-text-input" placeholder="Describe the visual style... e.g. 2D illustrated, warm amber tones, bold outlines, flat color shading" style="display:none" aria-label="Style description" oninput="handleTextInput('style',this)"></textarea>
+            <div class="ref-slot-upload-status" id="style-upload-status"></div>
+            <button class="ref-slot-clear" aria-label="Clear style reference" onclick="clearSlot(event,'style')">&#x00D7;</button>
           </div>
         </div>
+      </div>
 
-        <!-- Camera preset -->
-        <div class="camera-select">
-          <div id="s6-camera-label" style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:6px">Camera Movement</div>
-          <select id="s6-camera" aria-labelledby="s6-camera-label" style="width:100%">
-            <option value="static">Static Hold &#x2014; camera locked, subject moves naturally</option>
-            <option value="dolly-in">Slow Dolly In &#x2014; camera pushes gently toward subject</option>
-            <option value="dolly-out">Slow Dolly Out &#x2014; camera pulls back to reveal scene</option>
-            <option value="pan-left">Pan Left &#x2014; smooth horizontal sweep left</option>
-            <option value="pan-right">Pan Right &#x2014; smooth horizontal sweep right</option>
-            <option value="pull-back">Pull Back &#x2014; camera retreats, expanding the visible world</option>
-            <option value="handheld">Handheld &#x2014; subtle organic movement, grounded feel</option>
-            <option value="orbit">Orbit &#x2014; camera circles slowly around the subject</option>
-          </select>
+      <!-- @Image map -->
+      <div class="img-legend" id="s6-img-legend">
+        <div class="img-legend-title">&#x1F4CC; @Image Reference Map &#x2014; use these numbers in your prompt</div>
+        <div id="s6-img-legend-rows"></div>
+        <div class="img-legend-footer">Text descriptions (&#x270F; Describe mode) are appended to the prompt automatically &#x2014; no @Image tag needed.</div>
+      </div>
+
+      <!-- Video settings (video only) -->
+      <div id="s6-video-settings" style="display:none">
+        <div class="video-settings">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Video Settings</div>
+          <div style="margin-bottom:12px">
+            <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:6px">Duration</div>
+            <div class="duration-toggle">
+              <button class="dur-btn active" id="dur-5" onclick="setDuration(5)">5 seconds</button>
+              <button class="dur-btn" id="dur-10" onclick="setDuration(10)">10 seconds</button>
+            </div>
+          </div>
+          <div class="camera-select">
+            <div id="s6-camera-label" style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:6px">Camera Movement</div>
+            <select id="s6-camera" aria-labelledby="s6-camera-label" style="width:100%">
+              <option value="static">Static Hold &#x2014; camera locked, subject moves naturally</option>
+              <option value="dolly-in">Slow Dolly In &#x2014; camera pushes gently toward subject</option>
+              <option value="dolly-out">Slow Dolly Out &#x2014; camera pulls back to reveal scene</option>
+              <option value="pan-left">Pan Left &#x2014; smooth horizontal sweep left</option>
+              <option value="pan-right">Pan Right &#x2014; smooth horizontal sweep right</option>
+              <option value="pull-back">Pull Back &#x2014; camera retreats, expanding the visible world</option>
+              <option value="handheld">Handheld &#x2014; subtle organic movement, grounded feel</option>
+              <option value="orbit">Orbit &#x2014; camera circles slowly around the subject</option>
+            </select>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- Error -->
-    <div id="e6" class="err"></div>
+      <!-- Prompt -->
+      <div style="margin-bottom:14px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px" id="s6-prompt-label">Kling Image Prompt</div>
+        <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:8px;line-height:1.6">Reference uploaded images using <span style="color:var(--accent);font-weight:700">@Image1</span>, <span style="color:var(--accent);font-weight:700">@Image2</span>, etc. &#x2014; see the map above.</div>
+        <textarea class="txed" id="s6-prompt" aria-labelledby="s6-prompt-label" style="min-height:120px;border-color:rgba(245,158,11,.35)" spellcheck="false"></textarea>
+      </div>
 
-    <!-- Generation Readiness Panel — updated dynamically by updateReadiness() -->
-    <div id="s6-readiness"></div>
+      <!-- Error -->
+      <div id="e6" class="err"></div>
 
-    <!-- Generate button -->
-    <div class="action-zone">
-      <div class="next-step-block">
-        <div class="next-step-label" id="s6-gen-label">Generate Image (Kling) or Video (Kling)</div>
-        <button class="btn bprim" id="btn-generate-scene" onclick="generateScene()">Generate Image</button>
+      <!-- Generate button -->
+      <div class="action-zone">
+        <div class="next-step-block">
+          <div class="next-step-label" id="s6-gen-label">Generate Image (Kling o1 — 2D illustrated)</div>
+          <button class="btn bprim" id="btn-generate-scene" onclick="generateScene()" style="font-size:14px;padding:14px 28px">Generate Image</button>
+        </div>
+      </div>
+
+      <div style="margin-top:8px">
+        <button class="btn bgh" onclick="s6BackFromPrompt()" style="font-size:11px;padding:7px 14px">&#x2190; Back</button>
       </div>
     </div>
 
-    <!-- Result area -->
-    <div id="s6-result-area" style="display:none">
-      <div class="scene-result" id="s6-result-content"></div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+    <!-- ═══ STEP RESULT ═══ -->
+    <div id="s6-panel-result" style="display:none" class="s6-step-panel">
+      <div class="s6-step-header">
+        <div class="s6-step-num" id="s6-result-stepnum">3</div>
+        <div class="s6-step-title">Result</div>
+        <div class="s6-step-sub">review &amp; confirm</div>
+      </div>
+      <div id="s6-result-content" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn bsec" onclick="regenerateScene()" style="font-size:12px;padding:9px 18px">&#x21BA; Regenerate</button>
         <button class="btn bgh" id="btn-download-scene" onclick="downloadScene()" style="font-size:12px;padding:9px 18px">&#x2193; Download</button>
       </div>
-
-      <div class="action-zone" style="margin-top:12px">
+      <div class="action-zone">
         <div class="next-step-block">
           <div class="next-step-label">Complete this scene</div>
           <button class="btn bprim" onclick="confirmScene()" style="font-size:14px;padding:15px">&#x2713; Confirm &amp; Next Scene &#x2192;</button>
         </div>
       </div>
-    </div>
-
-    <!-- Back to previous scene -->
-    <div style="margin-top:8px">
-      <button class="btn bgh" id="btn-prev-scene" onclick="prevScene()" style="font-size:11px;padding:7px 14px;display:none">&#x2190; Previous Scene</button>
+      <div style="margin-top:8px">
+        <button class="btn bgh" onclick="s6ShowPanel('prompt')" style="font-size:11px;padding:7px 14px">&#x2190; Back to Prompt</button>
+      </div>
     </div>
 
   </div>
@@ -2533,13 +2585,24 @@ function loadScene(i){
   document.getElementById('s6-prompt-label').textContent=isVideo?'Kling Video Prompt':'Kling Image Prompt';
   document.getElementById('s6-prompt').value=s.prompt||'';
 
-  document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image (Kling)';
+  // Update prompt panel header based on scene type
+  const promptTitle=document.getElementById('s6-prompt-panel-title');
+  const promptSub=document.getElementById('s6-prompt-panel-sub');
+  const promptStepNum=document.getElementById('s6-prompt-stepnum');
+  const resultStepNum=document.getElementById('s6-result-stepnum');
+  if(promptTitle) promptTitle.textContent=isVideo?'Motion & Camera':'Prompt & Scene';
+  if(promptSub)   promptSub.textContent=isVideo?'describe the motion':'describe the scene';
+  if(promptStepNum) promptStepNum.textContent=isVideo?'3':'2';
+  if(resultStepNum) resultStepNum.textContent=isVideo?'4':'3';
+
+  document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video (Kling — image-to-video)':'Generate Image (Kling o1 — 2D illustrated)';
   document.getElementById('btn-generate-scene').textContent=isVideo?'Generate Video Clip':'Generate Image';
 
   document.getElementById('s6-video-settings').style.display=isVideo?'':'none';
-  document.getElementById('slot-startframe-wrap').style.display=isVideo?'':'none';
+  // Scene/style slots only relevant for image scenes; hide for video (prompt is the main input)
+  const sceneStyleEl=document.getElementById('s6-scene-style-slots');
+  if(sceneStyleEl) sceneStyleEl.style.display=isVideo?'none':'';
 
-  document.getElementById('s6-result-area').style.display='none';
   document.getElementById('s6-result-content').innerHTML='';
   lastGeneratedURL='';
 
@@ -2547,10 +2610,13 @@ function loadScene(i){
 
   showErr('e6','');
 
+  // Reset to Step 1 (Characters) for every new scene
+  s6ShowPanel('chars');
+
   // Auto-populate character slots based on who appears in this scene's script line
   autoPopulateCharacters(s.characters);
 
-  // Show initial readiness immediately — will update again when uploads resolve
+  // Show initial readiness — will update again when uploads resolve
   updateReadiness();
 }
 
@@ -2643,9 +2709,70 @@ function clearSlot(e,slot){
   updateReadiness();
 }
 
+// ─── Step Panel Navigation ─────────────────────────────────────────────────
+// s6ShowPanel: hides all step panels and shows the named one, updates indicator
+function s6ShowPanel(name){
+  ['chars','startframe','prompt','result'].forEach(n=>{
+    const el=document.getElementById('s6-panel-'+n);
+    if(el) el.style.display = n===name ? '' : 'none';
+  });
+  updateS6StepIndicator(name);
+}
+
+function s6NextFromChars(){
+  const s=sceneData[currentScene];
+  const isVideo=s&&s.tag==='VIDEO';
+  // Check if subject is still uploading
+  const subjSlotEl=document.getElementById('slot-subject');
+  const subjStatusEl=subjSlotEl&&subjSlotEl.querySelector('.ref-slot-upload-status');
+  const subjUploading=subjStatusEl&&(subjStatusEl.classList.contains('loading')||
+    (subjStatusEl.textContent&&subjStatusEl.textContent.includes('Uploading')));
+  if(subjUploading){
+    const rdiv=document.getElementById('s6-readiness');
+    if(rdiv){
+      const prev=rdiv.innerHTML;
+      rdiv.innerHTML='<div style="background:rgba(245,158,11,.1);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;margin-bottom:8px;font-family:\'DM Mono\',monospace;font-size:10px;color:var(--accent);font-weight:700">⏳ Character is still uploading — wait for ✓ Ready before continuing.</div>'+prev;
+      setTimeout(()=>{updateReadiness();},2500);
+    }
+    return;
+  }
+  const subjReady=sceneRefs['subject']&&sceneRefs['subject'].url&&sceneRefs['subject'].url.startsWith('https://');
+  if(!subjReady){
+    // Hard block — no character means photorealistic, which we never allow
+    const rdiv=document.getElementById('s6-readiness');
+    if(rdiv){
+      rdiv.innerHTML='<div style="background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.4);border-radius:8px;padding:10px 14px;margin-bottom:8px;font-family:\'DM Mono\',monospace;font-size:10px;color:var(--error)"><strong>No character image loaded.</strong> Generation without a character reference will produce a photorealistic image, not 2D illustrated. The scene should have auto-loaded the character — if it still shows empty, wait a moment and try again, or upload the character image manually by clicking the Subject slot.</div>';
+    }
+    return;
+  }
+  s6ShowPanel(isVideo ? 'startframe' : 'prompt');
+}
+
+function s6BackFromPrompt(){
+  const s=sceneData[currentScene];
+  const isVideo=s&&s.tag==='VIDEO';
+  s6ShowPanel(isVideo ? 'startframe' : 'chars');
+}
+
+function updateS6StepIndicator(currentPanel){
+  const el=document.getElementById('s6-step-indicator');
+  if(!el||!sceneData||typeof currentScene==='undefined')return;
+  const s=sceneData[currentScene];
+  if(!s){el.innerHTML='';return;}
+  const isVideo=s.tag==='VIDEO';
+  const steps=isVideo
+    ?[{id:'chars',label:'1. Characters'},{id:'startframe',label:'2. Start Frame'},{id:'prompt',label:'3. Motion & Camera'},{id:'result',label:'4. Result'}]
+    :[{id:'chars',label:'1. Characters'},{id:'prompt',label:'2. Prompt & Scene'},{id:'result',label:'3. Result'}];
+  const activeIdx=steps.findIndex(st=>st.id===currentPanel);
+  el.innerHTML=steps.map((st,i)=>{
+    const state=i<activeIdx?'done':i===activeIdx?'active':'waiting';
+    return `<div class="s6-ind-step" style="display:flex;align-items:center;gap:4px">${i>0?'<div class="s6-ind-sep"></div>':''}<div class="s6-ind-dot ${state}">${state==='done'?'✓':i+1}</div><div class="s6-ind-label ${state}">${st.label}</div></div>`;
+  }).join('');
+}
+
 // ─── Generation Readiness Indicator ──────────────────────────────────────────
 // Called whenever a slot changes. Renders a live green/amber/red status panel
-// above the Generate button so Chris always knows if 2D output is achievable.
+// in the Characters step so Chris always knows the upload state.
 function updateReadiness(){
   const el=document.getElementById('s6-readiness');
   if(!el||typeof currentScene==='undefined'||!sceneData)return;
@@ -2868,50 +2995,10 @@ async function generateScene(){
 
   if(!falKey){showErr('e6','fal.ai API key not set — open ⚙ Settings.');return;}
 
-  // ── 2D Character Alignment Safety Check ──────────────────────────────────
-  // Block generation if character is still uploading — output would be wrong.
-  // Warn (but allow) if no character image is loaded at all.
-  const _subjSlot=document.getElementById('slot-subject');
-  const _subjStatus=_subjSlot&&_subjSlot.querySelector('.ref-slot-upload-status');
-  const _subjUploading=_subjStatus&&(_subjStatus.classList.contains('loading')||(_subjStatus.textContent&&_subjStatus.textContent.includes('Uploading')));
-  const _subjReady=sceneRefs['subject']&&sceneRefs['subject'].url&&sceneRefs['subject'].url.startsWith('https://');
-  if(_subjUploading){
-    showErr('e6','⏳ Character image is still uploading — wait for ✓ Ready before generating. Generating now would produce photorealistic output instead of 2D illustrated.');
-    return;
-  }
-  if(!_subjReady&&!isVideo){
-    const _ok=confirm(
-      '⚠  No character image is loaded.\n\n'+
-      'Generating without a character reference will produce a PHOTOREALISTIC image — not 2D illustrated.\n\n'+
-      'For 2D character-aligned output:\n'+
-      '  • Use the ← Prev / Next → buttons to navigate scenes so characters auto-load\n'+
-      '  • Or manually upload a character photo to the Subject slot\n'+
-      '  • Wait for "✓ Ready" to appear, then generate\n\n'+
-      'Press OK to generate anyway (photorealistic), or Cancel to go back and load the character.'
-    );
-    if(!_ok)return;
-  }
-  if(isVideo&&!sceneRefs['startframe']?.url?.startsWith('https://')){
-    // Soft warn for text-to-video — don't block, just remind
-    const _sfOk=confirm(
-      '⚠  No Start Frame is set for this video scene.\n\n'+
-      'Without a Start Frame, Kling uses text-to-video — the character may look inconsistent or photorealistic.\n\n'+
-      'Recommended workflow:\n'+
-      '  1. Switch this scene to IMAGE, generate and review the image\n'+
-      '  2. Switch back to VIDEO\n'+
-      '  3. Upload that image as the Start Frame\n'+
-      '  4. Then generate the video\n\n'+
-      'Press OK to generate text-to-video anyway, or Cancel to set a Start Frame first.'
-    );
-    if(!_sfOk)return;
-  }
-  // ─────────────────────────────────────────────────────────────────────────
-
   const prompt=document.getElementById('s6-prompt').value.trim();
   if(!prompt){showErr('e6','Prompt is empty — add a scene description.');return;}
 
   document.getElementById('btn-generate-scene').disabled=true;
-  document.getElementById('s6-result-area').style.display='none';
   showErr('e6','');
 
   let finalPrompt=prompt;
@@ -2932,88 +3019,62 @@ async function generateScene(){
     let resultType='';
 
     if(!isVideo){
-      // Kling Image o1 — multi-reference image generation with character,
-      // scene, and style reference support
-      const body={
-        prompt:finalPrompt,
-        aspect_ratio:'16:9',
-        num_images:1
-      };
-      // Collect all uploaded reference images
-      // Only HTTPS URLs from fal.ai storage pass — base64 data URIs excluded by guard
+      // ── IMAGE: Always Kling o1 with character references ─────────────────
+      // Text-to-image (no refs) is removed — it always produces photorealistic
+      // output and is not suitable for the CFA 2D illustrated workflow.
       const refImages=[];
-      if(sceneRefs['subject']&&sceneRefs['subject'].url&&
-        sceneRefs['subject'].url.startsWith('https://')){
-        refImages.push(sceneRefs['subject'].url);
+      if(sceneRefs['subject']?.url?.startsWith('https://'))   refImages.push(sceneRefs['subject'].url);
+      if(sceneRefs['cosubject']?.url?.startsWith('https://')) refImages.push(sceneRefs['cosubject'].url);
+      if(sceneRefs['scene']?.url?.startsWith('https://'))     refImages.push(sceneRefs['scene'].url);
+      if(sceneRefs['style']?.url?.startsWith('https://'))     refImages.push(sceneRefs['style'].url);
+
+      if(refImages.length===0){
+        // Hard block — no refs means photorealistic output, which we never allow
+        showErr('e6','⚠ No character image is ready. Go back to Step 1 and wait for ✓ Ready on the Subject slot before generating.');
+        document.getElementById('btn-generate-scene').disabled=false;
+        return;
       }
-      if(sceneRefs['cosubject']&&sceneRefs['cosubject'].url&&
-        sceneRefs['cosubject'].url.startsWith('https://')){
-        refImages.push(sceneRefs['cosubject'].url);
-      }
-      if(sceneRefs['scene']&&sceneRefs['scene'].url&&
-        sceneRefs['scene'].url.startsWith('https://')){
-        refImages.push(sceneRefs['scene'].url);
-      }
-      if(sceneRefs['style']&&sceneRefs['style'].url&&
-        sceneRefs['style'].url.startsWith('https://')){
-        refImages.push(sceneRefs['style'].url);
-      }
-      let imgEndpoint;
-      if(refImages.length>0){
-        body.image_urls=refImages;
-        imgEndpoint='https://fal.run/fal-ai/kling-image/o1';
-      } else {
-        imgEndpoint='https://fal.run/fal-ai/kling-image/v3/text-to-image';
-      }
-      document.getElementById('s6-gen-label').textContent=refImages.length>0
-        ?'Generating image with Kling ('+refImages.length+' refs)…'
-        :'Generating image with Kling…';
-      const resp=await fetch(imgEndpoint,{
+
+      document.getElementById('s6-gen-label').textContent='Generating 2D image with Kling o1 ('+refImages.length+' ref'+(refImages.length>1?'s':'')+')…';
+
+      const body={prompt:finalPrompt,aspect_ratio:'16:9',num_images:1,image_urls:refImages};
+      const resp=await fetch('https://fal.run/fal-ai/kling-image/o1',{
         method:'POST',
         headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},
         body:JSON.stringify(body)
       });
       if(!resp.ok){
         const e=await resp.json().catch(()=>({}));
-        const msg=typeof e?.detail==='string'?e.detail
-          :typeof e?.error==='string'?e.error
-          :typeof e?.message==='string'?e.message
-          :JSON.stringify(e)||'HTTP '+resp.status;
-        throw new Error(msg);
+        throw new Error(typeof e?.detail==='string'?e.detail:typeof e?.error==='string'?e.error:typeof e?.message==='string'?e.message:JSON.stringify(e)||'HTTP '+resp.status);
       }
       const data=await resp.json();
       resultURL=data.images?.[0]?.url||data.image?.url||'';
       resultType='image';
 
     } else {
+      // ── VIDEO: image-to-video (with Start Frame) or text-to-video ─────────
       const body={prompt:finalPrompt,duration:sceneDuration,aspect_ratio:'16:9'};
-      // Reference images passed only when they are valid HTTPS URLs
-      // from fal.ai storage (uploaded via uploadToFal()).
-      // Blob URLs and base64 data URIs are intentionally excluded.
-      if(sceneRefs['startframe']&&sceneRefs['startframe'].url&&sceneRefs['startframe'].url.startsWith('https://')){
+      if(sceneRefs['startframe']?.url?.startsWith('https://')){
         body.image_url=sceneRefs['startframe'].url;
       }
-      // subject_reference_image_url only supported by image-to-video endpoint
-      if(body.image_url&&sceneRefs['subject']&&sceneRefs['subject'].url&&sceneRefs['subject'].url.startsWith('https://')){
+      // subject_reference_image_url only supported by image-to-video
+      if(body.image_url&&sceneRefs['subject']?.url?.startsWith('https://')){
         body.subject_reference_image_url=sceneRefs['subject'].url;
       }
-
-      // Route to the correct Kling video endpoint:
-      // image-to-video requires image_url — text-to-video does not
       const vidEndpoint=body.image_url
         ?'https://fal.run/fal-ai/kling-video/v1.6/pro/image-to-video'
         :'https://fal.run/fal-ai/kling-video/v1.6/pro/text-to-video';
 
-      document.getElementById('s6-gen-label').textContent='Generating video… (~60-90 seconds)';
+      document.getElementById('s6-gen-label').textContent=body.image_url
+        ?'Generating video from Start Frame… (~60-90 seconds)'
+        :'Generating video from text… (~60-90 seconds)';
 
       const resp=await fetch(vidEndpoint,{
         method:'POST',
         headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},
         body:JSON.stringify(body)
       });
-
-      if(!resp.ok){const e=await resp.json().catch(()=>({}));const msg=typeof e?.detail==='string'?e.detail:typeof e?.error==='string'?e.error:typeof e?.message==='string'?e.message:JSON.stringify(e)||'HTTP '+resp.status;throw new Error(msg);}
-
+      if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(typeof e?.detail==='string'?e.detail:typeof e?.error==='string'?e.error:typeof e?.message==='string'?e.message:JSON.stringify(e)||'HTTP '+resp.status);}
       const data=await resp.json();
       resultURL=data.video?.url||data.url||'';
       resultType='video';
@@ -3031,19 +3092,24 @@ async function generateScene(){
     } else {
       container.innerHTML='<video src="'+resultURL+'" controls autoplay muted loop style="width:100%;border-radius:8px"></video>';
     }
-    document.getElementById('s6-result-area').style.display='';
-    document.getElementById('s6-gen-label').textContent=resultType==='image'?'Generate Image (Kling)':'Generate Video';
+    // Advance to the result step
+    s6ShowPanel('result');
+    document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video (Kling — image-to-video)':'Generate Image (Kling o1 — 2D illustrated)';
 
   }catch(err){
     const display=err instanceof Error?err.message:typeof err==='string'?err:JSON.stringify(err);
     showErr('e6',display);
-    document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image (Kling)';
+    document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video (Kling — image-to-video)':'Generate Image (Kling o1 — 2D illustrated)';
   }finally{
     document.getElementById('btn-generate-scene').disabled=false;
   }
 }
 
-function regenerateScene(){generateScene();}
+function regenerateScene(){
+  // Show prompt panel so the user can edit before re-generating if they want
+  s6ShowPanel('prompt');
+  generateScene();
+}
 
 function downloadScene(){
   if(!lastGeneratedURL)return;
