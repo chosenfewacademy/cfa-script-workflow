@@ -1001,6 +1001,18 @@ select option{background:var(--surface2)}
     </div>
 
     <!-- Reference image slots -->
+
+    <!-- ═══ CHARACTER ALIGNMENT GUIDE ═══ -->
+    <div style="background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.35);border-radius:10px;padding:14px 16px;margin-bottom:14px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:10px">🎨 2D Character Alignment — Read Before Generating</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;line-height:1.8;color:var(--text)">
+        <div style="display:flex;gap:10px;margin-bottom:7px;align-items:flex-start"><span style="color:var(--success);font-weight:700;flex-shrink:0">①</span><span><strong>Characters (Subject / Co-Subject) control the 2D style.</strong> These slots must show <span style="color:var(--success);font-weight:700">✓ Ready</span> before you hit Generate. The uploaded character photo is what tells Kling o1 to work in 2D illustrated style. Without it, the output will be <span style="color:var(--error)">photorealistic</span> — every time, no matter what the prompt says.</span></div>
+        <div style="display:flex;gap:10px;margin-bottom:7px;align-items:flex-start"><span style="color:var(--success);font-weight:700;flex-shrink:0">②</span><span><strong>Scene and Style slots only set the environment and mood.</strong> They do not determine whether the output is 2D illustrated. Only the character slots do that. You can have a perfect scene reference and still get a photorealistic person if Subject is empty.</span></div>
+        <div style="display:flex;gap:10px;margin-bottom:7px;align-items:flex-start"><span style="color:var(--accent);font-weight:700;flex-shrink:0">③</span><span><strong>For VIDEO — always set a Start Frame.</strong> Generate your image first, confirm it looks right, then upload it as the Start Frame. This locks the 2D character appearance into the first frame of the video. Text-to-video with no Start Frame uses a text-only path that may produce inconsistent or photorealistic output.</span></div>
+        <div style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--accent);font-weight:700;flex-shrink:0">④</span><span><strong>Two-person scenes — use both slots and reference them by number in the prompt.</strong> Subject = <span style="color:var(--accent);font-weight:700">@Image1</span>, Co-Subject = <span style="color:var(--accent);font-weight:700">@Image2</span>. Check the @Image Map below the slots to confirm which number is which. Both slots must show ✓ Ready for both characters to appear in 2D style.</span></div>
+      </div>
+    </div>
+
     <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Reference Images</div>
 
     <div class="ref-slots" id="s6-ref-slots">
@@ -1118,6 +1130,9 @@ select option{background:var(--surface2)}
 
     <!-- Error -->
     <div id="e6" class="err"></div>
+
+    <!-- Generation Readiness Panel — updated dynamically by updateReadiness() -->
+    <div id="s6-readiness"></div>
 
     <!-- Generate button -->
     <div class="action-zone">
@@ -2534,6 +2549,9 @@ function loadScene(i){
 
   // Auto-populate character slots based on who appears in this scene's script line
   autoPopulateCharacters(s.characters);
+
+  // Show initial readiness immediately — will update again when uploads resolve
+  updateReadiness();
 }
 
 function setDuration(s){
@@ -2589,6 +2607,7 @@ async function handleUpload(slot,input){
     statusEl.style.color='var(--success)';
     slotEl.style.borderColor='var(--success)';
     updateImageState();
+    updateReadiness();
     setTimeout(()=>{statusEl.remove();},2000);
   }catch(err){
     // Upload failed — clear the slot, show error
@@ -2599,6 +2618,7 @@ async function handleUpload(slot,input){
     statusEl.textContent='✗ '+uploadErrMsg;
     statusEl.style.color='var(--error)';
     slotEl.style.borderColor='var(--error)';
+    updateReadiness();
     input.value='';
     setTimeout(()=>{
       statusEl.remove();
@@ -2620,6 +2640,52 @@ function clearSlot(e,slot){
   const textInput=document.getElementById(slot+'-text-input');
   if(textInput)textInput.value='';
   updateImageState();
+  updateReadiness();
+}
+
+// ─── Generation Readiness Indicator ──────────────────────────────────────────
+// Called whenever a slot changes. Renders a live green/amber/red status panel
+// above the Generate button so Chris always knows if 2D output is achievable.
+function updateReadiness(){
+  const el=document.getElementById('s6-readiness');
+  if(!el||typeof currentScene==='undefined'||!sceneData)return;
+  const s=sceneData[currentScene];
+  if(!s){el.innerHTML='';return;}
+  const isVideo=s.tag==='VIDEO';
+
+  // Subject upload state
+  const subjSlotEl=document.getElementById('slot-subject');
+  const subjStatusEl=subjSlotEl&&subjSlotEl.querySelector('.ref-slot-upload-status');
+  const subjUploading=subjStatusEl&&(subjStatusEl.classList.contains('loading')||subjStatusEl.textContent.includes('Uploading'));
+  const subjReady=sceneRefs['subject']&&sceneRefs['subject'].url&&sceneRefs['subject'].url.startsWith('https://');
+
+  // Start frame state (video)
+  const sfReady=sceneRefs['startframe']&&sceneRefs['startframe'].url&&sceneRefs['startframe'].url.startsWith('https://');
+
+  const rows=[];
+  if(subjUploading){
+    rows.push({icon:'⏳',color:'var(--accent)',text:'<strong>Character uploading — do not generate yet.</strong> Wait for ✓ Ready to appear on the Subject slot. Generating now will bypass the character reference and produce photorealistic output.'});
+  } else if(subjReady){
+    rows.push({icon:'✓',color:'var(--success)',text:'<strong>Character ready.</strong> Kling o1 will use the uploaded reference to generate in 2D illustrated style.'});
+  } else {
+    rows.push({icon:'✗',color:'var(--error)',text:'<strong>No character image loaded.</strong> Output will be photorealistic — not 2D illustrated. The scene auto-loads characters when you navigate scenes. If Subject still shows empty, reload the scene or manually upload the character image.'});
+  }
+
+  if(isVideo){
+    if(sfReady){
+      rows.push({icon:'✓',color:'var(--success)',text:'<strong>Start Frame set.</strong> Video will extend your 2D image frame-by-frame — character style and appearance carry through the clip.'});
+    } else {
+      rows.push({icon:'⚠',color:'var(--accent)',text:'<strong>No Start Frame set.</strong> Kling will use text-to-video — character appearance may be inconsistent or photorealistic. Recommended: generate the image for this scene first, confirm it looks right, then upload it here as the Start Frame.'});
+    }
+  }
+
+  const borderColor=subjUploading?'var(--accent)':subjReady?'rgba(52,211,153,.35)':'rgba(248,113,113,.35)';
+  const bgColor=subjUploading?'rgba(245,158,11,.06)':subjReady?'rgba(52,211,153,.05)':'rgba(248,113,113,.05)';
+
+  el.innerHTML=`<div style="background:${bgColor};border:1px solid ${borderColor};border-radius:8px;padding:11px 14px;margin-bottom:14px;font-family:'DM Mono',monospace;font-size:10px">
+<div style="font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">⚡ Generation Status</div>
+${rows.map(r=>`<div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:4px;line-height:1.6"><span style="color:${r.color};flex-shrink:0;font-weight:700">${r.icon}</span><span style="color:${r.color}">${r.text}</span></div>`).join('')}
+</div>`;
 }
 
 // Set slot mode — upload or text — for Scene and Style
@@ -2743,11 +2809,13 @@ async function autoPopulateCharacters(characters){
       sceneRefs[key] = {url: httpsUrl};
       statusEl.textContent = '✓ Ready';
       statusEl.className = 'ref-slot-upload-status success';
+      updateReadiness();
       setTimeout(()=>{ statusEl.textContent=''; statusEl.className='ref-slot-upload-status'; }, 2000);
     }catch(err){
       // Upload failed — base64 stays, show persistent warning
       statusEl.textContent = '⚠ Upload failed — character may not appear in generation';
       statusEl.className = 'ref-slot-upload-status error';
+      updateReadiness();
       console.warn('Character upload failed:', altText, err.message);
     }
   }
@@ -2799,6 +2867,45 @@ async function generateScene(){
   const falKey=sessionStorage.getItem('cfa_fal_key');
 
   if(!falKey){showErr('e6','fal.ai API key not set — open ⚙ Settings.');return;}
+
+  // ── 2D Character Alignment Safety Check ──────────────────────────────────
+  // Block generation if character is still uploading — output would be wrong.
+  // Warn (but allow) if no character image is loaded at all.
+  const _subjSlot=document.getElementById('slot-subject');
+  const _subjStatus=_subjSlot&&_subjSlot.querySelector('.ref-slot-upload-status');
+  const _subjUploading=_subjStatus&&(_subjStatus.classList.contains('loading')||(_subjStatus.textContent&&_subjStatus.textContent.includes('Uploading')));
+  const _subjReady=sceneRefs['subject']&&sceneRefs['subject'].url&&sceneRefs['subject'].url.startsWith('https://');
+  if(_subjUploading){
+    showErr('e6','⏳ Character image is still uploading — wait for ✓ Ready before generating. Generating now would produce photorealistic output instead of 2D illustrated.');
+    return;
+  }
+  if(!_subjReady&&!isVideo){
+    const _ok=confirm(
+      '⚠  No character image is loaded.\n\n'+
+      'Generating without a character reference will produce a PHOTOREALISTIC image — not 2D illustrated.\n\n'+
+      'For 2D character-aligned output:\n'+
+      '  • Use the ← Prev / Next → buttons to navigate scenes so characters auto-load\n'+
+      '  • Or manually upload a character photo to the Subject slot\n'+
+      '  • Wait for "✓ Ready" to appear, then generate\n\n'+
+      'Press OK to generate anyway (photorealistic), or Cancel to go back and load the character.'
+    );
+    if(!_ok)return;
+  }
+  if(isVideo&&!sceneRefs['startframe']?.url?.startsWith('https://')){
+    // Soft warn for text-to-video — don't block, just remind
+    const _sfOk=confirm(
+      '⚠  No Start Frame is set for this video scene.\n\n'+
+      'Without a Start Frame, Kling uses text-to-video — the character may look inconsistent or photorealistic.\n\n'+
+      'Recommended workflow:\n'+
+      '  1. Switch this scene to IMAGE, generate and review the image\n'+
+      '  2. Switch back to VIDEO\n'+
+      '  3. Upload that image as the Start Frame\n'+
+      '  4. Then generate the video\n\n'+
+      'Press OK to generate text-to-video anyway, or Cancel to set a Start Frame first.'
+    );
+    if(!_sfOk)return;
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   const prompt=document.getElementById('s6-prompt').value.trim();
   if(!prompt){showErr('e6','Prompt is empty — add a scene description.');return;}
