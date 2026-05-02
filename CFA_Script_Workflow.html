@@ -995,7 +995,7 @@ select option{background:var(--surface2)}
 
     <!-- Prompt -->
     <div style="margin-bottom:14px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px" id="s6-prompt-label">Flux Pro Image Prompt</div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px" id="s6-prompt-label">Kling Image Prompt</div>
       <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:8px;line-height:1.6">When using the o1 reference model, refer to your uploaded images by their assigned number — e.g. <span style="color:var(--accent);font-weight:700">@Image1</span>, <span style="color:var(--accent);font-weight:700">@Image2</span>. Check the <strong style="color:var(--text)">@Image Map</strong> below the slots to see which number belongs to which image.</div>
       <textarea class="txed" id="s6-prompt" aria-labelledby="s6-prompt-label" style="min-height:120px;border-color:rgba(245,158,11,.35)" spellcheck="false"></textarea>
     </div>
@@ -1012,6 +1012,7 @@ select option{background:var(--surface2)}
         <div class="ref-slot-badge ref-badge-required">required</div>
         <div class="ref-slot-label">Subject</div>
         <div class="ref-slot-helper">Primary character &#x2014; clear front-facing image. Locks who appears in the scene.</div>
+        <div class="ref-slot-upload-status" id="subject-upload-status"></div>
         <button class="ref-slot-clear" aria-label="Clear subject image" onclick="clearSlot(event,'subject')">&#x00D7;</button>
       </div>
 
@@ -1022,6 +1023,7 @@ select option{background:var(--surface2)}
         <div class="ref-slot-badge ref-badge-optional">optional</div>
         <div class="ref-slot-label">Co-Subject</div>
         <div class="ref-slot-helper">Second character only &#x2014; use when two people appear together in this scene.</div>
+        <div class="ref-slot-upload-status" id="cosubject-upload-status"></div>
         <button class="ref-slot-clear" aria-label="Clear co-subject image" onclick="clearSlot(event,'cosubject')">&#x00D7;</button>
       </div>
 
@@ -1120,7 +1122,7 @@ select option{background:var(--surface2)}
     <!-- Generate button -->
     <div class="action-zone">
       <div class="next-step-block">
-        <div class="next-step-label" id="s6-gen-label">Generate Image (Flux Pro) or Video (Kling)</div>
+        <div class="next-step-label" id="s6-gen-label">Generate Image (Kling) or Video (Kling)</div>
         <button class="btn bprim" id="btn-generate-scene" onclick="generateScene()">Generate Image</button>
       </div>
     </div>
@@ -1217,7 +1219,7 @@ select option{background:var(--surface2)}
           <div class="ks-dot miss" id="sm-ks-fal" style="width:8px;height:8px"></div>
           fal.ai API Key
         </div>
-        <div class="settings-section-desc">Used for Flux Pro image and Kling video generation. Get yours at fal.ai &rarr; Dashboard &rarr; API Keys.</div>
+        <div class="settings-section-desc">Used for Kling image and video generation. Get yours at fal.ai &rarr; Dashboard &rarr; API Keys.</div>
         <div class="settings-row">
           <input class="inp" id="sm-fal-key" type="password" placeholder="your-fal-api-key" autocomplete="off" aria-label="fal.ai API key"/>
           <button class="settings-save" onclick="smSaveFal()">Save</button>
@@ -2513,10 +2515,10 @@ function loadScene(i){
 
   document.getElementById('s6-script-line').textContent=s.line;
 
-  document.getElementById('s6-prompt-label').textContent=isVideo?'Kling Video Prompt':'Flux Pro Image Prompt';
+  document.getElementById('s6-prompt-label').textContent=isVideo?'Kling Video Prompt':'Kling Image Prompt';
   document.getElementById('s6-prompt').value=s.prompt||'';
 
-  document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image (Flux Pro)';
+  document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image (Kling)';
   document.getElementById('btn-generate-scene').textContent=isVideo?'Generate Video Clip':'Generate Image';
 
   document.getElementById('s6-video-settings').style.display=isVideo?'':'none';
@@ -2709,20 +2711,45 @@ function updateImageState(){
   ).join('');
 }
 
-function autoPopulateCharacters(characters){
+async function autoPopulateCharacters(characters){
   const subjectSlot   = document.getElementById('slot-subject');
   const cosubjectSlot = document.getElementById('slot-cosubject');
 
-  function fillSlot(slotEl, b64, altText){
-    sceneRefs[slotEl.id.replace('slot-','')] = {url: b64};
+  async function fillSlot(slotEl, b64, altText){
+    const key = slotEl.id.replace('slot-','');
+    // Show base64 preview immediately
     slotEl.classList.add('has-image');
     let img = slotEl.querySelector('img');
-    if(!img){
-      img = document.createElement('img');
-      slotEl.appendChild(img);
-    }
+    if(!img){ img = document.createElement('img'); slotEl.appendChild(img); }
     img.src = b64;
     img.alt = altText;
+    // Store base64 temporarily while upload is in progress
+    sceneRefs[key] = {url: b64};
+    // Show upload in progress status
+    let statusEl = slotEl.querySelector('.ref-slot-upload-status');
+    if(!statusEl){
+      statusEl = document.createElement('div');
+      statusEl.className = 'ref-slot-upload-status';
+      slotEl.appendChild(statusEl);
+    }
+    statusEl.textContent = 'Uploading character…';
+    statusEl.className = 'ref-slot-upload-status loading';
+    // Upload to fal.ai in background — replace base64 with HTTPS URL on success
+    try{
+      const res = await fetch(b64);
+      const blob = await res.blob();
+      const file = new File([blob], altText.toLowerCase()+'.jpg', {type:'image/jpeg'});
+      const httpsUrl = await uploadToFal(file);
+      sceneRefs[key] = {url: httpsUrl};
+      statusEl.textContent = '✓ Ready';
+      statusEl.className = 'ref-slot-upload-status success';
+      setTimeout(()=>{ statusEl.textContent=''; statusEl.className='ref-slot-upload-status'; }, 2000);
+    }catch(err){
+      // Upload failed — base64 stays, show persistent warning
+      statusEl.textContent = '⚠ Upload failed — character may not appear in generation';
+      statusEl.className = 'ref-slot-upload-status error';
+      console.warn('Character upload failed:', altText, err.message);
+    }
   }
 
   function clearSlotSilent(slotEl){
@@ -2741,19 +2768,19 @@ function autoPopulateCharacters(characters){
   }
 
   if(characters === 'BOTH'){
-    fillSlot(subjectSlot,   MARCUS_B64, 'Marcus');
-    fillSlot(cosubjectSlot, JORDAN_B64, 'Jordan');
+    await fillSlot(subjectSlot,   MARCUS_B64, 'Marcus');
+    await fillSlot(cosubjectSlot, JORDAN_B64, 'Jordan');
     updateHelper(subjectSlot,   'Auto-filled: Marcus. Clear to override.');
     updateHelper(cosubjectSlot, 'Auto-filled: Jordan. Clear to override.');
 
   } else if(characters === 'MARCUS'){
-    fillSlot(subjectSlot, MARCUS_B64, 'Marcus');
+    await fillSlot(subjectSlot, MARCUS_B64, 'Marcus');
     clearSlotSilent(cosubjectSlot);
     updateHelper(subjectSlot,   'Auto-filled: Marcus. Clear to override.');
     updateHelper(cosubjectSlot, 'Marcus only in this scene — leave empty or upload if needed.');
 
   } else if(characters === 'JORDAN'){
-    fillSlot(subjectSlot, JORDAN_B64, 'Jordan');
+    await fillSlot(subjectSlot, JORDAN_B64, 'Jordan');
     clearSlotSilent(cosubjectSlot);
     updateHelper(subjectSlot,   'Auto-filled: Jordan. Clear to override.');
     updateHelper(cosubjectSlot, 'Jordan only in this scene — leave empty or upload if needed.');
@@ -2798,32 +2825,57 @@ async function generateScene(){
     let resultType='';
 
     if(!isVideo){
-      // Flux Pro image generation
-      // Produces stronger 2D illustrated character consistency than Kling Image
+      // Kling Image o1 — multi-reference image generation with character,
+      // scene, and style reference support
       const body={
         prompt:finalPrompt,
-        image_size:'landscape_16_9',
-        num_images:1,
-        safety_tolerance:'2',
-        output_format:'jpeg'
+        aspect_ratio:'16:9',
+        num_images:1
       };
-      // Pass subject reference if uploaded as HTTPS URL
+      // Collect all uploaded reference images
+      // Only HTTPS URLs from fal.ai storage pass — base64 data URIs excluded by guard
+      const refImages=[];
       if(sceneRefs['subject']&&sceneRefs['subject'].url&&
         sceneRefs['subject'].url.startsWith('https://')){
-        body.reference_image_url=sceneRefs['subject'].url;
+        refImages.push(sceneRefs['subject'].url);
       }
-      document.getElementById('s6-gen-label').textContent='Generating image with Flux Pro…';
-
-      const resp=await fetch('https://fal.run/fal-ai/flux-pro/v1.1',{
+      if(sceneRefs['cosubject']&&sceneRefs['cosubject'].url&&
+        sceneRefs['cosubject'].url.startsWith('https://')){
+        refImages.push(sceneRefs['cosubject'].url);
+      }
+      if(sceneRefs['scene']&&sceneRefs['scene'].url&&
+        sceneRefs['scene'].url.startsWith('https://')){
+        refImages.push(sceneRefs['scene'].url);
+      }
+      if(sceneRefs['style']&&sceneRefs['style'].url&&
+        sceneRefs['style'].url.startsWith('https://')){
+        refImages.push(sceneRefs['style'].url);
+      }
+      let imgEndpoint;
+      if(refImages.length>0){
+        body.image_urls=refImages;
+        imgEndpoint='https://fal.run/fal-ai/kling-image/o1';
+      } else {
+        imgEndpoint='https://fal.run/fal-ai/kling-image/v3/text-to-image';
+      }
+      document.getElementById('s6-gen-label').textContent=refImages.length>0
+        ?'Generating image with Kling ('+refImages.length+' refs)…'
+        :'Generating image with Kling…';
+      const resp=await fetch(imgEndpoint,{
         method:'POST',
         headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},
         body:JSON.stringify(body)
       });
-
-      if(!resp.ok){const e=await resp.json().catch(()=>({}));const msg=typeof e?.detail==='string'?e.detail:typeof e?.error==='string'?e.error:typeof e?.message==='string'?e.message:JSON.stringify(e)||'HTTP '+resp.status;throw new Error(msg);}
-
+      if(!resp.ok){
+        const e=await resp.json().catch(()=>({}));
+        const msg=typeof e?.detail==='string'?e.detail
+          :typeof e?.error==='string'?e.error
+          :typeof e?.message==='string'?e.message
+          :JSON.stringify(e)||'HTTP '+resp.status;
+        throw new Error(msg);
+      }
       const data=await resp.json();
-      resultURL=data.images?.[0]?.url||data.image?.url||data.images?.[0]||'';
+      resultURL=data.images?.[0]?.url||data.image?.url||'';
       resultType='image';
 
     } else {
@@ -2866,12 +2918,12 @@ async function generateScene(){
       container.innerHTML='<video src="'+resultURL+'" controls autoplay muted loop style="width:100%;border-radius:8px"></video>';
     }
     document.getElementById('s6-result-area').style.display='';
-    document.getElementById('s6-gen-label').textContent=resultType==='image'?'Generate Image (Flux Pro)':'Generate Video';
+    document.getElementById('s6-gen-label').textContent=resultType==='image'?'Generate Image (Kling)':'Generate Video';
 
   }catch(err){
     const display=err instanceof Error?err.message:typeof err==='string'?err:JSON.stringify(err);
     showErr('e6',display);
-    document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image (Flux Pro)';
+    document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video':'Generate Image (Kling)';
   }finally{
     document.getElementById('btn-generate-scene').disabled=false;
   }
