@@ -1851,6 +1851,8 @@ function updatePills(n){
 function jumpTo(n){
   // Only allow jumping to completed steps or current step
   if(n>curScreen)return;
+  // If jumping back to S5, ensure the voiceover button is never left permanently disabled
+  if(n===5){const b=document.getElementById('btn-vo');if(b&&b.disabled)b.disabled=false;}
   goTo(n, n<curScreen?'left':'right');
 }
 
@@ -1967,7 +1969,7 @@ async function startGen(){
   // Reset stream screen
   document.getElementById('s2vt').textContent=V[selId].title;
   document.getElementById('s2-stat').textContent='Connecting…';
-  document.getElementById('stream-box').innerHTML='<span class="stream-cursor"></span>';
+  const sbox0=document.getElementById('stream-box');sbox0.textContent='';const cur0=document.createElement('span');cur0.className='stream-cursor';sbox0.appendChild(cur0);
   document.getElementById('s2-words').textContent='0 words';
   document.getElementById('s2-speed').textContent='';
   document.getElementById('s2-elapsed').textContent='';
@@ -2035,7 +2037,7 @@ async function startGen(){
 
           // Update live stream display
           const box=document.getElementById('stream-box');
-          box.innerHTML=accumulated+'<span class="stream-cursor"></span>';
+          box.textContent=accumulated;const cur=document.createElement('span');cur.className='stream-cursor';box.appendChild(cur);
           box.scrollTop=box.scrollHeight;
 
           // Word count + speed
@@ -2180,8 +2182,8 @@ async function startSeg(){
     });
     if(!resp.ok){const e=await resp.json().catch(()=>({}));const msg=typeof e?.error?.message==='string'?e.error.message:typeof e?.error==='string'?e.error:typeof e?.message==='string'?e.message:JSON.stringify(e)||'HTTP '+resp.status;throw new Error(msg);}
 
-    genAbort._reader=resp.body.getReader();
-    const reader=genAbort._reader;const dec=new TextDecoder();let buf='';
+    segAbort._reader=resp.body.getReader(); // was incorrectly genAbort — fixed
+    const reader=segAbort._reader;const dec=new TextDecoder();let buf='';
     while(true){
       const {done,value}=await reader.read();if(done)break;
       buf+=dec.decode(value,{stream:true});
@@ -2441,6 +2443,8 @@ const SYS_KLING_IMAGE = `You are generating a Kling AI image generation prompt f
 const SYS_KLING_VIDEO = `You are generating a Kling AI video motion prompt for a 2D illustrated crypto education video. The visual style is non-negotiable: 2D illustrated characters with bold clean outlines, flat color shading, and consistent line weight throughout all motion — do not drift toward photorealism at any point in the clip. Write 3-5 sentences describing what moves, how it moves, and how the camera behaves. Lead with the character action. Describe movement precisely — not vague words like 'dynamic' but specific actions like 'leans forward slowly' or 'glances down at phone'. Include one specific facial micro-expression change during the clip. Describe camera direction using cinematography language — dolly, push, pull, pan, static hold. Include lighting mood — warm amber, cold blue, soft natural. Everything must imply motion — no static description. The 2D illustrated style must be explicitly maintained throughout all motion in every prompt you write. Output only the motion description. Do not include camera preset language — that is added separately.`;
 
 async function enterSceneGeneration(){
+  const falKey=sessionStorage.getItem('cfa_fal_key');
+  if(!falKey){showErr('e6','fal.ai API key not set — open ⚙ Settings and save your key before entering scene generation.');openSettings();return;}
   if(!segScript){showErr('e6','No segmented script found — go back to Step 4.');return;}
   document.getElementById('s6-phase1').style.display='';
   document.getElementById('s6-phase2').style.display='none';
@@ -2473,7 +2477,8 @@ async function enterSceneGeneration(){
     if(!resp.ok){const e=await resp.json().catch(()=>({}));const msg=typeof e?.error?.message==='string'?e.error.message:typeof e?.error==='string'?e.error:typeof e?.message==='string'?e.message:JSON.stringify(e)||'HTTP '+resp.status;throw new Error(msg);}
 
     const data=await resp.json();
-    const classText=data.content[0].text;
+    const classText=(data.content&&data.content[0]&&data.content[0].text)||'';
+    if(!classText)throw new Error('API returned an empty classification — check your Anthropic key and try again.');
 
     sceneData = lines.map((line,i)=>{
       const match=classText.match(new RegExp('\\['+(i+1)+'\\]\\s*(IMAGE|VIDEO)','i'));
@@ -2483,10 +2488,15 @@ async function enterSceneGeneration(){
     });
 
     renderClassificationList();
-    generateAllPrompts();
-
     document.getElementById('s6-classifying').style.display='none';
     document.getElementById('s6-class-results').style.display='';
+
+    // Disable Begin button while prompts generate in background — prevents opening a scene with an empty textarea
+    const beginBtn=document.querySelector('#s6-class-results .btn.bprim');
+    if(beginBtn){beginBtn.disabled=true;beginBtn.textContent='⏳ Generating prompts ('+sceneData.length+' scenes)…';}
+    generateAllPrompts().then(()=>{
+      if(beginBtn){beginBtn.disabled=false;beginBtn.textContent='Begin Scene Generation →';}
+    });
 
     const imgCount=sceneData.filter(s=>s.tag==='IMAGE').length;
     const vidCount=sceneData.filter(s=>s.tag==='VIDEO').length;
@@ -2557,7 +2567,8 @@ async function generatePromptForScene(i){
     });
     if(resp.ok){
       const data=await resp.json();
-      sceneData[i].prompt=data.content[0].text.trim();
+      const promptText=(data.content&&data.content[0]&&data.content[0].text)||'';
+      sceneData[i].prompt=promptText.trim();
       const readyEl=document.getElementById('prompt-ready-'+i);
       if(readyEl)readyEl.style.display='';
     }
@@ -2642,15 +2653,21 @@ function triggerUpload(slot){
 
 async function uploadToFal(file){
   const falKey = sessionStorage.getItem('cfa_fal_key');
-  if(!falKey) throw new Error('fal.ai API key not set — open Settings.');
+  if(!falKey) throw new Error('fal.ai API key not set — open ⚙ Settings.');
 
-  // Use the official fal.ai client SDK so endpoint changes don't break uploads
   const { fal } = await import('https://esm.sh/@fal-ai/client@1');
   fal.config({ credentials: falKey });
 
-  const url = await fal.storage.upload(file);
+  // Hard 30-second timeout — if fal.ai stalls, fail fast instead of hanging forever
+  const TIMEOUT_MS = 30000;
+  const uploadPromise = fal.storage.upload(file);
+  const timeoutPromise = new Promise((_,reject) =>
+    setTimeout(() => reject(new Error('Upload timed out after 30 seconds — check your connection and try again.')), TIMEOUT_MS)
+  );
+
+  const url = await Promise.race([uploadPromise, timeoutPromise]);
   if(!url) throw new Error('fal.ai upload returned no URL');
-  return url; // Returns https://storage.fal.ai/...
+  return url;
 }
 
 async function handleUpload(slot,input){
@@ -2675,10 +2692,13 @@ async function handleUpload(slot,input){
   statusEl.textContent='Uploading to fal.ai…';
   statusEl.style.color='var(--accent)';
   slotEl.style.borderColor='var(--accent)';
+  slotEl.dataset.uploading='1'; // machine-readable flag
+  updateReadiness();
 
   try{
     const httpsUrl=await uploadToFal(file);
     sceneRefs[slot]={url:httpsUrl,file:file};
+    delete slotEl.dataset.uploading;
     statusEl.textContent= slot==='startframe'
       ? '✓ Start Frame set — this image will be frame 1 of your video'
       : '✓ Uploaded';
@@ -2691,6 +2711,7 @@ async function handleUpload(slot,input){
       if(slot!=='startframe') statusEl.remove();
     }, slot==='startframe' ? 99999 : 2000);
   }catch(err){
+    delete slotEl.dataset.uploading;
     // Upload failed — clear the slot, show error
     delete sceneRefs[slot];
     slotEl.classList.remove('has-image');
@@ -2737,11 +2758,9 @@ function s6ShowPanel(name){
 function s6NextFromChars(){
   const s=sceneData[currentScene];
   const isVideo=s&&s.tag==='VIDEO';
-  // Check if subject is still uploading
+  // Check if subject is still uploading via data attribute — not fragile text matching
   const subjSlotEl=document.getElementById('slot-subject');
-  const subjStatusEl=subjSlotEl&&subjSlotEl.querySelector('.ref-slot-upload-status');
-  const subjUploading=subjStatusEl&&(subjStatusEl.classList.contains('loading')||
-    (subjStatusEl.textContent&&subjStatusEl.textContent.includes('Uploading')));
+  const subjUploading=subjSlotEl&&subjSlotEl.dataset.uploading==='1';
   if(subjUploading){
     const rdiv=document.getElementById('s6-readiness');
     if(rdiv){
@@ -2795,10 +2814,9 @@ function updateReadiness(){
   if(!s){el.innerHTML='';return;}
   const isVideo=s.tag==='VIDEO';
 
-  // Subject upload state
+  // Subject upload state — use data-uploading attribute, not fragile text matching
   const subjSlotEl=document.getElementById('slot-subject');
-  const subjStatusEl=subjSlotEl&&subjSlotEl.querySelector('.ref-slot-upload-status');
-  const subjUploading=subjStatusEl&&(subjStatusEl.classList.contains('loading')||subjStatusEl.textContent.includes('Uploading'));
+  const subjUploading=subjSlotEl&&subjSlotEl.dataset.uploading==='1';
   const subjReady=sceneRefs['subject']&&sceneRefs['subject'].url&&sceneRefs['subject'].url.startsWith('https://');
 
   // Start frame state (video)
@@ -2958,6 +2976,8 @@ async function autoPopulateCharacters(characters){
     }
     statusEl.textContent = 'Uploading character…';
     statusEl.className = 'ref-slot-upload-status loading';
+    slotEl.dataset.uploading = '1'; // machine-readable flag — no fragile text checks
+    updateReadiness();
     // Upload to fal.ai in background — replace base64 with HTTPS URL on success
     try{
       const res = await fetch(b64);
@@ -2965,11 +2985,13 @@ async function autoPopulateCharacters(characters){
       const file = new File([blob], altText.toLowerCase()+'.jpg', {type:'image/jpeg'});
       const httpsUrl = await uploadToFal(file);
       sceneRefs[key] = {url: httpsUrl};
+      delete slotEl.dataset.uploading;
       statusEl.textContent = '✓ Ready';
       statusEl.className = 'ref-slot-upload-status success';
       updateReadiness();
       setTimeout(()=>{ statusEl.textContent=''; statusEl.className='ref-slot-upload-status'; }, 2000);
     }catch(err){
+      delete slotEl.dataset.uploading;
       // Upload failed — base64 stays, show persistent warning
       statusEl.textContent = '✗ Upload failed — click this slot to upload manually';
       statusEl.className = 'ref-slot-upload-status error';
@@ -3137,20 +3159,40 @@ async function generateScene(){
 }
 
 function regenerateScene(){
-  // Show prompt panel so the user can edit before re-generating if they want
+  // Disable button immediately to prevent double-click race
+  const genBtn=document.getElementById('btn-generate-scene');
+  if(genBtn)genBtn.disabled=true;
   s6ShowPanel('prompt');
   generateScene();
 }
 
-function downloadScene(){
+async function downloadScene(){
   if(!lastGeneratedURL)return;
   const s=sceneData[currentScene];
-  const ext=s.resultType==='video'?'mp4':'png';
+  if(!s)return;
+  // Detect extension from URL — fal.ai returns webp/jpg/mp4 in the path
+  const urlExt=lastGeneratedURL.split('?')[0].split('.').pop().toLowerCase();
+  const fallbackExt=s.resultType==='video'?'mp4':'png';
+  const ext=['mp4','webp','jpg','jpeg','png'].includes(urlExt)?urlExt:fallbackExt;
   const fname='CFA_Scene_'+(currentScene+1)+'_'+s.tag+'.'+ext;
-  const a=document.createElement('a');
-  a.href=lastGeneratedURL;
-  a.download=fname;
-  a.click();
+  const btn=document.getElementById('btn-download-scene');
+  const origText=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='⏳ Saving…';}
+  try{
+    // Fetch as blob — the only cross-origin approach that actually triggers a download
+    const resp=await fetch(lastGeneratedURL);
+    if(!resp.ok)throw new Error('HTTP '+resp.status);
+    const blob=await resp.blob();
+    const objUrl=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=objUrl;a.download=fname;a.click();
+    setTimeout(()=>URL.revokeObjectURL(objUrl),15000);
+  }catch(err){
+    // Fallback: open in new tab so the user can save manually
+    window.open(lastGeneratedURL,'_blank');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=origText;}
+  }
 }
 
 function confirmScene(){
@@ -3230,7 +3272,7 @@ function restart(){
   sceneRefs={};
   lastGeneratedURL='';
 
-  // Restore original helper text for character slots
+  // Clear all ref slot DOM state \u2014 subject, cosubject, plus scene/style/startframe
   const origHelpers = {
     'subject': 'Primary character \u2014 clear front-facing image. Locks who appears in the scene.',
     'cosubject': 'Second character only \u2014 use when two people appear together in this scene.'
@@ -3238,12 +3280,32 @@ function restart(){
   ['subject','cosubject'].forEach(slot=>{
     const slotEl=document.getElementById('slot-'+slot);
     if(slotEl){
-      slotEl.classList.remove('has-image');
+      slotEl.classList.remove('has-image','uploading');
+      delete slotEl.dataset.uploading;
       const img=slotEl.querySelector('img');
       if(img)img.remove();
       delete sceneRefs[slot];
       const helper=slotEl.querySelector('.ref-slot-helper');
       if(helper)helper.textContent=origHelpers[slot];
+      const statusEl=slotEl.querySelector('.ref-slot-upload-status');
+      if(statusEl){statusEl.textContent='';statusEl.className='ref-slot-upload-status';}
+    }
+  });
+  // Also clear scene, style, and startframe slots (not reset by the above loop)
+  ['scene','style','startframe'].forEach(slot=>{
+    const slotEl=document.getElementById('slot-'+slot);
+    if(slotEl){
+      slotEl.classList.remove('has-image','uploading');
+      delete slotEl.dataset.uploading;
+      const img=slotEl.querySelector('img');
+      if(img)img.remove();
+      delete sceneRefs[slot];
+      const statusEl=slotEl.querySelector('.ref-slot-upload-status');
+      if(statusEl){statusEl.textContent='';statusEl.className='ref-slot-upload-status';}
+      const fileInput=document.getElementById('upload-'+slot);
+      if(fileInput)fileInput.value='';
+      const textInput=document.getElementById(slot+'-text-input');
+      if(textInput)textInput.value='';
     }
   });
 
