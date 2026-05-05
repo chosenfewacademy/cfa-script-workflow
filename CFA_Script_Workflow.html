@@ -3264,8 +3264,19 @@ function restart(){
   document.getElementById('bgen').disabled=false;
   document.getElementById('bseg').disabled=false;
   document.getElementById('txed').value='';
+  // Reset direction dial buttons back to auto
+  document.querySelectorAll('.dial-btn.sel').forEach(b=>b.classList.remove('sel'));
+  document.querySelectorAll('.dial-btn.auto-btn').forEach(b=>b.classList.add('sel'));
+  ['d-emotion','d-narrative','d-presence','d-pacing'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   ['e1','e2','e3','e4','e5','e6'].forEach(id=>showErr(id,''));
   if(voAudioURL){URL.revokeObjectURL(voAudioURL);voAudioURL=null;}
+  // Reset S5 voiceover panel to initial state
+  const _s5gen=document.getElementById('s5-generating');if(_s5gen)_s5gen.style.display='none';
+  const _s5res=document.getElementById('s5-result');if(_s5res)_s5res.style.display='none';
+  const _s5btns=document.getElementById('s5-btns');if(_s5btns)_s5btns.style.display='';
+  const _btnVo=document.getElementById('btn-vo');if(_btnVo)_btnVo.disabled=false;
+  const _voAudio=document.getElementById('vo-audio');if(_voAudio)_voAudio.src='';
+  const _voDl=document.getElementById('vo-download');if(_voDl)_voDl.href='';
   sceneData=[];
   currentScene=0;
   sceneDuration=5;
