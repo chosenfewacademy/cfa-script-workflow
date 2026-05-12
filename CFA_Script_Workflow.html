@@ -2414,7 +2414,10 @@ function detectCharacters(line){
   const text = line.toLowerCase();
   const hasMarcus = text.includes('marcus');
   const hasJordan = text.includes('jordan');
-  if(hasMarcus && hasJordan) return 'BOTH';
+  if(hasMarcus && hasJordan){
+    // Order by first mention — first name becomes Subject (@Image1), second becomes Co-Subject (@Image2)
+    return text.indexOf('jordan') < text.indexOf('marcus') ? 'BOTH_JM' : 'BOTH';
+  }
   if(hasMarcus) return 'MARCUS';
   if(hasJordan) return 'JORDAN';
   return 'NONE';
@@ -2438,9 +2441,9 @@ Tag as IMAGE when:
 
 Output only the classifications. One per line. No explanation.`;
 
-const SYS_KLING_IMAGE = `You are generating a Kling AI image generation prompt for a 2D illustrated crypto education video. Write 3-5 sentences of pure scene description. Lead with setting and action. Include character pose and expression. Include 2-3 key props that support the meaning of the line. Include one orange accent object naturally in the scene. Match the emotional tone of the line. No style directives. No hex codes. No cartoon or 2D language — Kling handles style. Output only the scene description.`;
+const SYS_KLING_IMAGE = `You are generating a Kling AI image generation prompt for a 2D illustrated crypto education video. Write 3-5 sentences of pure scene description. Lead with setting and action. Include character pose and expression. Include 2-3 key props that support the meaning of the line. Include one orange accent object naturally in the scene. Match the emotional tone of the line. No style directives. No hex codes. No cartoon or 2D language — Kling handles style. Then on a new line output exactly: SCENE: [4-8 word setting summary, e.g. "dim bedroom, laptop glow, late night"]`;
 
-const SYS_KLING_VIDEO = `You are generating a Kling AI video motion prompt for a 2D illustrated crypto education video. The visual style is non-negotiable: 2D illustrated characters with bold clean outlines, flat color shading, and consistent line weight throughout all motion — do not drift toward photorealism at any point in the clip. Write 3-5 sentences describing what moves, how it moves, and how the camera behaves. Lead with the character action. Describe movement precisely — not vague words like 'dynamic' but specific actions like 'leans forward slowly' or 'glances down at phone'. Include one specific facial micro-expression change during the clip. Describe camera direction using cinematography language — dolly, push, pull, pan, static hold. Include lighting mood — warm amber, cold blue, soft natural. Everything must imply motion — no static description. The 2D illustrated style must be explicitly maintained throughout all motion in every prompt you write. Output only the motion description. Do not include camera preset language — that is added separately.`;
+const SYS_KLING_VIDEO = `You are generating a Kling AI video motion prompt for a 2D illustrated crypto education video. The visual style is non-negotiable: 2D illustrated characters with bold clean outlines, flat color shading, and consistent line weight throughout all motion — do not drift toward photorealism at any point in the clip. Write 3-5 sentences describing what moves, how it moves, and how the camera behaves. Lead with the character action. Describe movement precisely — not vague words like 'dynamic' but specific actions like 'leans forward slowly' or 'glances down at phone'. Include one specific facial micro-expression change during the clip. Describe camera direction using cinematography language — dolly, push, pull, pan, static hold. Include lighting mood — warm amber, cold blue, soft natural. Everything must imply motion — no static description. The 2D illustrated style must be explicitly maintained throughout all motion in every prompt you write. Do not include camera preset language — that is added separately. Then on a new line output exactly: SCENE: [4-8 word setting summary, e.g. "open-plan office, amber light, afternoon"]`;
 
 async function enterSceneGeneration(){
   const falKey=sessionStorage.getItem('cfa_fal_key');
@@ -2484,7 +2487,7 @@ async function enterSceneGeneration(){
       const match=classText.match(new RegExp('\\['+(i+1)+'\\]\\s*(IMAGE|VIDEO)','i'));
       const tag = match ? match[1].toUpperCase() : 'IMAGE';
       const characters = detectCharacters(line);
-      return {line, tag, characters, prompt:'', done:false, resultURL:'', resultType:''};
+      return {line, tag, characters, prompt:'', sceneDesc:'', done:false, resultURL:'', resultType:''};
     });
 
     renderClassificationList();
@@ -2516,7 +2519,7 @@ function renderClassificationList(){
     const row=document.createElement('div');
     row.className='scene-row '+(s.tag==='IMAGE'?'image-tag':'video-tag');
     row.id='scene-row-'+i;
-    const charBadge = {'BOTH':'<span class="char-badge both">👤👤 Both</span>','MARCUS':'<span class="char-badge marcus">👤 Marcus</span>','JORDAN':'<span class="char-badge jordan">👤 Jordan</span>','NONE':'<span class="char-badge none">⬜ Concept</span>'}[s.characters]||'';
+    const charBadge = {'BOTH':'<span class="char-badge both">👤👤 Both</span>','BOTH_JM':'<span class="char-badge both">👤👤 Both</span>','MARCUS':'<span class="char-badge marcus">👤 Marcus</span>','JORDAN':'<span class="char-badge jordan">👤 Jordan</span>','NONE':'<span class="char-badge none">⬜ Concept</span>'}[s.characters]||'';
     row.innerHTML=
       '<span class="scene-tag '+(s.tag==='IMAGE'?'image':'video')+'" onclick="flipTag('+i+')" id="tag-'+i+'">'+(s.tag==='IMAGE'?'🖼 IMAGE':'🎬 VIDEO')+'</span>'+
       charBadge+
@@ -2567,8 +2570,11 @@ async function generatePromptForScene(i){
     });
     if(resp.ok){
       const data=await resp.json();
-      const promptText=(data.content&&data.content[0]&&data.content[0].text)||'';
-      sceneData[i].prompt=promptText.trim();
+      const rawText=(data.content&&data.content[0]&&data.content[0].text)||'';
+      // Extract SCENE: tag for auto-populating the scene slot
+      const sceneMatch=rawText.match(/\nSCENE:\s*(.+)/i);
+      sceneData[i].sceneDesc=sceneMatch?sceneMatch[1].trim():'';
+      sceneData[i].prompt=rawText.replace(/\nSCENE:\s*.+/i,'').trim();
       const readyEl=document.getElementById('prompt-ready-'+i);
       if(readyEl)readyEl.style.display='';
     }
@@ -2624,18 +2630,46 @@ function loadScene(i){
   const sceneStyleEl=document.getElementById('s6-scene-style-slots');
   if(sceneStyleEl) sceneStyleEl.style.display=isVideo?'none':'';
 
-  document.getElementById('s6-result-content').innerHTML='';
-  lastGeneratedURL='';
-
   document.getElementById('btn-prev-scene').style.display=i>0?'':'none';
 
   showErr('e6','');
 
-  // Reset to Step 1 (Characters) for every new scene
+  // If scene was already generated — restore result panel so user can re-download
+  if(s.resultURL){
+    lastGeneratedURL=s.resultURL;
+    const container=document.getElementById('s6-result-content');
+    if(s.resultType==='image'){
+      container.innerHTML='<img src="'+s.resultURL+'" style="width:100%;border-radius:8px"/>';
+    } else {
+      container.innerHTML='<video src="'+s.resultURL+'" controls autoplay muted loop style="width:100%;border-radius:8px"></video>';
+    }
+    s6ShowPanel('result');
+    autoPopulateCharacters(s.characters);
+    updateReadiness();
+    return;
+  }
+
+  document.getElementById('s6-result-content').innerHTML='';
+  lastGeneratedURL='';
+
+  // Reset scene ref — scene description is per-scene, not shared across scenes
+  delete sceneRefs['scene'];
+
+  // Reset to Characters step for each new scene
   s6ShowPanel('chars');
 
   // Auto-populate character slots based on who appears in this scene's script line
   autoPopulateCharacters(s.characters);
+
+  // Auto-fill scene setting from generated description (image scenes only)
+  const sceneTextEl=document.getElementById('scene-text-input');
+  if(!isVideo && s.sceneDesc){
+    setSlotMode('scene','text');
+    if(sceneTextEl)sceneTextEl.value=s.sceneDesc;
+    sceneRefs['scene']={text:s.sceneDesc};
+  } else if(sceneTextEl){
+    sceneTextEl.value='';
+  }
 
   // Show initial readiness — will update again when uploads resolve
   updateReadiness();
@@ -3015,11 +3049,15 @@ async function autoPopulateCharacters(characters){
     if(helper) helper.textContent = text;
   }
 
-  if(characters === 'BOTH'){
-    await fillSlot(subjectSlot,   MARCUS_B64, 'Marcus');
-    await fillSlot(cosubjectSlot, JORDAN_B64, 'Jordan');
-    updateHelper(subjectSlot,   'Auto-filled: Marcus. Clear to override.');
-    updateHelper(cosubjectSlot, 'Auto-filled: Jordan. Clear to override.');
+  if(characters === 'BOTH' || characters === 'BOTH_JM'){
+    // BOTH_JM = Jordan mentioned first → Jordan is Subject (@Image1), Marcus is Co-Subject (@Image2)
+    const [primB64,primName,secB64,secName] = characters === 'BOTH_JM'
+      ? [JORDAN_B64,'Jordan',MARCUS_B64,'Marcus']
+      : [MARCUS_B64,'Marcus',JORDAN_B64,'Jordan'];
+    await fillSlot(subjectSlot,   primB64, primName);
+    await fillSlot(cosubjectSlot, secB64,  secName);
+    updateHelper(subjectSlot,   'Auto-filled: '+primName+'. Clear to override.');
+    updateHelper(cosubjectSlot, 'Auto-filled: '+secName+'. Clear to override.');
 
   } else if(characters === 'MARCUS'){
     await fillSlot(subjectSlot, MARCUS_B64, 'Marcus');
