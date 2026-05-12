@@ -1180,11 +1180,14 @@ select option{background:var(--surface2)}
       <!-- Error -->
       <div id="e6" class="err"></div>
 
-      <!-- Generate button -->
+      <!-- Generate buttons — Kling (primary) + Gemini (A/B comparison) -->
       <div class="action-zone">
         <div class="next-step-block">
           <div class="next-step-label" id="s6-gen-label">Generate Image (Kling o1 — 2D illustrated)</div>
-          <button class="btn bprim" id="btn-generate-scene" onclick="generateScene()" style="font-size:14px;padding:14px 28px">Generate Image</button>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button class="btn bprim" id="btn-generate-scene" onclick="generateScene()" style="font-size:14px;padding:14px 28px">Generate Image</button>
+            <button class="btn bsec" id="btn-generate-gemini" onclick="generateSceneGemini()" style="font-size:13px;padding:13px 22px" title="Gemini 3 Pro via fal.ai — uses same character references, same fal.ai key">🔵 Try Gemini</button>
+          </div>
         </div>
       </div>
 
@@ -1207,10 +1210,11 @@ select option{background:var(--surface2)}
           <div><span style="color:var(--success);font-weight:700;margin-right:6px">①</span><span style="color:var(--text)">Is the character rendered in <strong>2D illustrated style</strong> — bold outlines, flat color? If it looks photorealistic, go Back and check that the Subject slot was ✓ Ready before generating.</span></div>
           <div><span style="color:var(--success);font-weight:700;margin-right:6px">②</span><span style="color:var(--text)">Does the <strong>character's face match</strong> Marcus or Jordan? If not, regenerate.</span></div>
           <div><span style="color:var(--success);font-weight:700;margin-right:6px">③</span><span style="color:var(--text)">Does the <strong>scene and setting</strong> match the script line above?</span></div>
-          <div><span style="color:var(--accent);font-weight:700;margin-right:6px">④</span><span style="color:var(--text)"><strong>Download before confirming.</strong> Once you move to the next scene you cannot come back to this result.</span></div>
+          <div><span style="color:var(--accent);font-weight:700;margin-right:6px">④</span><span style="color:var(--text)"><strong>Download before confirming.</strong> You can return to any completed scene via ← Prev Scene to re-download if needed.</span></div>
         </div>
       </div>
-      <div id="s6-result-content" style="margin-bottom:12px"></div>
+      <div id="s6-result-content" style="margin-bottom:8px"></div>
+      <div style="margin-bottom:10px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">Model: <span id="s6-model-chip" style="color:var(--text);font-weight:700">Kling o1</span></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn bsec" onclick="regenerateScene()" style="font-size:12px;padding:9px 18px">&#x21BA; Regenerate</button>
         <button class="btn bgh" id="btn-download-scene" onclick="downloadScene()" style="font-size:12px;padding:9px 18px">&#x2193; Download</button>
@@ -2626,6 +2630,9 @@ function loadScene(i){
   document.getElementById('btn-generate-scene').textContent=isVideo?'Generate Video Clip':'Generate Image';
 
   document.getElementById('s6-video-settings').style.display=isVideo?'':'none';
+  // Gemini button only for image scenes — video stays on Kling
+  const geminiBtn=document.getElementById('btn-generate-gemini');
+  if(geminiBtn)geminiBtn.style.display=isVideo?'none':'';
   // Scene/style slots only relevant for image scenes; hide for video (prompt is the main input)
   const sceneStyleEl=document.getElementById('s6-scene-style-slots');
   if(sceneStyleEl) sceneStyleEl.style.display=isVideo?'none':'';
@@ -3089,7 +3096,10 @@ async function generateScene(){
   const prompt=document.getElementById('s6-prompt').value.trim();
   if(!prompt){showErr('e6','Prompt is empty — add a scene description.');return;}
 
-  document.getElementById('btn-generate-scene').disabled=true;
+  const genBtn=document.getElementById('btn-generate-scene');
+  const geminiBtn=document.getElementById('btn-generate-gemini');
+  genBtn.disabled=true;
+  if(geminiBtn)geminiBtn.disabled=true;
   showErr('e6','');
 
   let finalPrompt=prompt;
@@ -3122,7 +3132,8 @@ async function generateScene(){
       if(refImages.length===0){
         // Hard block — no refs means photorealistic output, which we never allow
         showErr('e6','⚠ No character image is ready. Go back to Step 1 and wait for ✓ Ready on the Subject slot before generating.');
-        document.getElementById('btn-generate-scene').disabled=false;
+        genBtn.disabled=false;
+        if(geminiBtn)geminiBtn.disabled=false;
         return;
       }
 
@@ -3176,6 +3187,7 @@ async function generateScene(){
     lastGeneratedURL=resultURL;
     sceneData[currentScene].resultURL=resultURL;
     sceneData[currentScene].resultType=resultType;
+    sceneData[currentScene].resultModel='kling';
 
     const container=document.getElementById('s6-result-content');
     if(resultType==='image'){
@@ -3183,6 +3195,9 @@ async function generateScene(){
     } else {
       container.innerHTML='<video src="'+resultURL+'" controls autoplay muted loop style="width:100%;border-radius:8px"></video>';
     }
+    // Update model chip
+    const chip=document.getElementById('s6-model-chip');
+    if(chip)chip.textContent=isVideo?'Kling v1.6 Pro':'Kling o1';
     // Advance to the result step
     s6ShowPanel('result');
     document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video (Kling — image-to-video)':'Generate Image (Kling o1 — 2D illustrated)';
@@ -3192,7 +3207,86 @@ async function generateScene(){
     showErr('e6',display);
     document.getElementById('s6-gen-label').textContent=isVideo?'Generate Video (Kling — image-to-video)':'Generate Image (Kling o1 — 2D illustrated)';
   }finally{
-    document.getElementById('btn-generate-scene').disabled=false;
+    genBtn.disabled=false;
+    if(geminiBtn)geminiBtn.disabled=false;
+  }
+}
+
+async function generateSceneGemini(){
+  const s=sceneData[currentScene];
+  const falKey=sessionStorage.getItem('cfa_fal_key');
+  if(!falKey){showErr('e6','fal.ai API key not set — open ⚙ Settings.');return;}
+  const prompt=document.getElementById('s6-prompt').value.trim();
+  if(!prompt){showErr('e6','Prompt is empty — add a scene description.');return;}
+
+  const genBtn=document.getElementById('btn-generate-scene');
+  const geminiBtn=document.getElementById('btn-generate-gemini');
+  if(genBtn)genBtn.disabled=true;
+  if(geminiBtn)geminiBtn.disabled=true;
+  showErr('e6','');
+
+  let finalPrompt=prompt;
+  if(sceneRefs['scene']&&sceneRefs['scene'].text)finalPrompt+=' Setting: '+sceneRefs['scene'].text+'.';
+  if(sceneRefs['style']&&sceneRefs['style'].text)finalPrompt+=' Style: '+sceneRefs['style'].text+'.';
+
+  const refImages=[];
+  if(sceneRefs['subject']?.url?.startsWith('https://'))   refImages.push(sceneRefs['subject'].url);
+  if(sceneRefs['cosubject']?.url?.startsWith('https://')) refImages.push(sceneRefs['cosubject'].url);
+  if(sceneRefs['scene']?.url?.startsWith('https://'))     refImages.push(sceneRefs['scene'].url);
+  if(sceneRefs['style']?.url?.startsWith('https://'))     refImages.push(sceneRefs['style'].url);
+
+  if(refImages.length===0){
+    showErr('e6','⚠ No character image is ready. Wait for ✓ Ready on the Subject slot before generating.');
+    if(genBtn)genBtn.disabled=false;
+    if(geminiBtn)geminiBtn.disabled=false;
+    return;
+  }
+
+  document.getElementById('s6-gen-label').textContent='Generating with Gemini 3 Pro ('+refImages.length+' ref'+(refImages.length>1?'s':'')+')…';
+
+  try{
+    const body={
+      prompt:finalPrompt,
+      aspect_ratio:'16:9',
+      num_images:1,
+      image_urls:refImages,
+      resolution:'2K',
+      system_prompt:'2D illustrated style. Bold clean outlines, flat color shading, consistent line weight throughout. No photorealism.'
+    };
+    const resp=await fetch('https://fal.run/fal-ai/gemini-3-pro-image-preview/edit',{
+      method:'POST',
+      headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    if(!resp.ok){
+      const e=await resp.json().catch(()=>({}));
+      throw new Error(typeof e?.detail==='string'?e.detail:typeof e?.error==='string'?e.error:typeof e?.message==='string'?e.message:JSON.stringify(e)||'HTTP '+resp.status);
+    }
+    const data=await resp.json();
+    const resultURL=data.images?.[0]?.url||'';
+    if(!resultURL)throw new Error('No image returned from Gemini — try again.');
+
+    lastGeneratedURL=resultURL;
+    sceneData[currentScene].resultURL=resultURL;
+    sceneData[currentScene].resultType='image';
+    sceneData[currentScene].resultModel='gemini';
+
+    const container=document.getElementById('s6-result-content');
+    container.innerHTML='<img src="'+resultURL+'" style="width:100%;border-radius:8px"/>';
+
+    const chip=document.getElementById('s6-model-chip');
+    if(chip)chip.textContent='Gemini 3 Pro';
+
+    s6ShowPanel('result');
+    document.getElementById('s6-gen-label').textContent='Generate Image (Kling o1 — 2D illustrated)';
+
+  }catch(err){
+    const display=err instanceof Error?err.message:typeof err==='string'?err:JSON.stringify(err);
+    showErr('e6',display);
+    document.getElementById('s6-gen-label').textContent='Generate Image (Kling o1 — 2D illustrated)';
+  }finally{
+    if(genBtn)genBtn.disabled=false;
+    if(geminiBtn)geminiBtn.disabled=false;
   }
 }
 
