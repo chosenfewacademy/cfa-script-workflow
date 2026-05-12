@@ -2539,6 +2539,10 @@ const MODEL_COSTS = {
 // Persist spend in localStorage so it survives page refreshes within a work session
 let sessionSpend = parseFloat(localStorage.getItem('cfa_session_spend') || '0');
 let sessionGens  = parseInt(localStorage.getItem('cfa_session_gens')   || '0');
+// Pre-seed budget to $16.58 confirmed by Xavier on 2026-05-11 — only sets if not already saved
+if(!localStorage.getItem('cfa_fal_budget')){
+  localStorage.setItem('cfa_fal_budget', '16.58');
+}
 
 function getEstimatedCost(){
   const s = sceneData[currentScene];
