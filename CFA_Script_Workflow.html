@@ -3174,6 +3174,31 @@ function detectCharacters(line){
   return 'NONE';
 }
 
+// Detects secondary (non-Marcus/Jordan) human characters in a script line.
+// Returns the most specific term found (e.g. 'banker', 'woman') or null.
+// Only meaningful when Marcus or Jordan is also present — concept/NONE scenes
+// should just be generated fresh without this concern.
+function detectSecondaryChar(line){
+  const text = line.toLowerCase();
+  const hasMarcus = text.includes('marcus');
+  const hasJordan = text.includes('jordan');
+  if(!hasMarcus && !hasJordan) return null; // NONE scene — no main character to protect
+  // Ordered by specificity — more descriptive terms first
+  const terms = [
+    'banker','investor','advisor','broker','trader','analyst','executive',
+    'director','manager','officer','client','customer','employee','boss',
+    'teacher','professor','coach','mentor','expert','speaker','presenter',
+    'colleague','friend','partner','stranger','person','figure',
+    'woman','man','girl','boy','lady','gentleman',
+    'him','her','them','someone','somebody','another'
+  ];
+  return terms.find(t => {
+    // Match whole word only — avoid "him" matching "himself", "her" matching "there"
+    const re = new RegExp('\\b' + t + '\\b');
+    return re.test(text);
+  }) || null;
+}
+
 const SYS_CLASSIFY = `You are classifying script segments for a crypto education video.
 For each numbered line, output exactly: [N] IMAGE or [N] VIDEO
 
@@ -3197,9 +3222,17 @@ Tag as IMAGE when:
 
 Output only the classifications. One per line. No explanation.`;
 
-const SYS_KLING_IMAGE = `You are generating a Kling AI image generation prompt for a 2D illustrated crypto education video. Write 3-5 sentences of pure scene description. Lead with setting and action. Include character pose and expression. Include 2-3 key props that support the meaning of the line. Include one orange accent object naturally in the scene. Match the emotional tone of the line. No style directives. No hex codes. No cartoon or 2D language — Kling handles style. Then on a new line output exactly: SCENE: [4-8 word setting summary, e.g. "dim bedroom, laptop glow, late night"]`;
+const SYS_KLING_IMAGE = `You are generating a Kling AI image generation prompt for a 2D illustrated crypto education video. Write 3-5 sentences of pure scene description. Lead with setting and action. Include character pose and expression. Include 2-3 key props that support the meaning of the line. Include one orange accent object naturally in the scene. Match the emotional tone of the line. No style directives. No hex codes. No cartoon or 2D language — Kling handles style.
 
-const SYS_KLING_VIDEO = `You are generating a Kling AI video motion prompt for a 2D illustrated crypto education video. The visual style is non-negotiable: 2D illustrated characters with bold clean outlines, flat color shading, and consistent line weight throughout all motion — do not drift toward photorealism at any point in the clip. Write 3-5 sentences describing what moves, how it moves, and how the camera behaves. Lead with the character action. Describe movement precisely — not vague words like 'dynamic' but specific actions like 'leans forward slowly' or 'glances down at phone'. Include one specific facial micro-expression change during the clip. Describe camera direction using cinematography language — dolly, push, pull, pan, static hold. Include lighting mood — warm amber, cold blue, soft natural. Everything must imply motion — no static description. The 2D illustrated style must be explicitly maintained throughout all motion in every prompt you write. Do not include camera preset language — that is added separately. Then on a new line output exactly: SCENE: [4-8 word setting summary, e.g. "open-plan office, amber light, afternoon"]`;
+CHARACTER RULE — critical: If a Character Note is provided, follow it exactly. Marcus and Jordan are the only named main characters — their appearance comes from a reference image. Any secondary character (banker, woman, colleague, stranger, etc.) must be described as a completely different-looking individual: different skin tone, different build, different clothing style, different facial features. Make their distinctness explicit in the prompt. Never imply the secondary character resembles Marcus or Jordan.
+
+Then on a new line output exactly: SCENE: [4-8 word setting summary, e.g. "dim bedroom, laptop glow, late night"]`;
+
+const SYS_KLING_VIDEO = `You are generating a Kling AI video motion prompt for a 2D illustrated crypto education video. The visual style is non-negotiable: 2D illustrated characters with bold clean outlines, flat color shading, and consistent line weight throughout all motion — do not drift toward photorealism at any point in the clip. Write 3-5 sentences describing what moves, how it moves, and how the camera behaves. Lead with the character action. Describe movement precisely — not vague words like 'dynamic' but specific actions like 'leans forward slowly' or 'glances down at phone'. Include one specific facial micro-expression change during the clip. Describe camera direction using cinematography language — dolly, push, pull, pan, static hold. Include lighting mood — warm amber, cold blue, soft natural. Everything must imply motion — no static description. The 2D illustrated style must be explicitly maintained throughout all motion in every prompt you write. Do not include camera preset language — that is added separately.
+
+CHARACTER RULE — critical: If a Character Note is provided, follow it exactly. Marcus and Jordan are the only named main characters — their appearance comes from a reference image. Any secondary character (banker, woman, colleague, stranger, etc.) must be described as a completely different-looking individual: different skin tone, different build, different clothing style, different facial features. Make their distinctness explicit and describe their motion separately from the main character's motion. Never imply the secondary character resembles Marcus or Jordan.
+
+Then on a new line output exactly: SCENE: [4-8 word setting summary, e.g. "open-plan office, amber light, afternoon"]`;
 
 async function enterSceneGeneration(){
   const falKey=sessionStorage.getItem('cfa_fal_key');
@@ -3316,6 +3349,21 @@ async function generateAllPrompts(){
 async function generatePromptForScene(i){
   const s=sceneData[i];
   const sys=s.tag==='IMAGE' ? SYS_KLING_IMAGE : SYS_KLING_VIDEO;
+
+  // Build the user message — add a Character Note when a secondary person is in the scene
+  // so the AI knows to describe them as a distinct new individual, not a variation of Marcus/Jordan
+  let userMsg = s.line;
+  const secondary = detectSecondaryChar(s.line);
+  if(secondary){
+    const mainChar =
+      s.characters === 'BOTH' || s.characters === 'BOTH_JM' ? 'Marcus and Jordan' :
+      s.characters === 'MARCUS' ? 'Marcus' :
+      s.characters === 'JORDAN' ? 'Jordan' : null;
+    if(mainChar){
+      userMsg += `\n[Character Note: ${mainChar} is the main character — their look comes from a reference image. The ${secondary} is a SECONDARY character and must look completely different from ${mainChar}: different skin tone, build, clothing, and facial features. Describe them as a brand new person.]`;
+    }
+  }
+
   try{
     const resp=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
@@ -3329,7 +3377,7 @@ async function generatePromptForScene(i){
         model:'claude-haiku-4-5-20251001',
         max_tokens:300,
         system:sys,
-        messages:[{role:'user',content:s.line}]
+        messages:[{role:'user',content:userMsg}]
       })
     });
     if(resp.ok){
@@ -4037,6 +4085,16 @@ async function generateScene(){
   if(isVideo){
     const cam=document.getElementById('s6-camera').value;
     finalPrompt+=' '+CAMERA_PRESETS[cam];
+  }
+
+  // Secondary character guard — when Marcus/Jordan is the reference image AND a secondary
+  // person appears in the scene, tell Kling/Gemini explicitly not to apply the reference to them
+  const secondary = detectSecondaryChar(s.line || '');
+  if(secondary && s.characters !== 'NONE'){
+    const mainChar =
+      s.characters === 'BOTH' || s.characters === 'BOTH_JM' ? 'Marcus and Jordan' :
+      s.characters === 'MARCUS' ? 'Marcus' : 'Jordan';
+    finalPrompt += ` [Reference image is ONLY for ${mainChar}. The ${secondary} in this scene is a completely different person — distinct appearance, different skin tone and build, does not resemble ${mainChar} in any way.]`;
   }
 
   try{
