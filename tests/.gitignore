@@ -1,0 +1,6 @@
+# OneDrive conflict-copy duplicates (e.g. "cfa-live-sim 2.mjs")
+* [0-9].mjs
+
+# Test output artifacts
+test-output/
+node_modules/
