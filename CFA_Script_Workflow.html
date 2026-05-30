@@ -504,6 +504,20 @@ select option{background:var(--surface2)}
 /* ═══ IMAGEN NOTICE ═══ */
 .imagen-notice{background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);border-radius:8px;padding:9px 12px;margin-bottom:12px;font-family:'DM Mono',monospace;font-size:10px;color:#60a5fa;line-height:1.55;display:none}
 .imagen-notice.show{display:block}
+/* ═══ GPT IMAGE ENHANCEMENT ═══ */
+.gpt-enhance-trigger{margin-bottom:12px}
+.gpt-enhance-btn{background:rgba(99,102,241,.1);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-size:12px;padding:9px 18px}
+.gpt-enhance-btn:hover:not(:disabled){background:rgba(99,102,241,.18);border-color:#818cf8}
+.gpt-enhance-btn:disabled{opacity:.5;cursor:not-allowed}
+.gpt-enhance-note{font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:4px}
+.gpt-enhance-panel{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.28);border-radius:10px;padding:14px;margin-bottom:12px;display:none}
+.gpt-enhance-panel-head{font-family:'DM Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#818cf8;margin-bottom:10px}
+.gpt-compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.gpt-compare-label{font-family:'DM Mono',monospace;font-size:9px;text-align:center;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
+.gpt-compare-label.orig{color:var(--muted)}
+.gpt-compare-label.new{color:#818cf8}
+.gpt-compare-grid img{width:100%;border-radius:6px;display:block}
+.gpt-enhance-actions{display:flex;gap:8px;flex-wrap:wrap}
 
 /* ═══ COMPLETION SCREEN GRID ═══ */
 .complete-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:18px 0}
@@ -1418,6 +1432,30 @@ select option{background:var(--surface2)}
         <button class="btn bsec" onclick="regenerateScene()" style="font-size:12px;padding:9px 18px">&#x21BA; Regenerate</button>
         <button class="btn bgh" id="btn-download-scene" onclick="downloadScene()" style="font-size:12px;padding:9px 18px">&#x2193; Download</button>
       </div>
+
+      <!-- GPT Image enhancement — fixes garbled text on Kling images -->
+      <div id="gpt-enhance-trigger" class="gpt-enhance-trigger" style="display:none">
+        <button class="btn gpt-enhance-btn" id="btn-gpt-enhance" onclick="enhanceWithGPT()">&#x2728; Fix Text with GPT Image</button>
+        <div class="gpt-enhance-note">Keeps the scene identical &mdash; corrects garbled text &amp; typography &middot; ~$0.05 &middot; Requires OpenAI key in Settings</div>
+      </div>
+      <div id="gpt-enhance-panel" class="gpt-enhance-panel">
+        <div class="gpt-enhance-panel-head">&#x2728; GPT Enhanced Version &mdash; compare before applying</div>
+        <div class="gpt-compare-grid">
+          <div>
+            <div class="gpt-compare-label orig">Original</div>
+            <img id="gpt-orig-preview" src="" alt="Original scene"/>
+          </div>
+          <div>
+            <div class="gpt-compare-label new">GPT Enhanced</div>
+            <img id="gpt-enhanced-preview" src="" alt="Enhanced scene"/>
+          </div>
+        </div>
+        <div class="gpt-enhance-actions">
+          <button class="btn" id="btn-apply-enhanced" onclick="applyEnhancedVersion()" style="background:rgba(99,102,241,.15);color:#818cf8;border:1px solid rgba(99,102,241,.4);font-size:12px;padding:9px 16px">&#x2713; Use Enhanced Version</button>
+          <button class="btn bgh" onclick="dismissEnhancement()" style="font-size:12px;padding:9px 14px">&#x00D7; Dismiss</button>
+        </div>
+      </div>
+
       <div class="action-zone">
         <div class="next-step-block">
           <div class="next-step-label">Complete this scene</div>
@@ -1540,6 +1578,20 @@ select option{background:var(--surface2)}
           <button class="settings-save" id="btn-test-endpoints" onclick="testEndpoints()" style="width:100%;margin-top:0">Test fal.ai Endpoints</button>
           <div id="endpoint-test-results" style="display:none;margin-top:10px;font-size:11px;font-family:'DM Mono',monospace;line-height:1.9"></div>
         </div>
+      </div>
+
+      <!-- OpenAI (optional — GPT Image enhancement) -->
+      <div class="settings-section">
+        <div class="settings-section-label">
+          <div class="ks-dot miss" id="sm-ks-oai" style="width:8px;height:8px"></div>
+          OpenAI API Key <span style="font-size:9px;color:var(--muted);font-weight:400;font-family:'DM Mono',monospace;margin-left:6px">optional</span>
+        </div>
+        <div class="settings-section-desc">Used for the <strong>✨ Fix Text with GPT Image</strong> step on image results. Corrects garbled or misspelled text on Kling images while keeping the scene identical. Get yours at <strong>platform.openai.com → API Keys</strong>. Cost: ~$0.05 per enhancement.</div>
+        <div class="settings-row">
+          <input class="inp" id="sm-oai-key" type="password" placeholder="sk-..." autocomplete="off" aria-label="OpenAI API key"/>
+          <button class="settings-save" onclick="smSaveOpenAI()">Save</button>
+        </div>
+        <div class="settings-ok" id="sm-oai-ok">&#x2713; OpenAI key saved for this session</div>
       </div>
 
       <!-- fal.ai Credit Budget -->
@@ -1851,9 +1903,11 @@ function openSettings(){
   const k=sessionStorage.getItem('cfa_key');
   const el=sessionStorage.getItem('cfa_el_key');
   const fal=sessionStorage.getItem('cfa_fal_key');
+  const oai=sessionStorage.getItem('cfa_openai_key');
   if(k)document.getElementById('sm-apikey').value=k;
   if(el)document.getElementById('sm-el-key').value=el;
   if(fal)document.getElementById('sm-fal-key').value=fal;
+  if(oai)document.getElementById('sm-oai-key').value=oai;
   // Show ok states
   if(k){document.getElementById('sm-ant-ok').classList.add('show');}
   if(el){document.getElementById('sm-el-ok').classList.add('show');}
@@ -1904,6 +1958,13 @@ function smSaveFal(){
   document.getElementById('fal-key').value=v;
   sessionStorage.setItem('cfa_fal_key',v);
   document.getElementById('sm-fal-ok').classList.add('show');
+  updateKeyStatus();
+}
+function smSaveOpenAI(){
+  const v=document.getElementById('sm-oai-key').value.trim();
+  if(!v)return;
+  sessionStorage.setItem('cfa_openai_key',v);
+  document.getElementById('sm-oai-ok').classList.add('show');
   updateKeyStatus();
 }
 async function testEndpoints(){
@@ -1977,12 +2038,13 @@ function updateKeyStatus(){
   const hasAnt=!!sessionStorage.getItem('cfa_key');
   const hasEl=!!sessionStorage.getItem('cfa_el_key');
   const hasFal=!!sessionStorage.getItem('cfa_fal_key');
-  const allSet=hasAnt&&hasEl&&hasFal;
+  const hasOai=!!sessionStorage.getItem('cfa_openai_key');
+  const allSet=hasAnt&&hasEl&&hasFal; // OpenAI is optional — doesn't affect topbar dot
   // Settings button dot — single source of truth in topbar
   const dot=document.getElementById('settings-key-dot');
   if(dot){dot.className='settings-btn-dot '+(allSet?'all-set':'miss');}
-  // Modal section dots
-  setKsDot('sm-ks-ant',hasAnt);setKsDot('sm-ks-el',hasEl);setKsDot('sm-ks-fal',hasFal);
+  // Modal section dots (OpenAI is optional — shown as info only)
+  setKsDot('sm-ks-ant',hasAnt);setKsDot('sm-ks-el',hasEl);setKsDot('sm-ks-fal',hasFal);setKsDot('sm-ks-oai',hasOai);
   // S6 strip (voiceover ElevenLabs key — element IDs updated in Step J)
   const s6dot=document.getElementById('kss-el2');
   const s6txt=document.getElementById('s5-key-status');
@@ -3470,6 +3532,7 @@ function loadScene(i){
     if(chip)chip.textContent=s.resultModel||(isVideo?'Kling v1.6 Pro':'Kling o1');
     s6ShowPanel('result');
     autoPopulateCharacters(s.characters);
+    showGptEnhanceTrigger(s.resultType === 'image'); // restore enhance button state
     // Restore start frame slot if user previously set one for this video scene
     if(isVideo && s.savedStartFrameURL){
       sceneRefs['startframe']={url:s.savedStartFrameURL};
@@ -4032,6 +4095,175 @@ function setVideoModel(model){
   saveWorkflowState();
 }
 
+// ═══ GPT IMAGE ENHANCEMENT ═══════════════════════════════════════════════════
+// Sends the current Kling/Gemini/Imagen result to OpenAI gpt-image-1 with
+// a "keep everything identical — only fix text" instruction. Displays a
+// side-by-side comparison so Chris can accept or dismiss.
+
+// Stored b64 data URL of the latest GPT enhancement result
+let _gptEnhancedB64 = '';
+
+// Show or hide the enhance trigger button based on whether this is an image scene
+function showGptEnhanceTrigger(isImage){
+  const trigger = document.getElementById('gpt-enhance-trigger');
+  const panel   = document.getElementById('gpt-enhance-panel');
+  if(trigger) trigger.style.display = isImage ? '' : 'none';
+  if(!isImage && panel){ panel.style.display = 'none'; _gptEnhancedB64 = ''; }
+}
+
+// Convert any image Blob to PNG using an offscreen canvas
+// (Using a Blob URL avoids cross-origin canvas taint from fal.ai CDN)
+function blobToPng(blob){
+  return new Promise((resolve, reject)=>{
+    const objUrl = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = ()=>{
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      canvas.toBlob(pngBlob=>{
+        URL.revokeObjectURL(objUrl);
+        if(pngBlob) resolve(pngBlob);
+        else reject(new Error('PNG conversion failed'));
+      }, 'image/png');
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(objUrl); reject(new Error('Image load failed')); };
+    img.src = objUrl;
+  });
+}
+
+async function enhanceWithGPT(){
+  const openAIKey = sessionStorage.getItem('cfa_openai_key');
+  if(!openAIKey){
+    showErr('e6','OpenAI API key not set — open ⚙ Settings and add your OpenAI key to use this feature.');
+    return;
+  }
+  if(!lastGeneratedURL){
+    showErr('e6','No image to enhance — generate an image first.');
+    return;
+  }
+  const btn = document.getElementById('btn-gpt-enhance');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Enhancing…'; }
+  // Reset any existing comparison panel
+  const panel = document.getElementById('gpt-enhance-panel');
+  if(panel) panel.style.display = 'none';
+  showErr('e6','');
+
+  try{
+    // Fetch the current image as a Blob
+    const imageResp = await fetch(lastGeneratedURL);
+    if(!imageResp.ok) throw new Error('Could not download image — HTTP ' + imageResp.status);
+    const imageBlob = await imageResp.blob();
+
+    // Convert to PNG (OpenAI edits endpoint requires PNG)
+    const pngBlob = await blobToPng(imageBlob);
+
+    // Build FormData for OpenAI /v1/images/edits
+    const formData = new FormData();
+    formData.append('image', pngBlob, 'scene.png');
+    formData.append('model', 'gpt-image-1');
+    formData.append('n', '1');
+    formData.append('size', '1536x1024');
+    formData.append('prompt',
+      'This is a 2D illustrated educational video scene. ' +
+      'Keep the ENTIRE image exactly as it is — the characters, their positions, expressions, clothing, colors, composition, background, illustrated art style, and all visual elements must remain completely unchanged. ' +
+      'The ONLY change you may make is to the text and typography in the image: correct any misspelled words, fix garbled or unclear letters, and make all written text crisp and legible. ' +
+      'If there is no text in the image, return it perfectly unchanged. ' +
+      'Do NOT alter character appearances, colors, or art style under any circumstances.'
+    );
+
+    const oaiResp = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + openAIKey },
+      body: formData
+    });
+
+    if(!oaiResp.ok){
+      const e = await oaiResp.json().catch(()=>({}));
+      const msg = e?.error?.message || e?.error || 'HTTP ' + oaiResp.status;
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+
+    const oaiData = await oaiResp.json();
+    const b64 = oaiData?.data?.[0]?.b64_json;
+    if(!b64) throw new Error('No image in OpenAI response — try again.');
+
+    _gptEnhancedB64 = 'data:image/png;base64,' + b64;
+    trackSpend(0.05); // estimated GPT image enhancement cost
+
+    // Populate and show the comparison panel
+    const origImg = document.getElementById('gpt-orig-preview');
+    const enhImg  = document.getElementById('gpt-enhanced-preview');
+    if(origImg) origImg.src = lastGeneratedURL;
+    if(enhImg)  enhImg.src  = _gptEnhancedB64;
+    if(panel)   panel.style.display = '';
+
+  }catch(err){
+    const msg = err instanceof Error ? err.message : String(err);
+    showErr('e6','✗ GPT Enhancement failed: ' + msg);
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent='✨ Fix Text with GPT Image'; }
+  }
+}
+
+async function applyEnhancedVersion(){
+  if(!_gptEnhancedB64){
+    showErr('e6','No enhanced version — run the enhancement first.');
+    return;
+  }
+  const applyBtn = document.getElementById('btn-apply-enhanced');
+  if(applyBtn){ applyBtn.disabled=true; applyBtn.textContent='⏳ Uploading…'; }
+  showErr('e6','');
+
+  try{
+    // Convert b64 data URL → Blob → File
+    const base64 = _gptEnhancedB64.replace(/^data:image\/png;base64,/, '');
+    const bytes   = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const pngFile = new File([bytes], 'gpt_scene_'+(currentScene+1)+'.png', {type:'image/png'});
+
+    // Upload to fal.ai storage (reuses existing uploadToFal — gives a stable HTTPS URL
+    // that the session save / start-frame logic can use normally)
+    const httpsUrl = await uploadToFal(pngFile);
+
+    // Update the scene result everywhere
+    lastGeneratedURL = httpsUrl;
+    sceneData[currentScene].resultURL   = httpsUrl;
+    sceneData[currentScene].resultModel = (sceneData[currentScene].resultModel||'') + ' + GPT';
+
+    const container = document.getElementById('s6-result-content');
+    if(container) container.innerHTML = '<img src="'+httpsUrl+'" style="width:100%;border-radius:8px"/>';
+
+    const chip = document.getElementById('s6-model-chip');
+    if(chip) chip.textContent = sceneData[currentScene].resultModel;
+
+    // Update next video scene's start frame to the enhanced version
+    for(let j=currentScene+1; j<sceneData.length; j++){
+      if(sceneData[j].tag==='VIDEO'){ sceneData[j].savedStartFrameURL=httpsUrl; break; }
+    }
+
+    // Close panel & clean up
+    const panel = document.getElementById('gpt-enhance-panel');
+    if(panel) panel.style.display = 'none';
+    _gptEnhancedB64 = '';
+
+    updateStartFrameAction();
+    saveWorkflowState();
+
+  }catch(err){
+    const msg = err instanceof Error ? err.message : String(err);
+    showErr('e6','Could not apply enhancement: ' + msg);
+  }finally{
+    if(applyBtn){ applyBtn.disabled=false; applyBtn.textContent='✓ Use Enhanced Version'; }
+  }
+}
+
+function dismissEnhancement(){
+  const panel = document.getElementById('gpt-enhance-panel');
+  if(panel) panel.style.display = 'none';
+  _gptEnhancedB64 = '';
+}
+
 function updateGenLabel(){
   const s=sceneData[currentScene];
   if(!s) return;
@@ -4230,6 +4462,7 @@ async function generateScene(){
     s6ShowPanel('result');
     updateGenLabel();
     updateStartFrameAction(); // show "Set as Start Frame" if next scene is video
+    showGptEnhanceTrigger(resultType === 'image'); // enhance button only for images
 
     // Auto-set this image as the start frame for the NEXT video scene
     // (only if that scene doesn't already have a start frame saved)
