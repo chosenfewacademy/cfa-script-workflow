@@ -1436,7 +1436,7 @@ select option{background:var(--surface2)}
       <!-- GPT Image enhancement — fixes garbled text on Kling images -->
       <div id="gpt-enhance-trigger" class="gpt-enhance-trigger" style="display:none">
         <button class="btn gpt-enhance-btn" id="btn-gpt-enhance" onclick="enhanceWithGPT()">&#x2728; Fix Text with GPT Image</button>
-        <div class="gpt-enhance-note">Keeps the scene identical &mdash; corrects garbled text &amp; typography &middot; ~$0.05 &middot; Requires OpenAI key in Settings</div>
+        <div class="gpt-enhance-note">Text &amp; language correction only &mdash; characters &amp; style untouched &middot; GPT Image 2 &middot; Requires OpenAI key in Settings</div>
       </div>
       <div id="gpt-enhance-panel" class="gpt-enhance-panel">
         <div class="gpt-enhance-panel-head">&#x2728; GPT Enhanced Version &mdash; compare before applying</div>
@@ -4096,8 +4096,8 @@ function setVideoModel(model){
 }
 
 // ═══ GPT IMAGE ENHANCEMENT ═══════════════════════════════════════════════════
-// Sends the current Kling/Gemini/Imagen result to OpenAI gpt-image-1 with
-// a "keep everything identical — only fix text" instruction. Displays a
+// Sends the current Kling/Gemini/Imagen result to OpenAI gpt-image-2 with
+// a strict "text/language correction only — touch nothing else" instruction. Displays a
 // side-by-side comparison so Chris can accept or dismiss.
 
 // Stored b64 data URL of the latest GPT enhancement result
@@ -4162,15 +4162,19 @@ async function enhanceWithGPT(){
     // Build FormData for OpenAI /v1/images/edits
     const formData = new FormData();
     formData.append('image', pngBlob, 'scene.png');
-    formData.append('model', 'gpt-image-1');
+    formData.append('model', 'gpt-image-2');
     formData.append('n', '1');
     formData.append('size', '1536x1024');
     formData.append('prompt',
-      'This is a 2D illustrated educational video scene. ' +
-      'Keep the ENTIRE image exactly as it is — the characters, their positions, expressions, clothing, colors, composition, background, illustrated art style, and all visual elements must remain completely unchanged. ' +
-      'The ONLY change you may make is to the text and typography in the image: correct any misspelled words, fix garbled or unclear letters, and make all written text crisp and legible. ' +
-      'If there is no text in the image, return it perfectly unchanged. ' +
-      'Do NOT alter character appearances, colors, or art style under any circumstances.'
+      'TEXT AND LANGUAGE CORRECTION ONLY. ' +
+      'This is a finished 2D illustrated educational video scene. ' +
+      'Your ONLY task is to find and fix any text, words, letters, labels, or written language in the image that are: misspelled, garbled, illegible, wrong characters, hieroglyphic-looking, or unclear. ' +
+      'Correct them to proper readable English while keeping the font style, size, and position identical. ' +
+      'DO NOT change anything else — not the characters, not their faces, expressions, clothing, or positions. ' +
+      'NOT the colors, NOT the composition, NOT the background, NOT the art style, NOT the lighting. ' +
+      'The 2D illustrated style, every character appearance, and every visual element must remain pixel-for-pixel identical. ' +
+      'If there is no text in the image, output it completely unchanged. ' +
+      'This is a text correction pass only — nothing visual changes except broken text becoming legible.'
     );
 
     const oaiResp = await fetch('https://api.openai.com/v1/images/edits', {
