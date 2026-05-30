@@ -3240,12 +3240,21 @@ function detectCharacters(line){
 // Returns the most specific term found (e.g. 'banker', 'woman') or null.
 // Only meaningful when Marcus or Jordan is also present — concept/NONE scenes
 // should just be generated fresh without this concern.
+// Pronoun-type secondary terms — ambiguous, so they get special handling below
+const PRONOUN_SECONDARIES = ['him','her','them','someone','somebody','another'];
+
 function detectSecondaryChar(line){
-  const text = line.toLowerCase();
-  const hasMarcus = text.includes('marcus');
-  const hasJordan = text.includes('jordan');
+  const raw = line.toLowerCase();
+  const hasMarcus = raw.includes('marcus');
+  const hasJordan = raw.includes('jordan');
   if(!hasMarcus && !hasJordan) return null; // NONE scene — no main character to protect
-  // Ordered by specificity — more descriptive terms first
+
+  // Neutralize POSSESSIVE determiner + noun ("her phone", "his desk", "their laptop").
+  // These refer to the MAIN character, not a secondary person — without this strip,
+  // "Jordan checks her phone" would wrongly flag "her" as a separate character.
+  const text = raw.replace(/\b(his|her|their|its|your|our|my)\s+[a-z]+/g, ' ');
+
+  // Ordered by specificity — more descriptive role nouns first, weak pronouns last
   const terms = [
     'banker','investor','advisor','broker','trader','analyst','executive',
     'director','manager','officer','client','customer','employee','boss',
@@ -3259,6 +3268,13 @@ function detectSecondaryChar(line){
     const re = new RegExp('\\b' + t + '\\b');
     return re.test(text);
   }) || null;
+}
+
+// Human-readable label for a secondary character — pronouns become "other person"
+// so the guard text never reads "The her in this scene..."
+function secondaryLabel(secondary){
+  if(!secondary) return '';
+  return PRONOUN_SECONDARIES.includes(secondary) ? 'other person (a separate character)' : secondary;
 }
 
 const SYS_CLASSIFY = `You are classifying script segments for a crypto education video.
@@ -3422,7 +3438,8 @@ async function generatePromptForScene(i){
       s.characters === 'MARCUS' ? 'Marcus' :
       s.characters === 'JORDAN' ? 'Jordan' : null;
     if(mainChar){
-      userMsg += `\n[Character Note: ${mainChar} is the main character — their look comes from a reference image. The ${secondary} is a SECONDARY character and must look completely different from ${mainChar}: different skin tone, build, clothing, and facial features. Describe them as a brand new person.]`;
+      const label = secondaryLabel(secondary);
+      userMsg += `\n[Character Note: ${mainChar} is the main character — their look comes from a reference image. The ${label} is a SECONDARY character and must look completely different from ${mainChar}: different skin tone, build, clothing, and facial features (gender-appropriate to the script). Describe them as a brand new person.]`;
     }
   }
 
@@ -4330,7 +4347,7 @@ async function generateScene(){
     const mainChar =
       s.characters === 'BOTH' || s.characters === 'BOTH_JM' ? 'Marcus and Jordan' :
       s.characters === 'MARCUS' ? 'Marcus' : 'Jordan';
-    finalPrompt += ` [Reference image is ONLY for ${mainChar}. The ${secondary} in this scene is a completely different person — distinct appearance, different skin tone and build, does not resemble ${mainChar} in any way.]`;
+    finalPrompt += ` [Reference image is ONLY for ${mainChar}. The ${secondaryLabel(secondary)} in this scene is a completely different person — distinct appearance, different skin tone and build, gender-appropriate to the script, does not resemble ${mainChar} in any way.]`;
   }
 
   try{
