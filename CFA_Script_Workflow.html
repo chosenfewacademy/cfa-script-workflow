@@ -3177,6 +3177,11 @@ function detectCharacters(line){
 const SYS_CLASSIFY = `You are classifying script segments for a crypto education video.
 For each numbered line, output exactly: [N] IMAGE or [N] VIDEO
 
+CRITICAL RULES — follow these without exception:
+1. Never tag two consecutive scenes as VIDEO. Always place at least one IMAGE between videos.
+2. Target approximately 30% VIDEO scenes — roughly one video every three scenes. For 10 scenes: 3 videos. For 15 scenes: 5 videos. For 20 scenes: 6 videos.
+3. Spread videos evenly throughout the script — not clustered at the start or end.
+
 Tag as VIDEO when:
 - Character is doing something emotionally significant
 - Scene implies natural movement or action
@@ -3240,6 +3245,12 @@ async function enterSceneGeneration(){
       const characters = detectCharacters(line);
       return {line, tag, characters, prompt:'', sceneDesc:'', done:false, resultURL:'', resultType:'', resultModel:'', savedStartFrameURL:''};
     });
+    // Enforce: never two consecutive VIDEO scenes — videos break up images, not stack
+    for(let i=1; i<sceneData.length; i++){
+      if(sceneData[i].tag==='VIDEO' && sceneData[i-1].tag==='VIDEO'){
+        sceneData[i].tag='IMAGE';
+      }
+    }
     // Persist initial sceneData so a refresh during prompt generation doesn't lose classifications
     saveWorkflowState();
 
@@ -3426,9 +3437,23 @@ function loadScene(i){
 
   // Reset scene ref — scene description is per-scene, not shared across scenes
   delete sceneRefs['scene'];
-  // Reset start frame ref unless we have a saved one (e.g. set via "Use as Start Frame" from a prior scene)
-  if(isVideo && s.savedStartFrameURL){
-    sceneRefs['startframe']={url:s.savedStartFrameURL};
+
+  // Auto-populate start frame for video scenes
+  if(isVideo){
+    // If no start frame saved yet, scan backwards for the most recent completed image scene
+    if(!s.savedStartFrameURL){
+      for(let j=i-1; j>=0; j--){
+        if(sceneData[j].tag==='IMAGE' && sceneData[j].resultURL){
+          s.savedStartFrameURL = sceneData[j].resultURL;
+          break;
+        }
+      }
+    }
+    if(s.savedStartFrameURL){
+      sceneRefs['startframe']={url:s.savedStartFrameURL};
+    } else {
+      delete sceneRefs['startframe'];
+    }
   } else {
     delete sceneRefs['startframe'];
   }
@@ -3438,6 +3463,11 @@ function loadScene(i){
 
   // Auto-populate character slots based on who appears in this scene's script line
   autoPopulateCharacters(s.characters);
+
+  // If start frame was auto-found above, show it in the slot UI immediately
+  if(isVideo && s.savedStartFrameURL){
+    autoPopulateStartFrameSlot(s.savedStartFrameURL);
+  }
 
   // Auto-fill scene setting from generated description (image scenes only)
   const sceneTextEl=document.getElementById('scene-text-input');
@@ -3457,6 +3487,12 @@ function loadScene(i){
 
   // Persist current scene index so resume restores correctly
   saveWorkflowState();
+
+  // NONE scenes (image only): no character reference needed — skip chars step, auto-select Imagen 4
+  if(!isVideo && s.characters === 'NONE'){
+    setImageModel('imagen4');
+    s6ShowPanel('prompt');
+  }
 }
 
 function setDuration(s){
@@ -3593,7 +3629,8 @@ function s6NextFromChars(){
     return;
   }
   const subjReady=sceneRefs['subject']&&sceneRefs['subject'].url&&sceneRefs['subject'].url.startsWith('https://');
-  if(!subjReady){
+  // NONE scenes don't need a character reference — allow through without blocking
+  if(!subjReady && s && s.characters !== 'NONE'){
     // Hard block — no character means photorealistic, which we never allow
     const rdiv=document.getElementById('s6-readiness');
     if(rdiv){
@@ -3643,6 +3680,22 @@ function updateReadiness(){
 
   // Start frame state (video)
   const sfReady=sceneRefs['startframe']&&sceneRefs['startframe'].url&&sceneRefs['startframe'].url.startsWith('https://');
+
+  // NONE scenes: no character needed — show a clean green status and enable Next
+  if(s.characters === 'NONE'){
+    const borderColor = 'rgba(52,211,153,.35)';
+    const bgColor = 'rgba(52,211,153,.05)';
+    const msg = isVideo
+      ? 'Concept video — no character reference needed. Start Frame is auto-set from the previous scene.'
+      : 'Concept scene — no character reference needed. Imagen 4 will generate from the text prompt only.';
+    el.innerHTML=`<div style="background:${bgColor};border:1px solid ${borderColor};border-radius:8px;padding:11px 14px;margin-bottom:14px;font-family:'DM Mono',monospace;font-size:10px">
+<div style="font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">⚡ Scene Status</div>
+<div style="display:flex;align-items:flex-start;gap:9px;line-height:1.6"><span style="color:var(--success);flex-shrink:0;font-weight:700">✓</span><span style="color:var(--success)"><strong>${msg}</strong></span></div>
+</div>`;
+    const nextBtn=document.getElementById('btn-chars-next');
+    if(nextBtn){ nextBtn.disabled=false; nextBtn.textContent='Next →'; nextBtn.style.opacity=''; nextBtn.style.cursor=''; }
+    return;
+  }
 
   const rows=[];
   if(subjUploading){
@@ -3867,6 +3920,47 @@ async function autoPopulateCharacters(characters){
   }
 }
 
+// ─── Auto-populate the start frame slot UI from a URL already in fal.ai storage ──
+// Called when a previous image scene's result is auto-set as the start frame,
+// so Chris sees the preview without needing to upload anything.
+function autoPopulateStartFrameSlot(imageUrl){
+  const slotEl = document.getElementById('slot-startframe');
+  if(!slotEl || !imageUrl) return;
+
+  slotEl.classList.add('has-image');
+
+  // Show image preview
+  let img = slotEl.querySelector('img');
+  if(!img){
+    img = document.createElement('img');
+    slotEl.insertBefore(img, slotEl.firstChild);
+  }
+  img.src = imageUrl;
+  img.style.cssText = 'width:100%;border-radius:6px;margin-top:8px;max-height:120px;object-fit:cover;pointer-events:none';
+
+  // Update badge to show auto-set state
+  const badgeEl = slotEl.querySelector('.ref-slot-badge');
+  if(badgeEl){
+    badgeEl.textContent = '✓ Auto-set from previous scene';
+    badgeEl.style.background = 'rgba(52,211,153,.12)';
+    badgeEl.style.color = '#34d399';
+  }
+
+  // Update helper text
+  const helperEl = slotEl.querySelector('.ref-slot-helper');
+  if(helperEl) helperEl.textContent = 'Automatically set from the image you just generated. Clear to upload a different one.';
+
+  // Show status
+  let statusEl = slotEl.querySelector('.ref-slot-upload-status');
+  if(!statusEl){
+    statusEl = document.createElement('div');
+    statusEl.className = 'ref-slot-upload-status';
+    slotEl.appendChild(statusEl);
+  }
+  statusEl.textContent = '✓ Ready — auto-set from previous scene';
+  statusEl.style.color = 'var(--success)';
+}
+
 function setImageModel(model){
   selectedImageModel=model;
   // Update selection dots
@@ -3958,10 +4052,15 @@ async function generateScene(){
       if(sceneRefs['scene']?.url?.startsWith('https://'))     refImages.push(sceneRefs['scene'].url);
       if(sceneRefs['style']?.url?.startsWith('https://'))     refImages.push(sceneRefs['style'].url);
 
-      if(selectedImageModel!=='imagen4' && refImages.length===0){
-        showErr('e6','⚠ No character image is ready. Go back to Step 1 and wait for ✓ Ready on the Subject slot before generating.');
-        genBtn.disabled=false;
-        return;
+      if(refImages.length===0){
+        if(s.characters==='NONE'){
+          // Concept scene — no character reference needed. Force Imagen 4.
+          setImageModel('imagen4');
+        } else if(selectedImageModel!=='imagen4'){
+          showErr('e6','⚠ Character image is still uploading — wait for the ✓ Ready indicator before generating.');
+          genBtn.disabled=false;
+          return;
+        }
       }
 
       if(selectedImageModel==='kling-o1'){
@@ -4073,7 +4172,21 @@ async function generateScene(){
     s6ShowPanel('result');
     updateGenLabel();
     updateStartFrameAction(); // show "Set as Start Frame" if next scene is video
-    saveWorkflowState();      // persist the result URL
+
+    // Auto-set this image as the start frame for the NEXT video scene
+    // (only if that scene doesn't already have a start frame saved)
+    if(resultType==='image'){
+      for(let j=currentScene+1; j<sceneData.length; j++){
+        if(sceneData[j].tag==='VIDEO'){
+          if(!sceneData[j].savedStartFrameURL){
+            sceneData[j].savedStartFrameURL=resultURL;
+          }
+          break; // only target the next video, not all future ones
+        }
+      }
+    }
+
+    saveWorkflowState();      // persist the result URL + auto-set start frames
 
   }catch(err){
     const display=err instanceof Error?err.message:typeof err==='string'?err:JSON.stringify(err);
