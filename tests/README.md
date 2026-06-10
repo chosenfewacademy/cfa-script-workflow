@@ -18,6 +18,8 @@ test means Chris won't hit a schema mismatch or dead endpoint during real work.
 | `cfa-new-endpoints-test.mjs` | Gemini 3 Pro, Imagen 4 Ultra, Veo 3.1 smoke test | ~$0.52 |
 | `cfa-gpt-image-test.mjs` | GPT Image text-correction (`/v1/images/edits`) across model strings | ~$0.20 |
 | `cfa-live-sim.mjs` | End-to-end simulation of a full scene run | varies |
+| `cfa-character-isolation-test.mjs` | Character isolation: Marcus/Jordan refs used correctly, secondary chars distinct, NONE→Imagen 4 (6 live generations) | ~$0.60 |
+| `cfa-anthropic-pipeline-test.mjs` | Full Anthropic pipeline: script→segment→classify→prompts, no-consec enforcement, secondary-char note injection (9 checks) | ~$0.02 |
 
 ## Usage
 
@@ -25,9 +27,15 @@ test means Chris won't hit a schema mismatch or dead endpoint during real work.
 # Anthropic-only pipeline test
 node cfa-pipeline-test.mjs YOUR_ANTHROPIC_KEY
 
+# Full Anthropic pipeline + secondary-char note injection (9 checks)
+node cfa-anthropic-pipeline-test.mjs YOUR_ANTHROPIC_KEY
+
 # fal.ai endpoint tests (pass the fal.ai key)
 node cfa-new-endpoints-test.mjs YOUR_FAL_KEY
 node cfa-comprehensive-test.mjs YOUR_FAL_KEY
+
+# Character isolation live test — 6 real generations, visual inspection required
+node cfa-character-isolation-test.mjs YOUR_FAL_KEY
 
 # OpenAI GPT Image enhancement test
 node cfa-gpt-image-test.mjs YOUR_OPENAI_KEY
