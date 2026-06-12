@@ -513,6 +513,7 @@ select option{background:var(--surface2)}
 .gpt-enhance-panel{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.28);border-radius:10px;padding:14px;margin-bottom:12px;display:none}
 .gpt-enhance-panel-head{font-family:'DM Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#818cf8;margin-bottom:10px}
 .gpt-compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+@media (max-width:640px){.gpt-compare-grid{grid-template-columns:1fr}}
 .gpt-compare-label{font-family:'DM Mono',monospace;font-size:9px;text-align:center;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
 .gpt-compare-label.orig{color:var(--muted)}
 .gpt-compare-label.new{color:#818cf8}
@@ -1538,7 +1539,7 @@ select option{background:var(--surface2)}
       <div class="settings-section">
         <div class="settings-section-label">
           <div class="ks-dot miss" id="sm-ks-ant" style="width:8px;height:8px"></div>
-          Anthropic API Key
+          Anthropic API Key <span style="font-size:9px;font-weight:700;font-family:'DM Mono',monospace;color:var(--accent);background:rgba(245,158,11,.12);padding:2px 6px;border-radius:3px;margin-left:6px;letter-spacing:.05em">REQUIRED</span>
         </div>
         <div class="settings-section-desc">Used for script generation, segmentation, and image prompts. Never sent to any server — calls go directly from your browser to Anthropic.</div>
         <div class="settings-row">
@@ -1552,7 +1553,7 @@ select option{background:var(--surface2)}
       <div class="settings-section">
         <div class="settings-section-label">
           <div class="ks-dot miss" id="sm-ks-el" style="width:8px;height:8px"></div>
-          ElevenLabs API Key
+          ElevenLabs API Key <span style="font-size:9px;font-weight:700;font-family:'DM Mono',monospace;color:var(--accent);background:rgba(245,158,11,.12);padding:2px 6px;border-radius:3px;margin-left:6px;letter-spacing:.05em">REQUIRED</span>
         </div>
         <div class="settings-section-desc">Required for voiceover generation. Get yours at elevenlabs.io &rarr; Profile &rarr; API Key. Permission needed: <strong>Text to Speech → Access</strong>.</div>
         <div class="settings-row">
@@ -1566,7 +1567,7 @@ select option{background:var(--surface2)}
       <div class="settings-section">
         <div class="settings-section-label">
           <div class="ks-dot miss" id="sm-ks-fal" style="width:8px;height:8px"></div>
-          fal.ai API Key
+          fal.ai API Key <span style="font-size:9px;font-weight:700;font-family:'DM Mono',monospace;color:var(--accent);background:rgba(245,158,11,.12);padding:2px 6px;border-radius:3px;margin-left:6px;letter-spacing:.05em">REQUIRED</span>
         </div>
         <div class="settings-section-desc">Used for Kling image and video generation. Get yours at fal.ai &rarr; Dashboard &rarr; API Keys.</div>
         <div class="settings-row">
@@ -2395,12 +2396,15 @@ async function startGen(){
 
   }catch(err){
     clearInterval(elapsedTimer);
-    if(err.name==='AbortError')return; // user cancelled — stay on s2 or already navigated
-    document.getElementById('bgen').disabled=false;
+    if(err.name==='AbortError')return; // user cancelled — abortGen() re-enables the button
     showErr('e2',err.message);
     await sleep(1500);
     goTo(1,'left');
     showErr('e1','Generation failed: '+err.message);
+  }finally{
+    // Always re-enable — success path previously left the button disabled
+    // if Chris navigated back to Step 1 to generate another video
+    document.getElementById('bgen').disabled=false;
   }
 }
 
@@ -2774,7 +2778,7 @@ function updateCostBar(){
   const countEl     = document.getElementById('ct-count');
   const warnEl      = document.getElementById('ct-low-warn');
   const warnAmtEl   = document.getElementById('ct-warn-amt');
-  if(!costEl) return;
+  if(!costEl || !spentEl || !remainEl || !countEl) return;
 
   const thisCost = getEstimatedCost();
   costEl.textContent = '~$' + thisCost.toFixed(2);
@@ -2862,7 +2866,7 @@ function saveWorkflowState(){
       segScript:   segScript   || '',
       sceneData:   sceneData.map(s => ({
         line: s.line, tag: s.tag, characters: s.characters,
-        prompt: s.prompt || '', sceneDesc: s.sceneDesc || '',
+        prompt: s.prompt || '', sceneDesc: s.sceneDesc || '', styleDesc: s.styleDesc || '',
         done: !!s.done, resultURL: s.resultURL || '',
         resultType: s.resultType || '', resultModel: s.resultModel || '',
         savedStartFrameURL: s.savedStartFrameURL || ''
@@ -2876,6 +2880,9 @@ function saveWorkflowState(){
     localStorage.setItem(WORKFLOW_STATE_KEY, JSON.stringify(state));
   }catch(e){
     console.warn('saveWorkflowState failed:', e.message);
+    if(e && (e.name==='QuotaExceededError' || /quota/i.test(e.message||''))){
+      showErr('e6','⚠ Browser storage is full — session auto-save is failing. Download your finished scenes now so nothing is lost.');
+    }
   }
 }
 
@@ -2902,9 +2909,10 @@ function showResumeBannerIfSavedSession(){
   // Build a friendly description
   const ageMin = Math.max(0, Math.round((Date.now() - state.savedAt)/60000));
   const ageStr = ageMin < 1 ? 'just now' : ageMin === 1 ? '1 minute ago' : ageMin < 60 ? ageMin + ' minutes ago' : Math.round(ageMin/60) + ' hours ago';
+  const absStr = new Date(state.savedAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
   const total  = state.sceneData.length;
   const done   = state.sceneData.filter(s => s.done).length;
-  meta.textContent = `Last saved ${ageStr} · ${done} of ${total} scenes complete · Scene ${(state.currentScene||0)+1} of ${total}`;
+  meta.textContent = `Last saved ${ageStr} (${absStr}) · ${done} of ${total} scenes complete · Scene ${(state.currentScene||0)+1} of ${total}`;
   banner.style.display = '';
 }
 
@@ -3061,7 +3069,7 @@ function updateStartFrameAction(){
 
 function setAsStartFrameForNext(){
   const s = sceneData[currentScene];
-  if(!s || !s.resultURL) return;
+  if(!s || s.tag !== 'IMAGE' || !s.resultURL) return; // never set a video as a start frame
   const nextVideoIdx = findNextVideoSceneIdx();
   if(nextVideoIdx === -1) return;
   sceneData[nextVideoIdx].savedStartFrameURL = s.resultURL;
@@ -3459,17 +3467,19 @@ async function generatePromptForScene(i){
         messages:[{role:'user',content:userMsg}]
       })
     });
-    if(resp.ok){
-      const data=await resp.json();
-      const rawText=(data.content&&data.content[0]&&data.content[0].text)||'';
-      // Extract SCENE: tag for auto-populating the scene slot
-      const sceneMatch=rawText.match(/\nSCENE:\s*(.+)/i);
-      sceneData[i].sceneDesc=sceneMatch?sceneMatch[1].trim():'';
-      sceneData[i].prompt=rawText.replace(/\nSCENE:\s*.+/i,'').trim();
-      const readyEl=document.getElementById('prompt-ready-'+i);
-      if(readyEl)readyEl.style.display='';
-      saveWorkflowState(); // persist generated prompt + scene description
+    if(!resp.ok){
+      const e=await resp.json().catch(()=>({}));
+      throw new Error(e?.error?.message||'HTTP '+resp.status);
     }
+    const data=await resp.json();
+    const rawText=(data.content&&data.content[0]&&data.content[0].text)||'';
+    // Extract SCENE: tag for auto-populating the scene slot
+    const sceneMatch=rawText.match(/\nSCENE:\s*(.+)/i);
+    sceneData[i].sceneDesc=sceneMatch?sceneMatch[1].trim():'';
+    sceneData[i].prompt=rawText.replace(/\nSCENE:\s*.+/i,'').trim();
+    const readyEl=document.getElementById('prompt-ready-'+i);
+    if(readyEl)readyEl.style.display='';
+    saveWorkflowState(); // persist generated prompt + scene description
   }catch(e){
     // Surface prompt generation failures in the scene row
     const row=document.getElementById('prompt-ready-'+i);
@@ -3497,7 +3507,7 @@ function loadScene(i){
   document.getElementById('s6-scene-num').textContent=i+1;
   document.getElementById('s6-scene-total').textContent=total;
   document.getElementById('s6-progress-bar').style.width=pct+'%';
-  document.getElementById('s6-progress-text').textContent=done+' done';
+  document.getElementById('s6-progress-text').textContent=done+' of '+total+' done';
 
   document.getElementById('s6-script-line').textContent=s.line;
 
@@ -3911,6 +3921,12 @@ function handleTextInput(slot, input){
     delete sceneRefs[slot];
     slotEl.classList.remove('has-image');
   }
+  // Sync typed text into sceneData + persist so it survives a refresh
+  if(sceneData[currentScene]){
+    if(slot==='scene') sceneData[currentScene].sceneDesc = val;
+    if(slot==='style') sceneData[currentScene].styleDesc = val;
+    saveWorkflowState();
+  }
   updateImageState();
 }
 
@@ -4119,6 +4135,7 @@ function setVideoModel(model){
 
 // Stored b64 data URL of the latest GPT enhancement result
 let _gptEnhancedB64 = '';
+let _gptEnhanceSceneIdx = -1; // scene the in-flight/pending enhancement belongs to
 
 // Show or hide the enhance trigger button based on whether this is an image scene
 function showGptEnhanceTrigger(isImage){
@@ -4167,11 +4184,17 @@ async function enhanceWithGPT(){
   if(panel) panel.style.display = 'none';
   showErr('e6','');
 
+  // Pin the scene + source URL NOW — if Chris navigates to another scene while
+  // the ~50s enhancement runs, the result must still belong to THIS scene.
+  _gptEnhanceSceneIdx = currentScene;
+  const sourceURL = sceneData[currentScene]?.resultURL || lastGeneratedURL;
+
   try{
     // Fetch the current image as a Blob
-    const imageResp = await fetch(lastGeneratedURL);
+    const imageResp = await fetch(sourceURL);
     if(!imageResp.ok) throw new Error('Could not download image — HTTP ' + imageResp.status);
     const imageBlob = await imageResp.blob();
+    if(imageBlob.size === 0) throw new Error('Downloaded image is empty — regenerate the image and try again.');
 
     // Convert to PNG (OpenAI edits endpoint requires PNG)
     const pngBlob = await blobToPng(imageBlob);
@@ -4213,12 +4236,15 @@ async function enhanceWithGPT(){
     _gptEnhancedB64 = 'data:image/png;base64,' + b64;
     trackSpend(0.05); // estimated GPT image enhancement cost
 
-    // Populate and show the comparison panel
-    const origImg = document.getElementById('gpt-orig-preview');
-    const enhImg  = document.getElementById('gpt-enhanced-preview');
-    if(origImg) origImg.src = lastGeneratedURL;
-    if(enhImg)  enhImg.src  = _gptEnhancedB64;
-    if(panel)   panel.style.display = '';
+    // Populate and show the comparison panel — only if Chris is still viewing
+    // the scene this enhancement was started from
+    if(_gptEnhanceSceneIdx === currentScene){
+      const origImg = document.getElementById('gpt-orig-preview');
+      const enhImg  = document.getElementById('gpt-enhanced-preview');
+      if(origImg) origImg.src = sourceURL;
+      if(enhImg)  enhImg.src  = _gptEnhancedB64;
+      if(panel)   panel.style.display = '';
+    }
 
   }catch(err){
     const msg = err instanceof Error ? err.message : String(err);
@@ -4238,28 +4264,33 @@ async function applyEnhancedVersion(){
   showErr('e6','');
 
   try{
+    // The scene this enhancement belongs to — pinned when enhanceWithGPT started
+    const idx = (typeof _gptEnhanceSceneIdx === 'number' && sceneData[_gptEnhanceSceneIdx]) ? _gptEnhanceSceneIdx : currentScene;
+
     // Convert b64 data URL → Blob → File
     const base64 = _gptEnhancedB64.replace(/^data:image\/png;base64,/, '');
     const bytes   = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    const pngFile = new File([bytes], 'gpt_scene_'+(currentScene+1)+'.png', {type:'image/png'});
+    const pngFile = new File([bytes], 'gpt_scene_'+(idx+1)+'.png', {type:'image/png'});
 
     // Upload to fal.ai storage (reuses existing uploadToFal — gives a stable HTTPS URL
     // that the session save / start-frame logic can use normally)
     const httpsUrl = await uploadToFal(pngFile);
 
     // Update the scene result everywhere
-    lastGeneratedURL = httpsUrl;
-    sceneData[currentScene].resultURL   = httpsUrl;
-    sceneData[currentScene].resultModel = (sceneData[currentScene].resultModel||'') + ' + GPT';
+    sceneData[idx].resultURL   = httpsUrl;
+    sceneData[idx].resultModel = (sceneData[idx].resultModel||'') + ' + GPT';
 
-    const container = document.getElementById('s6-result-content');
-    if(container) container.innerHTML = '<img src="'+httpsUrl+'" style="width:100%;border-radius:8px"/>';
-
-    const chip = document.getElementById('s6-model-chip');
-    if(chip) chip.textContent = sceneData[currentScene].resultModel;
+    // Only touch the live result view if Chris is still on that scene
+    if(idx === currentScene){
+      lastGeneratedURL = httpsUrl;
+      const container = document.getElementById('s6-result-content');
+      if(container) container.innerHTML = '<img src="'+httpsUrl+'" style="width:100%;border-radius:8px"/>';
+      const chip = document.getElementById('s6-model-chip');
+      if(chip) chip.textContent = sceneData[idx].resultModel;
+    }
 
     // Update next video scene's start frame to the enhanced version
-    for(let j=currentScene+1; j<sceneData.length; j++){
+    for(let j=idx+1; j<sceneData.length; j++){
       if(sceneData[j].tag==='VIDEO'){ sceneData[j].savedStartFrameURL=httpsUrl; break; }
     }
 
@@ -4322,11 +4353,19 @@ async function generateScene(){
   genBtn.disabled=true;
   showErr('e6','');
 
-  // Show loading skeleton in the result area + jump to the result panel
+  // Show loading skeleton in the result area + jump to the result panel.
+  // Live elapsed counter so a 60-90s video gen never feels frozen.
   const resultContainer=document.getElementById('s6-result-content');
+  const expected=isVideo?'60–90s':'10–30s';
   if(resultContainer){
-    resultContainer.innerHTML='<div class="gen-skeleton">'+(isVideo?'Generating video… (~60–90 seconds)':'Generating image… (~10–30 seconds)')+'</div>';
+    resultContainer.innerHTML='<div class="gen-skeleton">'+(isVideo?'Generating video…':'Generating image…')+' <span id="gen-elapsed">0s</span> elapsed · typically '+expected+'</div>';
   }
+  const genT0=performance.now();
+  const genTimer=setInterval(()=>{
+    const el=document.getElementById('gen-elapsed');
+    if(!el){clearInterval(genTimer);return;}
+    el.textContent=Math.round((performance.now()-genT0)/1000)+'s';
+  },1000);
   s6ShowPanel('result');
   // Hide the start frame action while regenerating
   const sfActionEl=document.getElementById('startframe-action');
@@ -4369,6 +4408,7 @@ async function generateScene(){
           setImageModel('imagen4');
         } else if(selectedImageModel!=='imagen4'){
           showErr('e6','⚠ Character image is still uploading — wait for the ✓ Ready indicator before generating.');
+          s6ShowPanel('prompt');
           genBtn.disabled=false;
           return;
         }
@@ -4443,6 +4483,7 @@ async function generateScene(){
         // ── Veo 3.1 ─────────────────────────────────────────────────────────
         if(!startFrameURL){
           showErr('e6','⚠ Veo 3.1 requires a Start Frame image. Upload one in Step 2 before generating.');
+          s6ShowPanel('prompt');
           genBtn.disabled=false;
           return;
         }
@@ -4501,12 +4542,21 @@ async function generateScene(){
     saveWorkflowState();      // persist the result URL + auto-set start frames
 
   }catch(err){
-    const display=err instanceof Error?err.message:typeof err==='string'?err:JSON.stringify(err);
+    let display=err instanceof Error?err.message:typeof err==='string'?err:JSON.stringify(err);
+    // Make common failures actionable instead of raw API text
+    if(/401|unauthorized|invalid.*(key|token)|authentication/i.test(display)){
+      display='fal.ai rejected the API key — open ⚙ Settings, re-paste the fal.ai key, and try again. ('+display+')';
+    } else if(/failed to fetch|networkerror|load failed/i.test(display)){
+      display='Network error — check your internet connection, then click Generate again. Nothing was charged.';
+    } else if(/insufficient|balance|credit|payment/i.test(display)){
+      display='fal.ai account is out of credits — text Xavier to top up, then try again. ('+display+')';
+    }
     showErr('e6',display);
     // Restore the prompt panel so Chris can fix and retry
     s6ShowPanel('prompt');
     updateGenLabel();
   }finally{
+    clearInterval(genTimer);
     genBtn.disabled=false;
   }
 }
@@ -4532,8 +4582,12 @@ async function downloadScene(){
   const origText=btn?btn.textContent:'';
   if(btn){btn.disabled=true;btn.textContent='⏳ Saving…';}
   try{
-    // Fetch as blob — the only cross-origin approach that actually triggers a download
-    const resp=await fetch(lastGeneratedURL);
+    // Fetch as blob — the only cross-origin approach that actually triggers a download.
+    // 60s timeout so a stalled CDN can't hang the button forever.
+    const dlAbort=new AbortController();
+    const dlTimeout=setTimeout(()=>dlAbort.abort(),60000);
+    const resp=await fetch(lastGeneratedURL,{signal:dlAbort.signal});
+    clearTimeout(dlTimeout);
     if(!resp.ok)throw new Error('HTTP '+resp.status);
     const blob=await resp.blob();
     const objUrl=URL.createObjectURL(blob);
@@ -4747,6 +4801,17 @@ function restart(){
   try {
     if(typeof updateTopbarCostChip === 'function') updateTopbarCostChip();
     if(typeof showResumeBannerIfSavedSession === 'function') showResumeBannerIfSavedSession();
+
+    // First-run onboarding: if any REQUIRED key is missing, open Settings once
+    // so Chris starts with the keys instead of hitting errors three steps in.
+    // (Skipped when a saved session exists — keys are session-only and the
+    // resume banner is the priority in that case.)
+    const keysMissing = !sessionStorage.getItem('cfa_key') || !sessionStorage.getItem('cfa_el_key') || !sessionStorage.getItem('cfa_fal_key');
+    const seenOnboarding = localStorage.getItem('cfa_onboarded') === '1';
+    if(keysMissing && !seenOnboarding && typeof openSettings === 'function'){
+      localStorage.setItem('cfa_onboarded','1');
+      setTimeout(()=>openSettings(), 600);
+    }
   } catch(e){
     console.warn('Deferred init error:', e.message);
   }
