@@ -1006,14 +1006,6 @@ select option{background:var(--surface2)}
     <div class="app-title">Script Workflow</div>
     <div class="app-sub">Chosen Few Academy</div>
   </div>
-  <!-- Hidden pills — JS compatibility only -->
-  <div style="display:none">
-    <div id="p1"><div id="pd1"></div></div>
-    <div id="p2"><div id="pd2"></div></div>
-    <div id="p3"><div id="pd3"></div></div>
-    <div id="p4"><div id="pd4"></div></div>
-    <div id="p5"><div id="pd5"></div></div>
-    <div id="p6"><div id="pd6"></div></div>
   </div>
   <div class="topbar-spacer"></div>
   <div class="topbar-actions">
@@ -1473,7 +1465,7 @@ select option{background:var(--surface2)}
   <div id="s6-phase1">
     <div class="sh">
       <h2>Scene Generation</h2>
-      <p>Claude is reading your segmented script and classifying each scene as image or video. Review and adjust tags, then begin generating.</p>
+      <p>Grok is reading your segmented script and classifying each scene as image or video. Review and adjust tags, then begin generating.</p>
     </div>
 
     <div id="s6-classifying" style="display:none">
@@ -1919,13 +1911,6 @@ select option{background:var(--surface2)}
 </div>
 
 </div><!-- /screens -->
-<!-- HIDDEN CREDENTIAL INPUTS (used by JS — moved from individual screens) -->
-<input type="hidden" id="apikey"/>
-<input type="hidden" id="key-ok"/>
-<input type="hidden" id="el-key"/>
-<input type="hidden" id="el-key-ok"/>
-<input type="hidden" id="fal-key"/>
-
 <!-- ═══ SETTINGS MODAL ═══ -->
 <div class="modal-overlay" id="settings-modal" onclick="closeSettingsOutside(event)">
   <div class="modal-box" id="settings-box">
@@ -1935,51 +1920,28 @@ select option{background:var(--surface2)}
     </div>
     <div class="modal-body">
 
-      <!-- LLM provider (Grok default) -->
-      <div class="settings-section">
-        <div class="settings-section-label">&#x1F9E0; Language Model Provider</div>
-        <div class="settings-section-desc">Used for script writing, segmentation, scene classification and image/video prompts. <strong>Grok (xAI)</strong> is the default; Anthropic Claude is a fallback. Provider and model IDs are remembered on this device; keys are session-only.</div>
-        <div class="settings-row">
-          <select class="inp" id="sm-llm-provider" aria-label="Language model provider" onchange="smSaveProvider()">
-            <option value="xai">Grok (xAI) — default</option>
-            <option value="anthropic">Anthropic Claude — fallback</option>
-          </select>
-        </div>
-        <div class="settings-row" style="margin-top:8px">
-          <input class="inp" id="sm-model-writer" type="text" autocomplete="off" aria-label="Script writer model ID" placeholder="writer model"/>
-          <input class="inp" id="sm-model-fast" type="text" autocomplete="off" aria-label="Fast model ID" placeholder="fast model"/>
-          <button class="settings-save" onclick="smSaveModels()">Save</button>
-        </div>
-        <div class="settings-section-desc" style="margin-top:6px">Writer = script generation. Fast = segmentation, classification, scene prompts. Leave blank for defaults.</div>
-        <div class="settings-ok" id="sm-models-ok">&#x2713; Models saved</div>
-      </div>
-
-      <!-- xAI -->
+      <!-- xAI (Grok) — the only text provider -->
       <div class="settings-section">
         <div class="settings-section-label">
           <div class="ks-dot miss" id="sm-ks-xai" style="width:8px;height:8px"></div>
-          xAI (Grok) API Key <span style="font-size:9px;color:var(--muted);font-weight:400;font-family:ui-monospace,Menlo,Consolas,monospace;margin-left:6px">required when provider = Grok</span>
+          xAI (Grok) API Key <span style="font-size:9px;font-weight:700;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--accent);background:rgba(245,158,11,.12);padding:2px 6px;border-radius:3px;margin-left:6px;letter-spacing:.05em">REQUIRED</span>
         </div>
-        <div class="settings-section-desc">Get yours at console.x.ai &rarr; API Keys. Calls go directly from your browser to api.x.ai.</div>
+        <div class="settings-section-desc">Writes the script, segments it, classifies scenes and drafts image/video prompts. Get yours at <strong>console.x.ai &rarr; API Keys</strong>. Calls go directly from your browser to api.x.ai.</div>
         <div class="settings-row">
-          <input class="inp" id="sm-xai-key" type="password" placeholder="xai-..." autocomplete="off" aria-label="xAI API key"/>
+          <input class="inp" id="sm-xai-key" type="password" placeholder="xai-..." autocomplete="off" aria-label="xAI API key" onkeydown="if(event.key==='Enter')smSaveXai()"/>
           <button class="settings-save" onclick="smSaveXai()">Save</button>
         </div>
         <div class="settings-ok" id="sm-xai-ok">&#x2713; Key saved for this session</div>
-      </div>
-
-      <!-- Anthropic -->
-      <div class="settings-section">
-        <div class="settings-section-label">
-          <div class="ks-dot miss" id="sm-ks-ant" style="width:8px;height:8px"></div>
-          Anthropic API Key <span style="font-size:9px;color:var(--muted);font-weight:400;font-family:ui-monospace,Menlo,Consolas,monospace;margin-left:6px">required when provider = Anthropic</span>
-        </div>
-        <div class="settings-section-desc">Fallback provider for script generation, segmentation, and image prompts. Calls go directly from your browser to Anthropic.</div>
-        <div class="settings-row">
-          <input class="inp" id="sm-apikey" type="password" placeholder="sk-ant-..." autocomplete="off" aria-label="Anthropic API key" oninput="smKeyInput()"/>
-          <button class="settings-save" onclick="smSaveAnt()">Save</button>
-        </div>
-        <div class="settings-ok" id="sm-ant-ok">&#x2713; Key saved for this session</div>
+        <details style="margin-top:10px">
+          <summary style="cursor:pointer;font-size:11px;color:var(--muted)">Advanced: Grok model IDs</summary>
+          <div class="settings-row" style="margin-top:8px">
+            <input class="inp" id="sm-model-writer" type="text" autocomplete="off" aria-label="Script writer model ID"/>
+            <input class="inp" id="sm-model-fast" type="text" autocomplete="off" aria-label="Fast model ID"/>
+            <button class="settings-save" onclick="smSaveModels()">Save</button>
+          </div>
+          <div class="settings-section-desc" style="margin-top:6px">Writer = script (default grok-4.7). Fast = segmentation, classification, scene prompts (default grok-4.3). Leave blank for defaults.</div>
+          <div class="settings-ok" id="sm-models-ok">&#x2713; Models saved</div>
+        </details>
       </div>
 
       <!-- ElevenLabs -->
@@ -1990,7 +1952,7 @@ select option{background:var(--surface2)}
         </div>
         <div class="settings-section-desc">Required for voiceover generation. Get yours at elevenlabs.io &rarr; Profile &rarr; API Key. Permission needed: <strong>Text to Speech → Access</strong>.</div>
         <div class="settings-row">
-          <input class="inp" id="sm-el-key" type="password" placeholder="Your ElevenLabs API key..." autocomplete="off" aria-label="ElevenLabs API key"/>
+          <input class="inp" id="sm-el-key" type="password" placeholder="Your ElevenLabs API key..." autocomplete="off" aria-label="ElevenLabs API key" onkeydown="if(event.key==='Enter')smSaveEl()"/>
           <button class="settings-save" onclick="smSaveEl()">Save</button>
         </div>
         <div class="settings-ok" id="sm-el-ok">&#x2713; Key saved for this session</div>
@@ -2004,7 +1966,7 @@ select option{background:var(--surface2)}
         </div>
         <div class="settings-section-desc">Used for Kling image and video generation. Get yours at fal.ai &rarr; Dashboard &rarr; API Keys.</div>
         <div class="settings-row">
-          <input class="inp" id="sm-fal-key" type="password" placeholder="your-fal-api-key" autocomplete="off" aria-label="fal.ai API key"/>
+          <input class="inp" id="sm-fal-key" type="password" placeholder="your-fal-api-key" autocomplete="off" aria-label="fal.ai API key" onkeydown="if(event.key==='Enter')smSaveFal()"/>
           <button class="settings-save" onclick="smSaveFal()">Save</button>
         </div>
         <div class="settings-ok" id="sm-fal-ok">&#x2713; Key saved for this session</div>
@@ -2022,7 +1984,7 @@ select option{background:var(--surface2)}
         </div>
         <div class="settings-section-desc">Used for the <strong>✨ Fix Text with GPT Image</strong> step on image results. Corrects garbled or misspelled text on Kling images while keeping the scene identical. Get yours at <strong>platform.openai.com → API Keys</strong>. Cost: ~$0.05 per enhancement.</div>
         <div class="settings-row">
-          <input class="inp" id="sm-oai-key" type="password" placeholder="sk-..." autocomplete="off" aria-label="OpenAI API key"/>
+          <input class="inp" id="sm-oai-key" type="password" placeholder="sk-..." autocomplete="off" aria-label="OpenAI API key" onkeydown="if(event.key==='Enter')smSaveOpenAI()"/>
           <button class="settings-save" onclick="smSaveOpenAI()">Save</button>
         </div>
         <div class="settings-ok" id="sm-oai-ok">&#x2713; OpenAI key saved for this session</div>
@@ -2033,13 +1995,17 @@ select option{background:var(--surface2)}
         <div class="settings-section-label" style="gap:0">&#x1F4B0; fal.ai Credit Budget</div>
         <div class="settings-section-desc">Set how much credit Xavier has loaded into fal.ai. The cost tracker estimates remaining balance as Chris generates. Costs are approximate — verify exact usage at the <a href="https://fal.ai/dashboard" target="_blank" style="color:var(--accent)">fal.ai dashboard</a>.</div>
         <div class="settings-row">
-          <input class="inp" id="sm-fal-budget" type="number" min="0" step="1" placeholder="e.g. 10" aria-label="fal.ai budget in dollars" style="max-width:120px"/>
+          <input class="inp" id="sm-fal-budget" type="number" min="0" step="0.01" placeholder="e.g. 10" aria-label="fal.ai budget in dollars" style="max-width:120px"/>
           <button class="settings-save" onclick="smSaveBudget()">Set Budget</button>
         </div>
         <div style="margin-top:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;font-size:11px;line-height:1.7">
           <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="color:var(--muted)">Session spend</span>
+            <span style="color:var(--muted)">Image/video spend (fal + GPT)</span>
             <strong id="sm-session-spend" style="color:var(--text)">$0.00</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:var(--muted)">Grok text spend <span style="font-size:9px">(not from fal budget)</span></span>
+            <strong id="sm-xai-spend" style="color:var(--text)">$0.00</strong>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="color:var(--muted)">Generations</span>
@@ -2050,7 +2016,7 @@ select option{background:var(--surface2)}
             <strong id="sm-remaining" style="color:var(--accent)">—</strong>
           </div>
           <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">
-            <button class="settings-save" onclick="smResetSpend()" style="font-size:10px;padding:5px 12px;width:100%">&#x21BA; Reset Session Spend</button>
+            <button class="settings-save" onclick="smResetSpend()" style="font-size:10px;padding:5px 12px;width:100%">&#x21BA; Reset Spend Counters</button>
           </div>
         </div>
         <div class="settings-ok" id="sm-budget-ok">&#x2713; Budget updated</div>
@@ -2321,123 +2287,119 @@ EXAMPLE FORMAT:
 Begin numbering immediately. Output nothing except the numbered lines.`;
 
 // ═══ STATE ═══
-let selId='', genScript='', finalScript='', segScript='', segOriginal='', apiKey='';
+let selId='', genScript='', finalScript='', segScript='', segOriginal='';
 let curScreen=1, genAbort=null, segAbort=null;
 let elapsedTimer=null, genStart=null;
 
-// ═══ LLM PROVIDER LAYER (Grok default, Anthropic fallback) ═══
-// Provider + model IDs live in localStorage (not secret). Keys are sessionStorage only.
-const LLM_DEFAULTS = {
-  xai:       { writer:'grok-4.7', fast:'grok-4.3', writerEffort:'low', fastEffort:'none', label:'Grok (xAI)' },
-  anthropic: { writer:'claude-sonnet-4-20250514', fast:'claude-haiku-4-5-20251001', label:'Anthropic Claude' }
+// ═══ GROK (xAI) TEXT LAYER ═══
+// Grok is the only text provider. Model IDs can be overridden in Settings → Advanced
+// (localStorage, not secret). The key is sessionStorage only.
+const GROK = {
+  url: 'https://api.x.ai/v1/chat/completions',
+  models: { writer:'grok-4.7', fast:'grok-4.3' },
+  effort: { writer:'low', fast:'none' },   // sent only with the default model IDs
+  // USD per 1M tokens (docs.x.ai/developers/models, prompts < 200k tokens). Reasoning
+  // tokens bill as output. Used only if the response lacks usage.cost_in_usd_ticks.
+  pricing: { 'grok-4.7':{in:2.00,cached:0.50,out:6.00}, 'grok-4.3':{in:1.25,cached:0.20,out:2.50} }
 };
-function llmProvider(){ const p=localStorage.getItem('cfa_llm_provider'); return (p==='anthropic'||p==='xai')?p:'xai'; }
-function llmModel(role){
-  const p=llmProvider();
-  return (localStorage.getItem('cfa_llm_model_'+p+'_'+role)||'').trim() || LLM_DEFAULTS[p][role];
-}
-function llmKey(p){ p=p||llmProvider(); return sessionStorage.getItem(p==='xai'?'cfa_xai_key':'cfa_key')||''; }
-function llmLabel(){ return LLM_DEFAULTS[llmProvider()].label; }
-function llmMissingKeyMsg(){
-  return llmProvider()==='xai'
-    ? 'xAI (Grok) API key missing — click ⚙ Settings to add it (or switch provider to Anthropic).'
-    : 'Anthropic API key missing — click ⚙ Settings to add it (or switch provider to Grok).';
+function llmModel(role){ return (safeGetItem('cfa_grok_model_'+role)||'').trim() || GROK.models[role]; }
+function llmKey(){ return sessionStorage.getItem('cfa_xai_key')||''; }
+const LLM_MISSING_KEY='xAI (Grok) API key missing — click ⚙ Settings in the top bar to add it.';
+// Cost of one call in USD from the usage block.
+function grokCallCost(model, usage){
+  if(!usage) return 0;
+  if(typeof usage.cost_in_usd_ticks==='number') return usage.cost_in_usd_ticks/1e10; // 1 tick = 1e-10 USD
+  const p=GROK.pricing[model]||GROK.pricing['grok-4.7'];
+  const prompt=usage.prompt_tokens||0, cached=usage.prompt_tokens_details?.cached_tokens||0;
+  const out=(usage.completion_tokens||0)+(usage.completion_tokens_details?.reasoning_tokens||0);
+  return ((prompt-cached)*p.in + cached*p.cached + out*p.out)/1e6;
 }
 async function apiErrorMessage(resp){
   let body=null; try{ body=await resp.json(); }catch(e){}
   const pick=v=>typeof v==='string'&&v?v:null;
-  return pick(body?.error?.message)||pick(body?.error)||pick(body?.detail)||pick(body?.detail?.message)||pick(body?.message)
-    ||(Array.isArray(body?.detail)&&body.detail[0]?.msg?String(body.detail[0].msg):null)
-    ||('HTTP '+resp.status);
+  let msg=pick(body?.error?.message)||pick(body?.error)||pick(body?.detail)||pick(body?.detail?.message)||pick(body?.message)
+    ||(Array.isArray(body?.detail)&&body.detail[0]?.msg?String(body.detail[0].msg):null);
+  if(!msg){
+    msg = resp.status===429 ? 'Rate limited (HTTP 429) — wait a moment and try again.'
+        : resp.status>=500 ? 'Service error (HTTP '+resp.status+') — try again in a minute.'
+        : 'HTTP '+resp.status;
+  }
+  return String(msg).slice(0,400);
 }
-// llmComplete: one call for either provider. role = 'writer' | 'fast'.
-// Returns {text, truncated}. If onDelta is given, streams and calls onDelta(fullTextSoFar).
+// Turn low-level fetch failures into something actionable.
+function friendlyNetError(err){
+  const m=(err&&err.message)||String(err);
+  return /failed to fetch|networkerror|load failed/i.test(m) ? 'Network error — check your connection and try again.' : m;
+}
+// llmComplete: role = 'writer' | 'fast'. Returns {text, truncated, cost}.
+// With onDelta it streams and calls onDelta(fullTextSoFar). Spend is tracked automatically.
 async function llmComplete({role, system, user, maxTokens, onDelta, signal}){
-  const p=llmProvider(), key=llmKey(p), model=llmModel(role);
-  if(!key) throw new Error(llmMissingKeyMsg());
+  const key=llmKey(), model=llmModel(role);
+  if(!key) throw new Error(LLM_MISSING_KEY);
   const stream=typeof onDelta==='function';
-  let url, headers, body;
-  if(p==='xai'){
-    url='https://api.x.ai/v1/chat/completions';
-    headers={'Content-Type':'application/json','Authorization':'Bearer '+key};
-    body={model, max_tokens:maxTokens, stream, messages:[{role:'system',content:system},{role:'user',content:user}]};
-    const eff=LLM_DEFAULTS.xai[role+'Effort'];
-    // Only send reasoning_effort for the default model IDs (custom IDs may not support it)
-    if(eff && model===LLM_DEFAULTS.xai[role]) body.reasoning_effort=eff;
-  } else {
-    url='https://api.anthropic.com/v1/messages';
-    headers={'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'};
-    body={model, max_tokens:maxTokens, stream, system, messages:[{role:'user',content:user}]};
-  }
-  let resp=await fetch(url,{method:'POST',headers,body:JSON.stringify(body),signal});
-  if(!resp.ok && p==='xai' && body.reasoning_effort && resp.status===400){
-    // Retry once without reasoning_effort in case the model rejects it
+  const headers={'Content-Type':'application/json','Authorization':'Bearer '+key};
+  const body={model, max_tokens:maxTokens, stream, messages:[{role:'system',content:system},{role:'user',content:user}]};
+  if(stream) body.stream_options={include_usage:true};
+  if(model===GROK.models[role]) body.reasoning_effort=GROK.effort[role];
+  let resp;
+  try{
+    resp=await fetch(GROK.url,{method:'POST',headers,body:JSON.stringify(body),signal});
+    if(!resp.ok && body.reasoning_effort && resp.status===400){
+      const msg=await apiErrorMessage(resp);
+      if(!/reason/i.test(msg)) throw new Error(msg);
+      delete body.reasoning_effort; // custom/older model may not support it
+      resp=await fetch(GROK.url,{method:'POST',headers,body:JSON.stringify(body),signal});
+    }
+  }catch(err){ if(err.name==='AbortError') throw err; throw new Error(friendlyNetError(err)); }
+  if(!resp.ok){
     const msg=await apiErrorMessage(resp);
-    if(/reason/i.test(msg)){ delete body.reasoning_effort; resp=await fetch(url,{method:'POST',headers,body:JSON.stringify(body),signal}); }
-    else throw new Error(msg);
+    throw new Error(resp.status===401||resp.status===403||/api key/i.test(msg) ? 'xAI rejected the API key — re-paste it in ⚙ Settings. ('+msg+')' : msg);
   }
-  if(!resp.ok) throw new Error(await apiErrorMessage(resp));
+  let text='', truncated=false, usage=null;
   if(!stream){
     const data=await resp.json();
-    if(p==='xai'){
-      const c=data.choices&&data.choices[0];
-      return {text:(c&&c.message&&c.message.content)||'', truncated:!!c&&c.finish_reason==='length'};
-    }
-    return {text:(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(''), truncated:data.stop_reason==='max_tokens'};
-  }
-  const reader=resp.body.getReader(), dec=new TextDecoder();
-  let buf='', text='', truncated=false;
-  while(true){
-    const {done,value}=await reader.read();
-    if(done)break;
-    buf+=dec.decode(value,{stream:true});
-    const lines=buf.split('\n'); buf=lines.pop();
-    for(const line of lines){
-      if(!line.startsWith('data:'))continue;
+    const c=data.choices&&data.choices[0];
+    text=(c&&c.message&&c.message.content)||''; truncated=!!c&&c.finish_reason==='length'; usage=data.usage;
+  } else {
+    const reader=resp.body.getReader(), dec=new TextDecoder();
+    let buf='';
+    const handle=line=>{
+      if(!line.startsWith('data:'))return;
       const raw=line.slice(5).trim();
-      if(!raw||raw==='[DONE]')continue;
-      let evt; try{evt=JSON.parse(raw);}catch{continue;}
-      let delta='';
-      if(p==='xai'){
-        if(evt.error) throw new Error(typeof evt.error==='string'?evt.error:(evt.error.message||'Stream error'));
-        const c=evt.choices&&evt.choices[0];
-        if(c){ delta=(c.delta&&c.delta.content)||''; if(c.finish_reason==='length')truncated=true; }
-      } else {
-        if(evt.type==='error')throw new Error(evt.error?.message||'Stream error');
-        if(evt.type==='content_block_delta'&&evt.delta?.type==='text_delta')delta=evt.delta.text;
-        if(evt.type==='message_delta'&&evt.delta?.stop_reason==='max_tokens')truncated=true;
-      }
+      if(!raw||raw==='[DONE]')return;
+      let evt; try{evt=JSON.parse(raw);}catch{return;}
+      if(evt.error) throw new Error(typeof evt.error==='string'?evt.error:(evt.error.message||'Stream error'));
+      if(evt.usage) usage=evt.usage;
+      const c=evt.choices&&evt.choices[0];
+      if(!c) return;
+      if(c.finish_reason==='length') truncated=true;
+      const delta=(c.delta&&c.delta.content)||'';
       if(delta){ text+=delta; onDelta(text); }
-    }
+    };
+    try{
+      while(true){
+        const {done,value}=await reader.read();
+        if(done)break;
+        buf+=dec.decode(value,{stream:true});
+        const lines=buf.split('\n'); buf=lines.pop();
+        for(const line of lines) handle(line);
+      }
+      buf+=dec.decode(); if(buf) handle(buf);
+    }catch(err){ if(err.name==='AbortError') throw err; throw new Error(friendlyNetError(err)); }
   }
-  return {text, truncated};
+  const cost=grokCallCost(model, usage);
+  if(cost>0) trackTextSpend(cost);
+  return {text, truncated, cost};
 }
-
-// ═══ API KEY (legacy read helpers — actual inputs now in settings modal) ═══
-function onKeyInput(){}  // no-op — key input is in settings modal
-function saveKey(){}     // no-op — use smSaveAnt()
 
 // ═══ SETTINGS MODAL ═══
 function openSettings(){
   document.getElementById('settings-modal').classList.add('open');
   document.body.style.overflow='hidden';
-  // Populate fields from session
-  const k=sessionStorage.getItem('cfa_key');
-  const el=sessionStorage.getItem('cfa_el_key');
-  const fal=sessionStorage.getItem('cfa_fal_key');
-  const oai=sessionStorage.getItem('cfa_openai_key');
-  const xk=sessionStorage.getItem('cfa_xai_key');
-  if(xk){document.getElementById('sm-xai-key').value=xk;document.getElementById('sm-xai-ok').classList.add('show');}
-  smRenderProvider();
-  if(k)document.getElementById('sm-apikey').value=k;
-  if(el)document.getElementById('sm-el-key').value=el;
-  if(fal)document.getElementById('sm-fal-key').value=fal;
-  if(oai)document.getElementById('sm-oai-key').value=oai;
-  // Show ok states
-  if(k){document.getElementById('sm-ant-ok').classList.add('show');}
-  if(el){document.getElementById('sm-el-ok').classList.add('show');}
-  if(fal){document.getElementById('sm-fal-ok').classList.add('show');}
-  // Populate budget & spend display
+  // Populate fields + saved states from session
+  [['cfa_xai_key','sm-xai-key','sm-xai-ok'],['cfa_el_key','sm-el-key','sm-el-ok'],['cfa_fal_key','sm-fal-key','sm-fal-ok'],['cfa_openai_key','sm-oai-key','sm-oai-ok']]
+    .forEach(([k,inp,ok])=>{const v=sessionStorage.getItem(k); if(v){document.getElementById(inp).value=v;document.getElementById(ok).classList.add('show');}});
+  ['writer','fast'].forEach(r=>{const el=document.getElementById('sm-model-'+r); if(el){el.value=localStorage.getItem('cfa_grok_model_'+r)||''; el.placeholder=r+': '+GROK.models[r];}});
   updateSettingsSpendDisplay();
 }
 function closeSettings(){
@@ -2449,78 +2411,28 @@ function closeSettingsOutside(e){
 }
 // Close settings modal on Escape
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSettings();});
-function smKeyInput(){
-  const v=document.getElementById('sm-apikey').value.trim();
-  document.getElementById('sm-apikey').className='inp'+(v.startsWith('sk-ant-')?' key-ok':v.length>5?' key-err':'');
-}
-function smSaveAnt(){
-  const v=document.getElementById('sm-apikey').value.trim();
-  if(!v.startsWith('sk-ant-')){
-    document.getElementById('sm-apikey').className='inp key-err';
-    return;
-  }
-  apiKey=v;
-  // Sync hidden element and sessionStorage
-  document.getElementById('apikey').value=v;
-  sessionStorage.setItem('cfa_key',v);
-  document.getElementById('sm-ant-ok').classList.add('show');
-  document.getElementById('sm-apikey').className='inp key-ok';
-  updateKeyStatus();
-  showErr('e1','');
-}
-function smSaveEl(){
-  const v=document.getElementById('sm-el-key').value.trim();
-  if(!v){return;}
-  // Sync hidden element and sessionStorage
-  document.getElementById('el-key').value=v;
-  sessionStorage.setItem('cfa_el_key',v);
-  document.getElementById('sm-el-ok').classList.add('show');
+function saveSessionKey(storageKey, inputId, okId){
+  const v=document.getElementById(inputId).value.trim();
+  if(!v){ sessionStorage.removeItem(storageKey); document.getElementById(okId).classList.remove('show'); updateKeyStatus(); return; }
+  sessionStorage.setItem(storageKey,v);
+  document.getElementById(okId).classList.add('show');
   updateKeyStatus();
 }
+function smSaveXai(){ saveSessionKey('cfa_xai_key','sm-xai-key','sm-xai-ok'); showErr('e1',''); }
+function smSaveEl(){ saveSessionKey('cfa_el_key','sm-el-key','sm-el-ok'); }
 function smSaveFal(){
-  const v=document.getElementById('sm-fal-key').value.trim();
-  if(!v){return;}
-  document.getElementById('fal-key').value=v;
-  sessionStorage.setItem('cfa_fal_key',v);
-  document.getElementById('sm-fal-ok').classList.add('show');
-  updateKeyStatus();
-}
-function smRenderProvider(){
-  const p=llmProvider();
-  const sel=document.getElementById('sm-llm-provider'); if(sel)sel.value=p;
-  const w=document.getElementById('sm-model-writer'), f=document.getElementById('sm-model-fast');
-  if(w){w.value=localStorage.getItem('cfa_llm_model_'+p+'_writer')||'';w.placeholder='writer: '+LLM_DEFAULTS[p].writer;}
-  if(f){f.value=localStorage.getItem('cfa_llm_model_'+p+'_fast')||'';f.placeholder='fast: '+LLM_DEFAULTS[p].fast;}
-}
-function smSaveProvider(){
-  const v=document.getElementById('sm-llm-provider').value;
-  localStorage.setItem('cfa_llm_provider', v==='anthropic'?'anthropic':'xai');
-  smRenderProvider();
-  updateKeyStatus();
+  const before=sessionStorage.getItem('cfa_fal_key');
+  saveSessionKey('cfa_fal_key','sm-fal-key','sm-fal-ok');
+  if(before!==sessionStorage.getItem('cfa_fal_key')) for(const k in charUploadCache) delete charUploadCache[k];
 }
 function smSaveModels(){
-  const p=llmProvider();
   ['writer','fast'].forEach(r=>{
     const v=document.getElementById('sm-model-'+r).value.trim();
-    if(v)localStorage.setItem('cfa_llm_model_'+p+'_'+r,v); else localStorage.removeItem('cfa_llm_model_'+p+'_'+r);
+    if(v)safeSetItem('cfa_grok_model_'+r,v); else try{localStorage.removeItem('cfa_grok_model_'+r);}catch(e){}
   });
   const ok=document.getElementById('sm-models-ok'); ok.classList.add('show'); setTimeout(()=>ok.classList.remove('show'),2000);
 }
-function smSaveXai(){
-  const v=document.getElementById('sm-xai-key').value.trim();
-  if(!v)return;
-  sessionStorage.setItem('cfa_xai_key',v);
-  document.getElementById('sm-xai-ok').classList.add('show');
-  updateKeyStatus();
-  showErr('e1','');
-}
-function smSaveOpenAI(){
-  const v=document.getElementById('sm-oai-key').value.trim();
-  if(!v)return;
-  sessionStorage.setItem('cfa_openai_key',v);
-  document.getElementById('sm-oai-ok').classList.add('show');
-  updateKeyStatus();
-}
+function smSaveOpenAI(){ saveSessionKey('cfa_openai_key','sm-oai-key','sm-oai-ok'); }
 // Settings → "Test fal.ai Endpoints". Exercises the production paths cheaply:
 // storage upload (free), Nano Banana (~$0.04) and Kling o1 with the Marcus reference
 // (~$0.04). Video endpoints are NOT tested here (a single clip costs $0.40+).
@@ -2586,24 +2498,15 @@ async function testEndpoints(){
   btn.textContent=origLabel;
 }
 function updateKeyStatus(){
-  const hasAnt=!!sessionStorage.getItem('cfa_key');
-  const hasEl=!!sessionStorage.getItem('cfa_el_key');
-  const hasFal=!!sessionStorage.getItem('cfa_fal_key');
-  const hasOai=!!sessionStorage.getItem('cfa_openai_key');
-  const hasXai=!!sessionStorage.getItem('cfa_xai_key');
-  const hasLLM=llmProvider()==='xai'?hasXai:hasAnt;
-  const allSet=hasLLM&&hasEl&&hasFal; // OpenAI is optional — doesn't affect topbar dot
-  setKsDot('sm-ks-xai',hasXai);
-  // Settings button dot — single source of truth in topbar
+  const has=k=>!!sessionStorage.getItem(k);
+  const hasXai=has('cfa_xai_key'), hasEl=has('cfa_el_key'), hasFal=has('cfa_fal_key'), hasOai=has('cfa_openai_key');
   const dot=document.getElementById('settings-key-dot');
-  if(dot){dot.className='settings-btn-dot '+(allSet?'all-set':'miss');}
-  // Modal section dots (OpenAI is optional — shown as info only)
-  setKsDot('sm-ks-ant',hasAnt);setKsDot('sm-ks-el',hasEl);setKsDot('sm-ks-fal',hasFal);setKsDot('sm-ks-oai',hasOai);
-  // S6 strip (voiceover ElevenLabs key — element IDs updated in Step J)
-  const s6dot=document.getElementById('kss-el2');
-  const s6txt=document.getElementById('s5-key-status');
-  if(s6dot){s6dot.className='kss-dot '+(hasEl?'set':'miss');}
-  if(s6txt){s6txt.className='kss-text'+(hasEl?' ok':'');s6txt.textContent=hasEl?'ElevenLabs key configured \u2713':'ElevenLabs key not configured \u2014 open Settings';}
+  if(dot){dot.className='settings-btn-dot '+(hasXai&&hasEl&&hasFal?'all-set':'miss');} // OpenAI optional
+  setKsDot('sm-ks-xai',hasXai);setKsDot('sm-ks-el',hasEl);setKsDot('sm-ks-fal',hasFal);setKsDot('sm-ks-oai',hasOai);
+  const s5dot=document.getElementById('kss-el2');
+  const s5txt=document.getElementById('s5-key-status');
+  if(s5dot){s5dot.className='kss-dot '+(hasEl?'set':'miss');}
+  if(s5txt){s5txt.className='kss-text'+(hasEl?' ok':'');s5txt.textContent=hasEl?'ElevenLabs key configured \u2713':'ElevenLabs key not configured \u2014 open Settings';}
 }
 function setKsDot(id,set){
   const el=document.getElementById(id);
@@ -2614,14 +2517,8 @@ function setKsDot(id,set){
 // ═══ STEP NAMES (must be before any updateTimeline call) ═══
 const STEP_NAMES=['','Select','Generate','Review','Segment','Voiceover','Scenes'];
 
-// Restore all credentials from session on load
+// Initial key status (keys live in sessionStorage only)
 (function(){
-  const k=sessionStorage.getItem('cfa_key');
-  const el=sessionStorage.getItem('cfa_el_key');
-  const fal=sessionStorage.getItem('cfa_fal_key');
-  if(k){apiKey=k;document.getElementById('apikey').value=k;}
-  if(el){document.getElementById('el-key').value=el;}
-  if(fal){document.getElementById('fal-key').value=fal;}
   updateKeyStatus();
   // Fire initial timeline so step badge appears on S1
   updateTimeline(1);
@@ -2716,18 +2613,6 @@ function updateTimeline(n){
     badge.className='screen-step-badge';
     badge.innerHTML='<span class="ssb-num">'+n+'</span>Step '+n+' of 6 &nbsp;&middot;&nbsp; '+STEP_NAMES[n];
     shTarget.insertBefore(badge,shTarget.firstChild);
-  }
-  // Keep hidden pills in sync (JS compatibility)
-  updatePills(n);
-}
-
-function updatePills(n){
-  for(let i=1;i<=6;i++){
-    const p=document.getElementById('p'+i),d=document.getElementById('pd'+i);
-    if(!p)continue;
-    p.className='pill';if(d)d.textContent=i<n?'✓':i;
-    if(i<n)p.classList.add('pd');
-    else if(i===n)p.classList.add(i===3?'pr3':'pa');
   }
 }
 
@@ -2844,7 +2729,7 @@ function allStagesDone(){
 }
 
 async function startGen(){
-  if(!llmKey()){showErr('e1',llmMissingKeyMsg());return;}
+  if(!llmKey()){showErr('e1',LLM_MISSING_KEY);return;}
   if(!selId){showErr('e1','Select a video first.');return;}
   showErr('e1','');
   document.getElementById('bgen').disabled=true;
@@ -2852,7 +2737,7 @@ async function startGen(){
   // Reset stream screen
   document.getElementById('s2vt').textContent=V[selId].title;
   document.getElementById('s2-stat').textContent='Connecting…';
-  const gl=document.getElementById('gs0-label'); if(gl)gl.textContent='Connecting to '+llmLabel()+' ('+llmModel('writer')+')';
+  const gl=document.getElementById('gs0-label'); if(gl)gl.textContent='Connecting to Grok ('+llmModel('writer')+')';
   const sbox0=document.getElementById('stream-box');sbox0.textContent='';const cur0=document.createElement('span');cur0.className='stream-cursor';sbox0.appendChild(cur0);
   document.getElementById('s2-words').textContent='0 words';
   document.getElementById('s2-speed').textContent='';
@@ -2874,7 +2759,7 @@ async function startGen(){
   try{
     const {text, truncated}=await llmComplete({
       role:'writer', system:SYS_GEN, user:buildPrompt(selId),
-      maxTokens: llmProvider()==='xai' ? 6000 : 3000, // headroom: 900 words ≈ 1,200 tokens (+ reasoning on Grok)
+      maxTokens:6000, // headroom: 900 words ≈ 1,200 tokens (+ reasoning)
       signal: ctrl.signal,
       onDelta: accumulated=>{
         if(genAbort!==ctrl)return;
@@ -2999,7 +2884,7 @@ function downloadSegmentsPDF(){
 async function startSeg(){
   const txt=document.getElementById('txed').value.trim();
   if(!txt){showErr('e3','Script is empty.');return;}
-  if(!llmKey()){showErr('e3',llmMissingKeyMsg());return;}
+  if(!llmKey()){showErr('e3',LLM_MISSING_KEY);return;}
   showErr('e3','');finalScript=txt;
   document.getElementById('bseg').disabled=true;
   document.getElementById('s4l').style.display='';
@@ -3072,16 +2957,6 @@ function goVO(){
 // ═══ SCREEN 5 — ELEVENLABS VOICEOVER ═══
 const EL_VOICE_ID = '6OzrBCQf8cjERkYgzSg8'; // Young Jamal
 
-function saveElKey(){
-  const k=document.getElementById('el-key').value.trim();
-  if(!k){showErr('e5','Enter your ElevenLabs API key in Settings.');return;}
-  sessionStorage.setItem('cfa_el_key',k);
-  document.getElementById('el-key-ok').style.display='block';
-  updateKeyStatus();
-  showErr('e5','');
-}
-// Restore EL key from session — handled in unified restore in settings block above
-
 function setVOProgress(pct,msg){
   document.getElementById('vo-prog-fill').style.width=pct+'%';
   document.getElementById('vo-status').textContent=msg;
@@ -3090,7 +2965,7 @@ function setVOProgress(pct,msg){
 let voAudioURL=null;
 
 async function generateVO(){
-  const elKey=sessionStorage.getItem('cfa_el_key')||document.getElementById('el-key').value.trim();
+  const elKey=sessionStorage.getItem('cfa_el_key');
   if(!elKey){showErr('e5','No ElevenLabs API key — open ⚙ Settings and add your key.');return;}
   if(!finalScript){showErr('e5','No script found — go back and generate a script first.');return;}
 
@@ -3242,11 +3117,15 @@ const MODEL_COSTS = {
   }
 };
 // Persist spend in localStorage so it survives page refreshes within a work session
-let sessionSpend = parseFloat(localStorage.getItem('cfa_session_spend') || '0');
-let sessionGens  = parseInt(localStorage.getItem('cfa_session_gens')   || '0');
+// Storage helpers — never throw (quota full, privacy mode, corrupt values)
+function safeSetItem(k,v){ try{ localStorage.setItem(k,v); return true; }catch(e){ console.warn('localStorage write failed:',k,e&&e.message); return false; } }
+function safeGetItem(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function storedNumber(k,def){ const n=parseFloat(safeGetItem(k)); return Number.isFinite(n)&&n>=0 ? n : def; }
+let sessionSpend = storedNumber('cfa_session_spend', 0);
+let sessionGens  = Math.floor(storedNumber('cfa_session_gens', 0));
 // Pre-seed budget to $16.58 confirmed by Xavier on 2026-05-11 — only sets if not already saved
-if(!localStorage.getItem('cfa_fal_budget')){
-  localStorage.setItem('cfa_fal_budget', '16.58');
+if(safeGetItem('cfa_fal_budget')===null){
+  safeSetItem('cfa_fal_budget', '16.58');
 }
 
 // Veo 3.1 accepts '4s' | '6s' | '8s'. The UI offers exactly 4/6/8 for Veo; values from
@@ -3268,11 +3147,18 @@ function getEstimatedCost(){
   return MODEL_COSTS.image[selectedImageModel] || 0.04;
 }
 
+// Grok text spend — tracked separately from the fal.ai credit budget
+let textSpend = storedNumber('cfa_xai_spend', 0);
+function trackTextSpend(cost){
+  textSpend = Math.round((textSpend + cost) * 1e5) / 1e5;
+  safeSetItem('cfa_xai_spend', textSpend.toFixed(5));
+  updateSettingsSpendDisplay();
+}
 function trackSpend(cost){
   sessionSpend = Math.round((sessionSpend + cost) * 1000) / 1000;
   sessionGens++;
-  localStorage.setItem('cfa_session_spend', sessionSpend.toFixed(3));
-  localStorage.setItem('cfa_session_gens', sessionGens);
+  safeSetItem('cfa_session_spend', sessionSpend.toFixed(3));
+  safeSetItem('cfa_session_gens', String(sessionGens));
   updateCostBar();
   updateTopbarCostChip();
 }
@@ -3291,7 +3177,7 @@ function updateCostBar(){
   spentEl.textContent = '$' + sessionSpend.toFixed(2);
   countEl.textContent = sessionGens;
 
-  const budget = parseFloat(localStorage.getItem('cfa_fal_budget') || '0');
+  const budget = storedNumber('cfa_fal_budget', 0);
   if(budget > 0){
     const remaining = Math.max(0, budget - sessionSpend);
     remainEl.textContent = '$' + remaining.toFixed(2);
@@ -3311,7 +3197,7 @@ function updateCostBar(){
 function smSaveBudget(){
   const v = parseFloat(document.getElementById('sm-fal-budget').value || '0');
   if(isNaN(v) || v < 0) return;
-  localStorage.setItem('cfa_fal_budget', v.toFixed(2));
+  safeSetItem('cfa_fal_budget', v.toFixed(2));
   document.getElementById('sm-budget-ok').classList.add('show');
   setTimeout(()=>document.getElementById('sm-budget-ok').classList.remove('show'), 2000);
   updateSettingsSpendDisplay();
@@ -3320,17 +3206,20 @@ function smSaveBudget(){
 }
 
 function smResetSpend(){
+  if(!confirm('Reset the image/video and Grok spend counters to $0?')) return;
   sessionSpend = 0;
   sessionGens  = 0;
-  localStorage.setItem('cfa_session_spend', '0');
-  localStorage.setItem('cfa_session_gens',  '0');
+  textSpend    = 0;
+  safeSetItem('cfa_session_spend', '0');
+  safeSetItem('cfa_session_gens',  '0');
+  safeSetItem('cfa_xai_spend', '0');
   updateSettingsSpendDisplay();
   updateCostBar();
   updateTopbarCostChip();
 }
 
 function updateSettingsSpendDisplay(){
-  const budget    = parseFloat(localStorage.getItem('cfa_fal_budget') || '0');
+  const budget    = storedNumber('cfa_fal_budget', 0);
   const remaining = budget > 0 ? Math.max(0, budget - sessionSpend) : null;
   const spendEl   = document.getElementById('sm-session-spend');
   const genEl     = document.getElementById('sm-gen-count');
@@ -3338,8 +3227,10 @@ function updateSettingsSpendDisplay(){
   const budgetEl  = document.getElementById('sm-fal-budget');
   if(spendEl) spendEl.textContent = '$' + sessionSpend.toFixed(2);
   if(genEl)   genEl.textContent   = sessionGens;
+  const xEl = document.getElementById('sm-xai-spend');
+  if(xEl) xEl.textContent = '$' + textSpend.toFixed(textSpend<1?3:2);
   if(remEl)   remEl.textContent   = remaining !== null ? '$' + remaining.toFixed(2) : '— (no budget set)';
-  if(budgetEl && budget > 0) budgetEl.value = budget.toFixed(0);
+  if(budgetEl && budget > 0 && document.activeElement!==budgetEl) budgetEl.value = budget.toFixed(2);
 }
 
 // ── Topbar cost chip ───────────────────────────────────────────────────────
@@ -3347,7 +3238,7 @@ function updateTopbarCostChip(){
   const chip = document.getElementById('topbar-cost-chip');
   const text = document.getElementById('topbar-cost-chip-text');
   if(!chip || !text) return;
-  const budget = parseFloat(localStorage.getItem('cfa_fal_budget') || '0');
+  const budget = storedNumber('cfa_fal_budget', 0);
   if(budget <= 0){ chip.style.display = 'none'; return; }
   chip.style.display = '';
   const remaining = Math.max(0, budget - sessionSpend);
@@ -3386,7 +3277,7 @@ function saveWorkflowState(){
       selectedVideoModel: selectedVideoModel,
       sceneDuration: sceneDuration
     };
-    localStorage.setItem(WORKFLOW_STATE_KEY, JSON.stringify(state));
+    localStorage.setItem(WORKFLOW_STATE_KEY, JSON.stringify(state)); // may throw → caught below
   }catch(e){
     console.warn('saveWorkflowState failed:', e.message);
     if(e && (e.name==='QuotaExceededError' || /quota/i.test(e.message||''))){
@@ -3404,9 +3295,29 @@ function getSavedWorkflowState(){
     const raw = localStorage.getItem(WORKFLOW_STATE_KEY);
     if(!raw) return null;
     const state = JSON.parse(raw);
-    if(!state || state.version !== 1 || !Array.isArray(state.sceneData) || state.sceneData.length === 0) return null;
+    if(!state || typeof state!=='object' || state.version !== 1 || !Array.isArray(state.sceneData)) return null;
+    const str=v=>typeof v==='string'?v:'';
+    const url=v=>typeof v==='string'&&/^https:\/\//.test(v)?v:'';
+    const CHARS=['MARCUS','JORDAN','BOTH','BOTH_JM','NONE'];
+    state.sceneData = state.sceneData
+      .filter(x=>x && typeof x==='object' && typeof x.line==='string' && x.line.trim())
+      .map(x=>({
+        line:x.line, tag:x.tag==='VIDEO'?'VIDEO':'IMAGE',
+        characters:CHARS.includes(x.characters)?x.characters:detectCharacters(x.line),
+        prompt:str(x.prompt), sceneDesc:str(x.sceneDesc), styleDesc:str(x.styleDesc),
+        done:!!x.done, resultURL:url(x.resultURL),
+        resultType:x.resultType==='video'||x.resultType==='image'?x.resultType:(url(x.resultURL)?(x.tag==='VIDEO'?'video':'image'):''),
+        resultModel:str(x.resultModel), savedStartFrameURL:url(x.savedStartFrameURL), startFrameManual:!!x.startFrameManual
+      }));
+    if(state.sceneData.length === 0) return null;
+    state.currentScene = Number.isInteger(state.currentScene) ? Math.max(0, Math.min(state.currentScene, state.sceneData.length-1)) : 0;
+    if(!['kling-o1','gemini-3pro','imagen4'].includes(state.selectedImageModel)) state.selectedImageModel='kling-o1';
+    if(!['kling-o1','gemini-3pro','imagen4'].includes(state.userImageModel)) state.userImageModel=undefined;
+    if(!['kling-v16','veo31'].includes(state.selectedVideoModel)) state.selectedVideoModel='kling-v16';
+    if(![4,5,6,8,10].includes(state.sceneDuration)) state.sceneDuration=5;
+    if(typeof state.savedAt!=='number') state.savedAt=Date.now();
     return state;
-  }catch(e){ return null; }
+  }catch(e){ console.warn('Saved session unreadable — ignoring:', e && e.message); return null; }
 }
 
 function showResumeBannerIfSavedSession(){
@@ -3836,7 +3747,7 @@ Then on a new line output exactly: SCENE: [4-8 word setting summary, e.g. "open-
 async function enterSceneGeneration(){
   const falKey=sessionStorage.getItem('cfa_fal_key');
   if(!falKey){showErr('e6','fal.ai API key not set — open ⚙ Settings and save your key before entering scene generation.');openSettings();return;}
-  if(!llmKey()){showErr('e6',llmMissingKeyMsg());openSettings();return;}
+  if(!llmKey()){showErr('e6',LLM_MISSING_KEY);openSettings();return;}
   if(!segScript){showErr('e6','No segmented script found — go back to Step 4.');return;}
   document.getElementById('s6-phase1').style.display='';
   document.getElementById('s6-phase2').style.display='none';
@@ -3851,7 +3762,7 @@ async function enterSceneGeneration(){
 
   try{
     const {text:classText}=await llmComplete({role:'fast', system:SYS_CLASSIFY, user:lines.join('\n'), maxTokens:2000});
-    if(!classText)throw new Error('API returned an empty classification — check your '+llmLabel()+' key and try again.');
+    if(!classText)throw new Error('API returned an empty classification — check your xAI key and try again.');
 
     sceneData = lines.map((line,i)=>{
       const match=classText.match(new RegExp('\\['+(i+1)+'\\]\\s*(IMAGE|VIDEO)','i'));
@@ -5381,7 +5292,7 @@ function restart(){
     const keysMissing = !llmKey() || !sessionStorage.getItem('cfa_el_key') || !sessionStorage.getItem('cfa_fal_key');
     const seenOnboarding = localStorage.getItem('cfa_onboarded') === '1';
     if(keysMissing && !seenOnboarding && typeof openSettings === 'function'){
-      localStorage.setItem('cfa_onboarded','1');
+      safeSetItem('cfa_onboarded','1');
       setTimeout(()=>openSettings(), 600);
     }
   } catch(e){
