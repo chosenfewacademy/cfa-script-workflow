@@ -20,7 +20,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FAL_KEY   = process.argv[2] || process.env.FAL_KEY;
 const OUT_DIR   = path.join(__dirname, 'test-output', 'character-isolation');
-const HTML_PATH = path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html');
+const HTML_PATH = [path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html'), path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html')].find(p => fs.existsSync(p)) || path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html');
 
 const C = { reset:'\x1b[0m', bold:'\x1b[1m', green:'\x1b[32m', red:'\x1b[31m', dim:'\x1b[2m', cyan:'\x1b[36m', yellow:'\x1b[33m' };
 const pass = m => console.log(`${C.green}PASS${C.reset} ${m}`);
@@ -157,7 +157,7 @@ async function main(){
       if(refs.length === 0){
         // NONE → Imagen 4 Ultra text-only (matches workflow)
         const body = { prompt: finalPrompt + '  2D illustrated style. Bold clean outlines, flat color shading. No photorealism.', aspect_ratio:'16:9', num_images:1 };
-        const r = await fetch('https://fal.run/fal-ai/imagen4/preview/ultra', { method:'POST', headers:{'Authorization':'Key '+FAL_KEY,'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const r = await fetch('https://fal.run/fal-ai/nano-banana', { method:'POST', headers:{'Authorization':'Key '+FAL_KEY,'Content-Type':'application/json'}, body: JSON.stringify(body) });
         if(!r.ok) throw new Error(`imagen ${r.status}: ${await r.text()}`);
         const d = await r.json();
         url = d.images?.[0]?.url; model = 'Imagen 4 Ultra';

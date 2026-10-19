@@ -21,7 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const FAL_KEY = process.argv[2] || process.env.FAL_KEY;
-const HTML_PATH = path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html');
+const HTML_PATH = [path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html'), path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html')].find(p => fs.existsSync(p)) || path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html');
 
 // fal.ai REST endpoints
 const FAL_UPLOAD_INITIATE = 'https://rest.alpha.fal.ai/storage/upload/initiate';
