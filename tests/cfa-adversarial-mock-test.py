@@ -385,7 +385,7 @@ async def main():
             await pg.wait_for_timeout(300); await J(pg,"()=>generateAllImages()")  # clicking again = stop
             await pg.wait_for_timeout(1500)
             st=await J(pg,"()=>({peak:window.__peak,done:sceneData.filter(s=>s.resultURL).length,running:!!batchRun,e6:document.getElementById('e6').textContent})")
-            check('batch: stop honoured, ≤3 in flight', st['peak']<=3 and st['done']==3 and not st['running'] and 'stopped' in st['e6'], st)
+            check('batch: stop honoured, ≤3 in flight', st['peak']<=3 and st['done']==3 and not st['running'] and 'stopped' in st['e6'].lower(), st)
             await J(pg,"()=>generateAllImages()"); await pg.wait_for_timeout(1500)
             st=await J(pg,"()=>({done:sceneData.filter(s=>s.resultURL).length,sf:sceneData[3].savedStartFrameURL===sceneData[2].resultURL,vid:!!sceneData[3].resultURL,noprompt:!!sceneData[6].resultURL,models:sceneData.map(s=>s.resultModel),spend:sessionSpend,btn:document.getElementById('btn-gen-all').textContent})")
             check('batch: all prompted images done, video/no-prompt skipped, start frame set', st['done']==5 and st['sf'] and not st['vid'] and not st['noprompt'], st)

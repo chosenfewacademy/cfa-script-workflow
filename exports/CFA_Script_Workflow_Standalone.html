@@ -999,6 +999,7 @@ select option{background:var(--surface2)}
 .scene-dot.generating{animation:cfaPulse 1s ease-in-out infinite;border-color:var(--accent)!important}
 .scene-dot.has-result{box-shadow:inset 0 -3px 0 var(--accent)}
 @keyframes cfaPulse{50%{opacity:.45}}
+.err.note{color:var(--text);border-color:var(--border);background:var(--bg)}
 </style>
 </head>
 <body>
@@ -4798,6 +4799,7 @@ async function enhanceWithGPT(){
     showErr('e6','No image to enhance — generate an image first.');
     return;
   }
+  if(sceneData[currentScene]?.resultType && sceneData[currentScene].resultType!=='image'){ showErr('e6','GPT text fix works on images only.'); return; }
   const btn = document.getElementById('btn-gpt-enhance');
   if(btn){ btn.disabled=true; btn.textContent='⏳ Enhancing…'; }
   // Reset any existing comparison panel
@@ -4805,7 +4807,6 @@ async function enhanceWithGPT(){
   if(panel) panel.style.display = 'none';
   showErr('e6','');
 
-  if(sceneData[currentScene]?.resultType && sceneData[currentScene].resultType!=='image'){ showErr('e6','GPT text fix works on images only.'); return; }
   // Pin the scene + source URL NOW — if Chris navigates to another scene while
   // the ~50s enhancement runs, the result must still belong to THIS scene.
   _gptEnhanceSceneIdx = currentScene;
@@ -5075,7 +5076,7 @@ async function generateAllImages(){
   if(batchRun===run) batchRun=null;
   updateBatchButton(); renderSceneDots();
   const msg=(run.cancel?'Batch stopped. ':'Batch finished. ')+run.done+' generated'+(run.failed?', '+run.failed+' failed — '+run.errors.slice(0,3).join(' · '):'')+'. Review each scene, then Confirm.';
-  showErr('e6',msg);
+  (run.failed?showErr:showNote)('e6',msg);
 }
 
 async function generateScene(){
@@ -5346,6 +5347,8 @@ function updateVSSummary(){
 
 // ═══ HELPERS ═══
 function showErr(id,msg){const el=document.getElementById(id);if(!el)return;el.textContent=msg?'⚠ '+msg:'';el.className='err'+(msg?' show':'');}
+// Neutral status line in the same slot as errors (success/info — no warning styling)
+function showNote(id,msg){const el=document.getElementById(id);if(!el)return;el.textContent=msg||'';el.className='err note'+(msg?' show':'');}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function restart(){
   selId='';genScript='';finalScript='';segScript='';segOriginal='';voWords=[];

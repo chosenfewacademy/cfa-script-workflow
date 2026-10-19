@@ -17,8 +17,9 @@ test means Chris won't hit a schema mismatch or dead endpoint during real work.
 | `cfa-new-endpoints-test.mjs` | Gemini 3 Pro, Nano Banana, Veo 3.1 smoke test | ~$0.52 |
 | `cfa-gpt-image-test.mjs` | GPT Image text-correction (`/v1/images/edits`) across model strings | ~$0.20 |
 | `cfa-live-sim.mjs` | End-to-end simulation of a full scene run | varies |
-| `cfa-character-isolation-test.mjs` | Character isolation: Marcus/Jordan refs used correctly, secondary chars distinct, NONE→Imagen 4 (6 live generations) | ~$0.60 |
-| `cfa-anthropic-pipeline-test.mjs` | Full Anthropic pipeline: script→segment→classify→prompts, no-consec enforcement, secondary-char note injection (9 checks) | ~$0.02 |
+| `cfa-character-isolation-test.mjs` | Character isolation: Marcus/Jordan refs used correctly, secondary chars distinct, NONE→Nano Banana (6 live generations) | ~$0.60 |
+| `cfa-grok-pipeline-test.mjs` | Full Grok (xAI) pipeline: script (grok-4.7) → segment → classify → prompts (grok-4.3), no-consec enforcement, secondary-char note injection (9 checks) | ~$0.03 |
+| `cfa-adversarial-mock-test.py` | Headless browser test of the real HTML with **every API mocked** (Playwright): API errors (401/429/500/network/mid-stream), aborts, rapid clicks, XSS, huge/empty input, scene switching mid-generation, corrupt/old saved state, full storage, VO timestamps + SRT, auto video length, Generate-all batch | $0 |
 
 ## Usage
 
@@ -26,8 +27,11 @@ test means Chris won't hit a schema mismatch or dead endpoint during real work.
 # Character upload + Kling o1 pipeline test
 node cfa-pipeline-test.mjs YOUR_FAL_KEY
 
-# Full Anthropic pipeline + secondary-char note injection (9 checks)
-node cfa-anthropic-pipeline-test.mjs YOUR_ANTHROPIC_KEY
+# Full Grok pipeline + secondary-char note injection (9 checks)
+XAI_API_KEY=xai-... node cfa-grok-pipeline-test.mjs
+
+# Free, fully mocked browser test (pip install playwright && playwright install chromium)
+python3 cfa-adversarial-mock-test.py            # all groups, or e.g.: python3 cfa-adversarial-mock-test.py fal batch
 
 # fal.ai endpoint tests (pass the fal.ai key)
 node cfa-new-endpoints-test.mjs YOUR_FAL_KEY
@@ -40,7 +44,7 @@ node cfa-character-isolation-test.mjs YOUR_FAL_KEY
 node cfa-gpt-image-test.mjs YOUR_OPENAI_KEY
 ```
 
-Keys are passed as CLI arguments only — never hard-coded. Generated assets are
+Keys are passed as CLI arguments or environment variables only — never hard-coded. Generated assets are
 saved under `test-output/` (gitignored).
 
 ## Confirmed working endpoints (last verified)
@@ -50,4 +54,6 @@ saved under `test-output/` (gitignored).
 - **Gemini 3 Pro** image — `fal-ai/gemini-3-pro-image-preview/edit`
 - **Nano Banana** text-only image — `fal-ai/nano-banana` (replaces `fal-ai/imagen4`, retired by fal 2026-06-30)
 - **Veo 3.1** video — `fal-ai/veo3.1/image-to-video`
+- **Grok** text — `https://api.x.ai/v1/chat/completions` (`grok-4.7` writer, `grok-4.3` fast)
+- **ElevenLabs** voiceover — `POST /v1/text-to-speech/{voice}/with-timestamps` (audio + character timing)
 - **GPT Image 2** text fix — `https://api.openai.com/v1/images/edits` (model `gpt-image-2`)

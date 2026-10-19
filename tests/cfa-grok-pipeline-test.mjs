@@ -1,36 +1,39 @@
 /**
- * CFA Anthropic Pipeline — Live Test
- * ─────────────────────────────────────────────────────────────────────────────
- * Tests the 4 Claude calls the workflow makes, in order, with the real models:
- *   1. SCRIPT     claude-sonnet-4-20250514   — write Marcus/Jordan dialogue
- *   2. SEGMENT    claude-haiku-4-5-20251001  — numbered scene segmentation (stream)
- *   3. CLASSIFY   claude-haiku-4-5-20251001  — IMAGE/VIDEO tags (+ no-consec rule)
- *   4. PROMPTS    claude-haiku-4-5-20251001  — per-scene Kling prompt + Character Note
+ * CFA Grok Pipeline — Live Test (xAI)
+ * Tests the 4 text calls the workflow makes, in order, with the same models as the app:
+ *   1. SCRIPT     grok-4.7  (reasoning_effort high) — write Marcus/Jordan narration
+ *   2. SEGMENT    grok-4.3  (reasoning_effort low)  — numbered scene segmentation
+ *   3. CLASSIFY   grok-4.3                          — IMAGE/VIDEO tags (+ no-consec rule)
+ *   4. PROMPTS    grok-4.3                          — per-scene Kling prompt + Character Note
  *
- * Also validates: model strings resolve, classifier honors ~30% video + no two
+ * Also validates: model ids resolve, classifier honours ~30% video + no two
  * consecutive videos, and the secondary-character note is injected correctly.
+ * Cost: roughly $0.02–0.05 per run.
  *
- * Usage:  node cfa-anthropic-pipeline-test.mjs YOUR_ANTHROPIC_KEY
+ * Usage:  XAI_API_KEY=xai-... node cfa-grok-pipeline-test.mjs   (or pass the key as argv[2])
  */
 
-const KEY = process.argv[2] || process.env.ANTHROPIC_KEY;
+const KEY = process.argv[2] || process.env.XAI_API_KEY;
 const C = { reset:'\x1b[0m', bold:'\x1b[1m', green:'\x1b[32m', red:'\x1b[31m', dim:'\x1b[2m', cyan:'\x1b[36m', yellow:'\x1b[33m' };
 const pass = m => console.log(`${C.green}PASS${C.reset} ${m}`);
 const fail = m => console.log(`${C.red}FAIL${C.reset} ${m}`);
 const info = m => console.log(`${C.dim}  ${m}${C.reset}`);
 const head = m => console.log(`\n${C.bold}${C.cyan}== ${m} ==${C.reset}`);
-if(!KEY){ fail('No Anthropic key. Usage: node cfa-anthropic-pipeline-test.mjs YOUR_KEY'); process.exit(1); }
+if(!KEY){ fail('No xAI key. Usage: XAI_API_KEY=xai-... node cfa-grok-pipeline-test.mjs'); process.exit(1); }
 
-const API = 'https://api.anthropic.com/v1/messages';
-const HDR = { 'Content-Type':'application/json', 'x-api-key':KEY, 'anthropic-version':'2023-06-01' };
+const API = 'https://api.x.ai/v1/chat/completions';
+const HDR = { 'Content-Type':'application/json', 'Authorization':'Bearer '+KEY };
+const WRITER = 'grok-4.7', FAST = 'grok-4.3';
 
 async function call(model, system, user, max_tokens){
   const t0 = Date.now();
-  const r = await fetch(API, { method:'POST', headers:HDR, body:JSON.stringify({ model, max_tokens, system, messages:[{role:'user',content:user}] }) });
+  const body = { model, max_tokens, reasoning_effort: model===WRITER?'high':'low',
+    messages:[{role:'system',content:system},{role:'user',content:user}] };
+  const r = await fetch(API, { method:'POST', headers:HDR, body:JSON.stringify(body) });
   const ms = Date.now()-t0;
-  if(!r.ok){ const e = await r.json().catch(()=>({})); throw new Error(`${model} HTTP ${r.status}: ${e?.error?.message||JSON.stringify(e)}`); }
+  if(!r.ok){ const e = await r.json().catch(()=>({})); throw new Error(`${model} HTTP ${r.status}: ${e?.error?.message||e?.error||JSON.stringify(e)}`); }
   const d = await r.json();
-  return { text:(d.content?.[0]?.text)||'', ms, usage:d.usage };
+  return { text:(d.choices?.[0]?.message?.content)||'', ms, usage:d.usage };
 }
 
 // ─── System prompts (mirrored from the workflow) ──────────────────────────────
@@ -46,13 +49,13 @@ let okCount = 0, total = 0;
 function check(name, cond, detail){ total++; if(cond){ okCount++; pass(`${name}${detail?' — '+detail:''}`); } else { fail(`${name}${detail?' — '+detail:''}`); } }
 
 (async () => {
-  console.log(`\n${C.bold}CFA Anthropic Pipeline — Live Test${C.reset}`);
+  console.log(`\n${C.bold}CFA Grok Pipeline — Live Test${C.reset}`);
 
   // ── 1. SCRIPT ──────────────────────────────────────────────────────────────
-  head('1. SCRIPT — claude-sonnet-4-20250514');
+  head('1. SCRIPT — grok-4.7');
   let script = '';
   try {
-    const r = await call('claude-sonnet-4-20250514', SYS_WRITE,
+    const r = await call(WRITER, SYS_WRITE,
       'Topic: What is a crypto wallet? Next video: How private keys work.', 1000);
     script = r.text;
     info(`${r.ms}ms · ${r.usage?.output_tokens} out tokens`);
@@ -63,10 +66,10 @@ function check(name, cond, detail){ total++; if(cond){ okCount++; pass(`${name}$
   } catch(e){ fail(e.message); script = 'Marcus: A wallet holds your keys.\nJordan: How do I get one?\nMarcus: You download an app.'; }
 
   // ── 2. SEGMENT ─────────────────────────────────────────────────────────────
-  head('2. SEGMENT — claude-haiku-4-5-20251001');
+  head('2. SEGMENT — grok-4.3');
   let segLines = [];
   try {
-    const r = await call('claude-haiku-4-5-20251001', SYS_SEG, 'BEGIN SCRIPT\n'+script+'\nEND SCRIPT', 2000);
+    const r = await call(FAST, SYS_SEG, 'BEGIN SCRIPT\n'+script+'\nEND SCRIPT', 2000);
     info(`${r.ms}ms`);
     segLines = r.text.split('\n').map(l=>l.trim()).filter(l=>/^\d+\./.test(l));
     info(`segmented into ${segLines.length} scenes`);
@@ -80,10 +83,10 @@ function check(name, cond, detail){ total++; if(cond){ okCount++; pass(`${name}$
   }
 
   // ── 3. CLASSIFY ────────────────────────────────────────────────────────────
-  head('3. CLASSIFY — claude-haiku-4-5-20251001 (+ no-consecutive enforcement)');
+  head('3. CLASSIFY — grok-4.3 (+ no-consecutive enforcement)');
   let tags = [];
   try {
-    const r = await call('claude-haiku-4-5-20251001', SYS_CLASSIFY, segLines.join('\n'), 2000);
+    const r = await call(FAST, SYS_CLASSIFY, segLines.join('\n'), 2000);
     info(`${r.ms}ms`);
     tags = segLines.map((line,i)=>{
       const m = r.text.match(new RegExp('\\['+(i+1)+'\\]\\s*(IMAGE|VIDEO)','i'));
@@ -101,7 +104,7 @@ function check(name, cond, detail){ total++; if(cond){ okCount++; pass(`${name}$
   } catch(e){ fail(e.message); }
 
   // ── 4. PROMPTS (with Character Note injection) ───────────────────────────────
-  head('4. PROMPTS — claude-haiku-4-5-20251001 (secondary character note)');
+  head('4. PROMPTS — grok-4.3 (secondary character note)');
   const PRONOUN = ['him','her','them','someone','somebody','another'];
   function detectChars(line){ const t=line.toLowerCase(); const m=t.includes('marcus'),j=t.includes('jordan'); if(m&&j) return t.indexOf('jordan')<t.indexOf('marcus')?'BOTH_JM':'BOTH'; if(m) return 'MARCUS'; if(j) return 'JORDAN'; return 'NONE'; }
   function detectSecondary(line){ const raw=line.toLowerCase(); if(!raw.includes('marcus')&&!raw.includes('jordan')) return null; const text=raw.replace(/\b(his|her|their|its|your|our|my)\s+[a-z]+/g,' '); const terms=['banker','investor','advisor','woman','man','colleague','friend','stranger','person','him','her','them','someone','another']; return terms.find(t=>new RegExp('\\b'+t+'\\b').test(text))||null; }
@@ -116,7 +119,7 @@ function check(name, cond, detail){ total++; if(cond){ okCount++; pass(`${name}$
   }
   info(`line: "${testLine}"  chars=${chars}  secondary=${sec}`);
   try {
-    const r = await call('claude-haiku-4-5-20251001', SYS_KLING_IMAGE, userMsg, 400);
+    const r = await call(FAST, SYS_KLING_IMAGE, userMsg, 400);
     info(`${r.ms}ms`);
     const prompt = r.text.replace(/\nSCENE:.*/i,'').trim();
     const sceneMatch = r.text.match(/SCENE:\s*(.+)/i);
