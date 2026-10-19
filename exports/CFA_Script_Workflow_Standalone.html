@@ -1000,6 +1000,21 @@ select option{background:var(--surface2)}
 .scene-dot.has-result{box-shadow:inset 0 -3px 0 var(--accent)}
 @keyframes cfaPulse{50%{opacity:.45}}
 .err.note{color:var(--text);border-color:var(--border);background:var(--bg)}
+/* Layout fix: room for timeline step labels; compact header on phones */
+.timeline{height:auto;min-height:46px;padding-top:8px;padding-bottom:20px}
+.topbar .app-info{min-width:0}
+.topbar .app-title,.topbar .app-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar-actions{flex-shrink:0}
+@media(max-width:480px){
+  .topbar .app-sub{display:none}
+  .topbar .app-title{font-size:13px}
+  .topbar-actions{gap:2px;padding:2px}
+  .topbar-actions .topbar-divider{display:none}
+  .topbar-cost-chip{display:none!important}
+  .settings-btn{padding:6px 9px}
+  .rbtn{padding:6px 8px}
+  .tl-dot:not(.active) .tl-label{opacity:0!important}
+}
 </style>
 </head>
 <body>
@@ -1009,7 +1024,6 @@ select option{background:var(--surface2)}
   <div class="app-info">
     <div class="app-title">Script Workflow</div>
     <div class="app-sub">Chosen Few Academy</div>
-  </div>
   </div>
   <div class="topbar-spacer"></div>
   <div class="topbar-actions">
