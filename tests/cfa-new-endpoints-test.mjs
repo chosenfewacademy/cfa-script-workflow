@@ -38,7 +38,7 @@ if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
 // ─── Endpoints (mirrors generateScene dispatcher) ─────────────────────────────
 const FAL_UPLOAD_INIT = 'https://rest.alpha.fal.ai/storage/upload/initiate';
 const GEMINI_3_PRO    = 'https://fal.run/fal-ai/gemini-3-pro-image-preview/edit';
-const IMAGEN_4_ULTRA  = 'https://fal.run/fal-ai/imagen4/preview/ultra';
+const IMAGEN_4_ULTRA  = 'https://fal.run/fal-ai/nano-banana';
 const VEO_3_1         = 'https://fal.run/fal-ai/veo3.1/image-to-video';
 
 // ─── Pretty printing ──────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ async function main() {
   // ── SETUP: extract Marcus + upload ───────────────────────────────────────
   head('SETUP — Extract Marcus from HTML and upload to fal.ai');
 
-  const htmlPath = path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html');
+  const htmlPath = [path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html'), path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html')].find(p => fs.existsSync(p)) || path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html');
   if (!fs.existsSync(htmlPath)) { fail(`HTML not found at ${htmlPath}`); process.exit(1); }
   const html = fs.readFileSync(htmlPath, 'utf8');
 

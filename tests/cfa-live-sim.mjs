@@ -88,7 +88,7 @@ async function main() {
   console.log('\n\x1b[1mCFA Live Workflow Simulation — Chris\'s Exact Usage Sequence\x1b[0m');
   console.log('─'.repeat(64));
 
-  const html   = fs.readFileSync(path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html'), 'utf8');
+  const html   = fs.readFileSync([path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html'), path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html')].find(p => fs.existsSync(p)) || path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html'), 'utf8');
   const mBuf   = b64ToBuffer(extractB64(html, 'MARCUS_B64'));
   const jBuf   = b64ToBuffer(extractB64(html, 'JORDAN_B64'));
 

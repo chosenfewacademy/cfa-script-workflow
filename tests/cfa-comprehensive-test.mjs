@@ -197,7 +197,7 @@ async function main() {
   // ── SETUP: Extract + upload character images ──────────────────────────────
   head('SETUP — Extract characters from HTML + upload to fal.ai storage');
 
-  const htmlPath = path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html');
+  const htmlPath = [path.join(__dirname, 'exports', 'CFA_Script_Workflow_Standalone.html'), path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html')].find(p => fs.existsSync(p)) || path.join(__dirname, '..', 'exports', 'CFA_Script_Workflow_Standalone.html');
   const html     = fs.readFileSync(htmlPath, 'utf8');
 
   const marcusBuf = b64ToBuffer(extractB64(html, 'MARCUS_B64'));
