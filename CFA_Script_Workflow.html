@@ -996,6 +996,9 @@ select option{background:var(--surface2)}
 .s6-ind-label.active{color:var(--accent);font-weight:700}
 .s6-ind-label.done{color:var(--success)}
 .s6-ind-sep{flex:1;height:1px;background:var(--border);min-width:8px;max-width:24px}
+.scene-dot.generating{animation:cfaPulse 1s ease-in-out infinite;border-color:var(--accent)!important}
+.scene-dot.has-result{box-shadow:inset 0 -3px 0 var(--accent)}
+@keyframes cfaPulse{50%{opacity:.45}}
 </style>
 </head>
 <body>
@@ -1378,9 +1381,10 @@ select option{background:var(--surface2)}
         <div>
           <div class="vs-field-label">Model</div>
           <select id="el-model" aria-label="ElevenLabs voice model" onchange="updateVSSummary()">
-            <option value="eleven_multilingual_v2">Multilingual v2 — best quality</option>
-            <option value="eleven_turbo_v2_5">Turbo v2.5 — fastest</option>
-            <option value="eleven_monolingual_v1">Monolingual v1 — English only</option>
+            <option value="eleven_multilingual_v2">Multilingual v2 — channel default voice</option>
+            <option value="eleven_v4">Eleven v4 — most expressive</option>
+            <option value="eleven_v4_turbo">Eleven v4 Turbo — fast, half price</option>
+            <option value="eleven_flash_v2_5">Flash v2.5 — fastest drafts, half price</option>
           </select>
         </div>
       </div>
@@ -1429,10 +1433,12 @@ select option{background:var(--surface2)}
       <span class="success-row-text">Voiceover ready &mdash; Young Jamal</span>
       <span class="success-row-sub" id="vo-model-chip"></span>
     </div>
+    <div id="vo-timing-note" style="display:none;font-size:11px;color:var(--muted);padding:0 16px 6px"></div>
     <div class="audio-player" style="padding:16px">
       <audio id="vo-audio" controls preload="auto" style="width:100%;margin-bottom:14px"></audio>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <a id="vo-download" class="download-btn" download="CFA_Voiceover.mp3" style="padding:9px 18px;font-size:12px">&#x2B07; Download MP3</a>
+        <button class="btn bsec" id="vo-srt-btn" onclick="downloadBeatSRT()" style="padding:9px 18px;font-size:12px;display:none" title="Subtitle file with each segment's start/end time — drop it into your editor timeline">&#x2B07; Beat timings (.srt)</button>
         <button class="btn bsec" onclick="regenerateVO()" style="padding:9px 18px;font-size:12px">&#x21BA; Regenerate</button>
         <button class="btn bgh" onclick="goBack()" style="padding:9px 18px;font-size:12px">&#x2190; Back</button>
       </div>
@@ -1519,6 +1525,9 @@ select option{background:var(--surface2)}
 
     <!-- Scene dot navigator — click any scene to jump there -->
     <div class="scene-dots" id="scene-dots-row"></div>
+    <div style="display:flex;justify-content:flex-end;margin:-4px 0 10px">
+      <button class="btn bsec" id="btn-gen-all" onclick="generateAllImages()" style="padding:7px 14px;font-size:11px" title="Generate every image scene that has a prompt but no result yet, 3 at a time">&#x26A1; Generate all remaining images</button>
+    </div>
 
     <!-- Script line — always visible -->
     <div style="padding:12px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;font-size:12px;color:var(--text);line-height:1.6;margin-bottom:12px" id="s6-script-line"></div>
@@ -1666,6 +1675,7 @@ select option{background:var(--surface2)}
               <button class="dur-btn active" id="dur-5" onclick="setDuration(5)">5 seconds</button>
               <button class="dur-btn" id="dur-10" onclick="setDuration(10)">10 seconds</button>
             </div>
+            <div id="dur-hint" style="display:none;font-size:10px;color:var(--muted);margin-top:6px"></div>
           </div>
           <div class="camera-select">
             <div id="s6-camera-label" style="font-size:10px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;margin-bottom:6px">Camera Movement</div>
@@ -2006,6 +2016,10 @@ select option{background:var(--surface2)}
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="color:var(--muted)">Grok text spend <span style="font-size:9px">(not from fal budget)</span></span>
             <strong id="sm-xai-spend" style="color:var(--text)">$0.00</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:var(--muted)">ElevenLabs voice (est.) <span style="font-size:9px">(credits, list price)</span></span>
+            <strong id="sm-voice-spend" style="color:var(--text)">$0.00</strong>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="color:var(--muted)">Generations</span>
@@ -2362,7 +2376,9 @@ async function llmComplete({role, system, user, maxTokens, onDelta, signal}){
     text=(c&&c.message&&c.message.content)||''; truncated=!!c&&c.finish_reason==='length'; usage=data.usage;
   } else {
     const reader=resp.body.getReader(), dec=new TextDecoder();
-    let buf='';
+    let buf='', lastEmit=0, pending=false;
+    // Throttle UI callbacks (~15/s): re-rendering the whole text per token is O(n²) on long outputs
+    const emit=force=>{ const now=performance.now(); if(force||now-lastEmit>66){ lastEmit=now; pending=false; onDelta(text); } else pending=true; };
     const handle=line=>{
       if(!line.startsWith('data:'))return;
       const raw=line.slice(5).trim();
@@ -2374,7 +2390,7 @@ async function llmComplete({role, system, user, maxTokens, onDelta, signal}){
       if(!c) return;
       if(c.finish_reason==='length') truncated=true;
       const delta=(c.delta&&c.delta.content)||'';
-      if(delta){ text+=delta; onDelta(text); }
+      if(delta){ text+=delta; emit(false); }
     };
     try{
       while(true){
@@ -2385,6 +2401,7 @@ async function llmComplete({role, system, user, maxTokens, onDelta, signal}){
         for(const line of lines) handle(line);
       }
       buf+=dec.decode(); if(buf) handle(buf);
+      if(pending) emit(true);
     }catch(err){ if(err.name==='AbortError') throw err; throw new Error(friendlyNetError(err)); }
   }
   const cost=grokCallCost(model, usage);
@@ -2985,7 +3002,13 @@ async function generateVO(){
   try{
     setVOProgress(25,'Sending script to Young Jamal voice…');
 
-    const resp = await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+EL_VOICE_ID,{
+    const elModel=EL_MODELS[model]||EL_MODELS.eleven_multilingual_v2;
+    if(finalScript.length>elModel.maxChars) throw new Error('Script is '+finalScript.length.toLocaleString()+' characters — '+elModel.label+' accepts up to '+elModel.maxChars.toLocaleString()+'. Shorten it or pick Flash v2.5.');
+    // /with-timestamps returns the same audio (base64) plus character-level timing,
+    // which we use to time every segment and auto-pick video lengths.
+    let resp;
+    try{
+    resp = await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+EL_VOICE_ID+'/with-timestamps',{
       method:'POST',
       headers:{
         'xi-api-key':   elKey,
@@ -3002,6 +3025,7 @@ async function generateVO(){
         }
       })
     });
+    }catch(netErr){ throw new Error(friendlyNetError(netErr)); }
 
     if(!resp.ok){
       let errMsg='HTTP '+resp.status;
@@ -3017,8 +3041,19 @@ async function generateVO(){
     }
 
     setVOProgress(75,'Receiving audio…');
-    const blob = await resp.blob();
+    let voJson=null;
+    try{ voJson=await resp.json(); }catch(e){ throw new Error('Unreadable response from ElevenLabs — try again.'); }
+    let blob=null;
+    try{
+      const bin=atob(voJson?.audio_base64||'');
+      const bytes=new Uint8Array(bin.length);
+      for(let k=0;k<bin.length;k++) bytes[k]=bin.charCodeAt(k);
+      blob=new Blob([bytes],{type:'audio/mpeg'});
+    }catch(e){ blob=null; }
     if(!blob||blob.size===0)throw new Error('Empty audio returned — try again.');
+    trackVoiceSpend(finalScript.length*elModel.perChar);
+    voWords=alignmentToWords(voJson.alignment||voJson.normalized_alignment);
+    if(voAudioURL){ try{URL.revokeObjectURL(voAudioURL);}catch(e){} }
     const url  = URL.createObjectURL(blob);
     voAudioURL = url;
 
@@ -3035,8 +3070,9 @@ async function generateVO(){
     dl.download = (V[selId]?V[selId].title:'CFA_Script').replace(/[^a-z0-9]/gi,'_')+'_Voiceover.mp3';
 
     // Show model chip
-    const modelNames={'eleven_multilingual_v2':'Multilingual v2','eleven_turbo_v2_5':'Turbo v2.5','eleven_monolingual_v1':'Monolingual v1'};
-    document.getElementById('vo-model-chip').textContent=modelNames[model]||model;
+    document.getElementById('vo-model-chip').textContent=(EL_MODELS[model]||{}).label||model;
+    refreshVOTimingUI();
+    if(sceneData.length){ assignBeatTimes(); saveWorkflowState(); }
 
     document.getElementById('s5-generating').style.display='none';
     document.getElementById('s5-result').style.display='';
@@ -3154,6 +3190,20 @@ function trackTextSpend(cost){
   safeSetItem('cfa_xai_spend', textSpend.toFixed(5));
   updateSettingsSpendDisplay();
 }
+// ElevenLabs estimate: list price per character (v2/v4: $0.08/1k chars · flash/turbo: $0.04/1k)
+const EL_MODELS={
+  eleven_multilingual_v2:{label:'Multilingual v2',perChar:0.08/1000,maxChars:10000},
+  eleven_v4:{label:'Eleven v4',perChar:0.08/1000,maxChars:10000},
+  eleven_v4_turbo:{label:'Eleven v4 Turbo',perChar:0.04/1000,maxChars:10000},
+  eleven_flash_v2_5:{label:'Flash v2.5',perChar:0.04/1000,maxChars:40000},
+  eleven_turbo_v2_5:{label:'Turbo v2.5',perChar:0.04/1000,maxChars:40000}
+};
+let voiceSpend = storedNumber('cfa_voice_spend', 0);
+function trackVoiceSpend(cost){
+  voiceSpend = Math.round((voiceSpend + cost) * 1e4) / 1e4;
+  safeSetItem('cfa_voice_spend', voiceSpend.toFixed(4));
+  updateSettingsSpendDisplay();
+}
 function trackSpend(cost){
   sessionSpend = Math.round((sessionSpend + cost) * 1000) / 1000;
   sessionGens++;
@@ -3206,10 +3256,10 @@ function smSaveBudget(){
 }
 
 function smResetSpend(){
-  if(!confirm('Reset the image/video and Grok spend counters to $0?')) return;
+  if(!confirm('Reset the image/video and Grok/voice spend counters to $0?')) return;
   sessionSpend = 0;
   sessionGens  = 0;
-  textSpend    = 0;
+  textSpend    = 0; voiceSpend = 0; safeSetItem('cfa_voice_spend','0');
   safeSetItem('cfa_session_spend', '0');
   safeSetItem('cfa_session_gens',  '0');
   safeSetItem('cfa_xai_spend', '0');
@@ -3229,6 +3279,8 @@ function updateSettingsSpendDisplay(){
   if(genEl)   genEl.textContent   = sessionGens;
   const xEl = document.getElementById('sm-xai-spend');
   if(xEl) xEl.textContent = '$' + textSpend.toFixed(textSpend<1?3:2);
+  const vEl = document.getElementById('sm-voice-spend');
+  if(vEl) vEl.textContent = '$' + voiceSpend.toFixed(2);
   if(remEl)   remEl.textContent   = remaining !== null ? '$' + remaining.toFixed(2) : '— (no budget set)';
   if(budgetEl && budget > 0 && document.activeElement!==budgetEl) budgetEl.value = budget.toFixed(2);
 }
@@ -3246,6 +3298,87 @@ function updateTopbarCostChip(){
   chip.classList.remove('warn','lo');
   if(remaining < 1) chip.classList.add('lo');
   else if(remaining < 3) chip.classList.add('warn');
+}
+
+// ═══ VOICEOVER TIMING (ElevenLabs /with-timestamps) ═════════════════════════
+// voWords: [[word, startSec, endSec], …] from the character alignment of the voiceover.
+let voWords=[];
+function alignmentToWords(al){
+  const out=[];
+  if(!al || !Array.isArray(al.characters)) return out;
+  const C=al.characters, S=al.character_start_times_seconds||[], E=al.character_end_times_seconds||[];
+  let w='', ws=0, we=0;
+  for(let k=0;k<C.length;k++){
+    const ch=String(C[k]);
+    if(/^\s+$/.test(ch) || ch===''){ if(w){ out.push([w,ws,we]); w=''; } continue; }
+    if(!w) ws=+S[k]||0;
+    w+=ch; we=+E[k]||ws;
+  }
+  if(w) out.push([w,ws,we]);
+  return out.map(([t,a,b])=>[t,Math.round(a*100)/100,Math.round(b*100)/100]);
+}
+const normWord=w=>String(w).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g,'');
+// Map each segment line to {start,end} by walking the spoken words in order.
+function computeBeatTimes(lines, words){
+  const W=(words||[]).map(w=>({n:normWord(w[0]),s:w[1],e:w[2]})).filter(w=>w.n);
+  let cur=0;
+  return lines.map(line=>{
+    const toks=String(line).replace(/^\s*\d+\.\s*/,'').split(/\s+/).map(normWord).filter(Boolean);
+    if(!toks.length || cur>=W.length) return null;
+    let p=-1;
+    for(let k=cur;k<Math.min(W.length,cur+40);k++){
+      if(W[k].n===toks[0] && (toks.length<2 || !W[k+1] || W[k+1].n===toks[1])){ p=k; break; }
+    }
+    if(p<0) return null;
+    const last=Math.min(W.length-1,p+toks.length-1);
+    cur=last+1;
+    return {start:W[p].s,end:W[last].e};
+  });
+}
+function assignBeatTimes(){
+  if(!voWords.length || !sceneData.length) return 0;
+  const t=computeBeatTimes(sceneData.map(x=>x.line), voWords);
+  let n=0;
+  sceneData.forEach((x,i)=>{ if(t[i]){ x.tStart=t[i].start; x.tEnd=t[i].end; n++; } else { delete x.tStart; delete x.tEnd; } });
+  return n;
+}
+const beatLen=x=>x && Number.isFinite(x.tStart) && Number.isFinite(x.tEnd) && x.tEnd>x.tStart ? x.tEnd-x.tStart : 0;
+// Shortest clip that covers the spoken beat (Kling 5/10s, Veo 4/6/8s)
+function autoVideoDuration(x){
+  const d=beatLen(x);
+  if(!d) return 0;
+  if(selectedVideoModel==='veo31') return d<=4.2?4:d<=6.2?6:8;
+  return d<=5.2?5:10;
+}
+function fmtSrtTime(t){
+  const ms=Math.max(0,Math.round(t*1000)), h=Math.floor(ms/3600000), m=Math.floor(ms%3600000/60000), sec=Math.floor(ms%60000/1000);
+  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0')+','+String(ms%1000).padStart(3,'0');
+}
+function currentSegLines(){
+  if(sceneData.length) return sceneData.map(x=>x.line);
+  return (segScript||'').split('\n').map(l=>l.trim()).filter(l=>/^\d+\./.test(l));
+}
+function refreshVOTimingUI(){
+  const btn=document.getElementById('vo-srt-btn'), note=document.getElementById('vo-timing-note');
+  const lines=currentSegLines();
+  const t=voWords.length&&lines.length?computeBeatTimes(lines,voWords):[];
+  const n=t.filter(Boolean).length;
+  if(btn) btn.style.display=n?'':'none';
+  if(note){
+    note.style.display=voWords.length?'':'none';
+    const total=voWords.length?voWords[voWords.length-1][2]:0;
+    note.textContent=voWords.length?('⏱ '+total.toFixed(1)+'s of narration · '+n+'/'+lines.length+' segments timed — video scenes will auto-pick a clip length that covers their line.'):'';
+  }
+}
+function downloadBeatSRT(){
+  const lines=currentSegLines();
+  const t=computeBeatTimes(lines,voWords);
+  const out=[]; let k=1;
+  lines.forEach((l,i)=>{ if(!t[i]) return; out.push(String(k++), fmtSrtTime(t[i].start)+' --> '+fmtSrtTime(t[i].end), l.replace(/^\s*\d+\.\s*/,''), ''); });
+  if(!out.length){ showErr('e5','No segment timings yet — segment the script and generate the voiceover first.'); return; }
+  const url=URL.createObjectURL(new Blob([out.join('\n')],{type:'application/x-subrip'}));
+  const a=document.createElement('a'); a.href=url; a.download='CFA_Beat_Timings.srt'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),15000);
 }
 
 // ═══ SESSION AUTO-SAVE / RESTORE ═══════════════════════════════════════════
@@ -3266,8 +3399,10 @@ function saveWorkflowState(){
         prompt: s.prompt || '', sceneDesc: s.sceneDesc || '', styleDesc: s.styleDesc || '',
         done: !!s.done, resultURL: s.resultURL || '',
         resultType: s.resultType || '', resultModel: s.resultModel || '',
-        savedStartFrameURL: s.savedStartFrameURL || '', startFrameManual: !!s.startFrameManual
+        savedStartFrameURL: s.savedStartFrameURL || '', startFrameManual: !!s.startFrameManual,
+        tStart: s.tStart, tEnd: s.tEnd, videoDur: s.videoDur
       })),
+      voWords: voWords,
       currentScene: currentScene || 0,
       currentScreen: typeof curScreen !== 'undefined' ? curScreen : 6,
       selectedImageModel: selectedImageModel,
@@ -3307,12 +3442,20 @@ function getSavedWorkflowState(){
         prompt:str(x.prompt), sceneDesc:str(x.sceneDesc), styleDesc:str(x.styleDesc),
         done:!!x.done, resultURL:url(x.resultURL),
         resultType:x.resultType==='video'||x.resultType==='image'?x.resultType:(url(x.resultURL)?(x.tag==='VIDEO'?'video':'image'):''),
-        resultModel:str(x.resultModel), savedStartFrameURL:url(x.savedStartFrameURL), startFrameManual:!!x.startFrameManual
+        resultModel:str(x.resultModel), savedStartFrameURL:url(x.savedStartFrameURL), startFrameManual:!!x.startFrameManual,
+        ...(Number.isFinite(x.tStart)&&Number.isFinite(x.tEnd)&&x.tEnd>x.tStart?{tStart:x.tStart,tEnd:x.tEnd}:{}),
+        ...([4,5,6,8,10].includes(x.videoDur)?{videoDur:x.videoDur}:{})
       }));
+    state.voWords = Array.isArray(state.voWords) ? state.voWords.filter(w=>Array.isArray(w)&&typeof w[0]==='string'&&Number.isFinite(w[1])&&Number.isFinite(w[2])) : [];
     if(state.sceneData.length === 0) return null;
     state.currentScene = Number.isInteger(state.currentScene) ? Math.max(0, Math.min(state.currentScene, state.sceneData.length-1)) : 0;
     if(!['kling-o1','gemini-3pro','imagen4'].includes(state.selectedImageModel)) state.selectedImageModel='kling-o1';
     if(!['kling-o1','gemini-3pro','imagen4'].includes(state.userImageModel)) state.userImageModel=undefined;
+    // Saves from before the Imagen fix (9bbf30e) have no userImageModel: an 'imagen4' selection there was
+    // almost always the auto-pick from a concept scene, so treat it as auto and restore Kling o1 for characters.
+    if(state.userImageModel===undefined && state.selectedImageModel==='imagen4' && state.imagenAutoSelected===undefined){
+      state.userImageModel='kling-o1'; state.imagenAutoSelected=true;
+    }
     if(!['kling-v16','veo31'].includes(state.selectedVideoModel)) state.selectedVideoModel='kling-v16';
     if(![4,5,6,8,10].includes(state.sceneDuration)) state.sceneDuration=5;
     if(typeof state.savedAt!=='number') state.savedAt=Date.now();
@@ -3360,6 +3503,7 @@ function resumeSavedSession(){
     if(banner) banner.style.display = 'none';
 
     segOriginal        = state.segOriginal || segScript;
+    voWords            = state.voWords || [];
     // Sync model card visual state (preserve whether Imagen was auto-selected)
     setImageModel(state.userImageModel || state.selectedImageModel || 'kling-o1');
     if(state.imagenAutoSelected) setImageModel('imagen4', true);
@@ -3400,6 +3544,8 @@ function renderSceneDots(){
   row.innerHTML = sceneData.map((s, i) => {
     const cls = ['scene-dot'];
     if(s.done)             cls.push('done');
+    if(s._generating)      cls.push('generating');
+    else if(s.resultURL && !s.done) cls.push('has-result');
     if(i === currentScene) cls.push('current');
     cls.push(s.tag === 'VIDEO' ? 'video' : 'image');
     const titleParts = ['Scene ' + (i+1)];
@@ -3407,6 +3553,7 @@ function renderSceneDots(){
     if(s.done) titleParts.push('Done');
     return `<button class="${cls.join(' ')}" onclick="jumpToScene(${i})" title="${titleParts.join(' · ')}">${i+1}</button>`;
   }).join('');
+  updateBatchButton();
 }
 
 function jumpToScene(i){
@@ -3425,20 +3572,13 @@ function jumpToScene(i){
 
 // ═══ FULL PROMPT PREVIEW ═══════════════════════════════════════════════════
 function buildFullPromptText(){
-  const promptEl = document.getElementById('s6-prompt');
-  if(!promptEl) return '';
-  let p = (promptEl.value || '').trim();
-  if(!p) return '';
-  if(sceneRefs['scene'] && sceneRefs['scene'].text) p += ' Setting: ' + sceneRefs['scene'].text + '.';
-  if(sceneRefs['style'] && sceneRefs['style'].text) p += ' Style: ' + sceneRefs['style'].text + '.';
-  const s = sceneData[currentScene];
-  if(s && s.tag === 'VIDEO'){
-    const camEl = document.getElementById('s6-camera');
-    if(camEl && typeof CAMERA_PRESETS !== 'undefined' && CAMERA_PRESETS[camEl.value]){
-      p += ' ' + CAMERA_PRESETS[camEl.value];
-    }
-  }
-  return p;
+  const promptEl=document.getElementById('s6-prompt');
+  const s=sceneData[currentScene];
+  if(!promptEl || !s || !(promptEl.value||'').trim()) return '';
+  return composeScenePrompt(s, promptEl.value, {
+    sceneText: sceneRefs['scene']?.text, styleText: sceneRefs['style']?.text,
+    camera: s.tag==='VIDEO' ? document.getElementById('s6-camera')?.value : ''
+  });
 }
 
 function updatePromptPreview(){
@@ -3588,7 +3728,7 @@ function exportManifest(){
   lines.push('====================================');
   lines.push('');
   sceneData.forEach((s, i) => {
-    lines.push('[' + (i+1) + '] ' + s.tag + (s.resultModel ? ' · ' + s.resultModel : ''));
+    lines.push('[' + (i+1) + '] ' + s.tag + (s.resultModel ? ' · ' + s.resultModel : '') + (beatLen(s) ? ' · ' + fmtSrtTime(s.tStart).replace(',','.') + '–' + fmtSrtTime(s.tEnd).replace(',','.') : ''));
     lines.push('Script: ' + (s.line || ''));
     if(s.prompt)    lines.push('Prompt: ' + s.prompt);
     if(s.sceneDesc) lines.push('Setting: ' + s.sceneDesc);
@@ -3605,6 +3745,20 @@ function exportManifest(){
 }
 
 // ═══ DURATION OPTIONS (Veo vs Kling differ) ════════════════════════════════
+function updateDurHint(){
+  const el=document.getElementById('dur-hint'); if(!el) return;
+  const sc=sceneData[currentScene], d=beatLen(sc);
+  if(!sc || sc.tag!=='VIDEO' || !d){ el.style.display='none'; return; }
+  const auto=autoVideoDuration(sc);
+  el.style.display='';
+  el.textContent='⏱ Narration for this line: '+d.toFixed(1)+'s → '+(sc.videoDur&&sc.videoDur!==auto?('you picked '+sc.videoDur+'s (auto would be '+auto+'s)'):('auto '+auto+'s'))+(d>auto+0.5?' · line runs longer than the max clip — hold the last frame or split it':'');
+}
+// Per-scene video length: manual pick > auto from VO timing > current global
+function applySceneDuration(sc){
+  if(!sc || sc.tag!=='VIDEO') return;
+  const want=sc.videoDur||autoVideoDuration(sc);
+  if(want) sceneDuration=want;
+}
 function refreshDurationOptions(){
   const wrap = document.querySelector('.duration-toggle');
   if(!wrap) return;
@@ -3776,6 +3930,7 @@ async function enterSceneGeneration(){
         sceneData[i].tag='IMAGE';
       }
     }
+    assignBeatTimes(); // VO timings (if the voiceover was generated) → per-scene start/end
     // Persist initial sceneData so a refresh during prompt generation doesn't lose classifications
     saveWorkflowState();
 
@@ -3816,6 +3971,7 @@ function renderClassificationList(){
       '<span class="scene-tag '+(s.tag==='IMAGE'?'image':'video')+'" onclick="flipTag('+i+')" id="tag-'+i+'">'+(s.tag==='IMAGE'?'🖼 IMAGE':'🎬 VIDEO')+'</span>'+
       charBadge+
       '<span class="scene-line-text">'+(i+1)+'. '+escHtml(s.line.replace(/^\d+\.\s*/,'').slice(0,70))+'</span>'+
+      (beatLen(s)?'<span style="font-size:10px;color:var(--muted);font-family:ui-monospace,monospace;margin-left:auto;padding:0 6px">'+beatLen(s).toFixed(1)+'s</span>':'')+
       '<span class="scene-prompt-ready" id="prompt-ready-'+i+'" style="display:none">✓ prompt</span>';
     list.appendChild(row);
   });
@@ -3941,7 +4097,7 @@ function loadScene(i){
   if(vidModels)vidModels.style.display=isVideo?'':'none';
 
   updateGenLabel();
-  if(isVideo) refreshDurationOptions();
+  if(isVideo){ applySceneDuration(s); refreshDurationOptions(); updateDurHint(); }
 
   document.getElementById('s6-video-settings').style.display=isVideo?'':'none';
   // Scene/style slots only relevant for image scenes; hide for video (prompt is the main input)
@@ -4032,8 +4188,11 @@ function renderResultMedia(url, type){
   container.appendChild(el);
 }
 
-function setDuration(s){
+function setDuration(s, auto){
   sceneDuration=s;
+  const sc=sceneData[currentScene];
+  if(sc && sc.tag==='VIDEO' && !auto) sc.videoDur=s; // remember a manual pick per scene
+  updateDurHint();
   // Update active state across whatever duration buttons are currently rendered
   document.querySelectorAll('.duration-toggle .dur-btn').forEach(btn => {
     btn.classList.toggle('active', btn.textContent.startsWith(s + ' '));
@@ -4476,21 +4635,23 @@ async function autoPopulateCharacters(characters){
     const [primB64,primName,secB64,secName] = characters === 'BOTH_JM'
       ? [JORDAN_B64,'Jordan',MARCUS_B64,'Marcus']
       : [MARCUS_B64,'Marcus',JORDAN_B64,'Jordan'];
-    await Promise.all([fillSlot(subjectSlot, primB64, primName), fillSlot(cosubjectSlot, secB64, secName)]);
     updateHelper(subjectSlot,   'Auto-filled: '+primName+'. Clear to override.');
     updateHelper(cosubjectSlot, 'Auto-filled: '+secName+'. Clear to override.');
+    await Promise.all([fillSlot(subjectSlot, primB64, primName), fillSlot(cosubjectSlot, secB64, secName)]);
 
   } else if(characters === 'MARCUS'){
-    await fillSlot(subjectSlot, MARCUS_B64, 'Marcus');
+    // Synchronous slot work first — after an await the user may already be on another scene
     clearSlotSilent(cosubjectSlot);
     updateHelper(subjectSlot,   'Auto-filled: Marcus. Clear to override.');
     updateHelper(cosubjectSlot, 'Marcus only in this scene — leave empty or upload if needed.');
+    await fillSlot(subjectSlot, MARCUS_B64, 'Marcus');
 
   } else if(characters === 'JORDAN'){
-    await fillSlot(subjectSlot, JORDAN_B64, 'Jordan');
+    // Synchronous slot work first — after an await the user may already be on another scene
     clearSlotSilent(cosubjectSlot);
     updateHelper(subjectSlot,   'Auto-filled: Jordan. Clear to override.');
     updateHelper(cosubjectSlot, 'Jordan only in this scene — leave empty or upload if needed.');
+    await fillSlot(subjectSlot, JORDAN_B64, 'Jordan');
 
   } else {
     clearSlotSilent(subjectSlot);
@@ -4800,6 +4961,123 @@ function updateGenLabel(){
   updatePromptPreview();
 }
 
+// ═══ SHARED GENERATION HELPERS (single scene + Generate All) ═══
+const IMAGE_MODEL_LABELS={'kling-o1':'Kling o1','gemini-3pro':'Gemini 3 Pro','imagen4':'Nano Banana'};
+function secondaryGuardText(s){
+  const secondary=detectSecondaryChar(s.line||'');
+  if(!secondary || s.characters==='NONE') return '';
+  const mainChar = s.characters==='BOTH'||s.characters==='BOTH_JM' ? 'Marcus and Jordan' : s.characters==='MARCUS' ? 'Marcus' : 'Jordan';
+  return ` [Reference image is ONLY for ${mainChar}. The ${secondaryLabel(secondary)} in this scene is a completely different person — distinct appearance, different skin tone and build, gender-appropriate to the script, does not resemble ${mainChar} in any way.]`;
+}
+// Full prompt sent to fal: prompt + Setting + Style + camera preset (video) + secondary-character guard
+function composeScenePrompt(s, prompt, {sceneText, styleText, camera}={}){
+  let p=(prompt||'').trim();
+  if(sceneText) p+=' Setting: '+sceneText+'.';
+  if(styleText) p+=' Style: '+styleText+'.';
+  if(camera && CAMERA_PRESETS[camera]) p+=' '+CAMERA_PRESETS[camera];
+  return p+secondaryGuardText(s);
+}
+async function falPost(endpoint, body){
+  const falKey=sessionStorage.getItem('cfa_fal_key');
+  if(!falKey) throw new Error('fal.ai API key not set — open ⚙ Settings.');
+  let resp;
+  try{
+    resp=await fetch('https://fal.run/'+endpoint,{method:'POST',headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  }catch(err){ throw new Error(friendlyNetError(err)); }
+  if(!resp.ok) throw new Error(await apiErrorMessage(resp));
+  return resp.json();
+}
+async function falImageRequest(model, prompt, refImages){
+  let data;
+  if(model==='kling-o1'){
+    data=await falPost('fal-ai/kling-image/o1',{prompt,aspect_ratio:'16:9',num_images:1,image_urls:refImages});
+  } else if(model==='gemini-3pro'){
+    data=await falPost('fal-ai/gemini-3-pro-image-preview/edit',{prompt,aspect_ratio:'16:9',num_images:1,image_urls:refImages,resolution:'2K',
+      system_prompt:'2D illustrated style. Bold clean outlines, flat color shading, consistent line weight throughout. No photorealism.'});
+  } else {
+    // Nano Banana text-to-image (replaces fal-ai/imagen4, retired by fal; internal id stays 'imagen4')
+    data=await falPost('fal-ai/nano-banana',{prompt:prompt+'  2D illustrated style. Bold clean outlines, flat color shading. No photorealism.',aspect_ratio:'16:9',num_images:1});
+  }
+  const url=data.images?.[0]?.url||data.image?.url||'';
+  if(!url) throw new Error('No result returned — try again.');
+  return {url, label:IMAGE_MODEL_LABELS[model]};
+}
+// After an image result: auto-set it as start frame of the next VIDEO scene (unless set manually)
+function applyImageResult(idx, url, label){
+  const s=sceneData[idx];
+  s.resultURL=url; s.resultType='image'; s.resultModel=label;
+  for(let j=idx+1;j<sceneData.length;j++){
+    if(sceneData[j].tag==='VIDEO'){
+      if(!sceneData[j].savedStartFrameURL || !sceneData[j].startFrameManual){ sceneData[j].savedStartFrameURL=url; sceneData[j].startFrameManual=false; }
+      break;
+    }
+  }
+}
+
+// ═══ GENERATE ALL IMAGES — parallel, concurrency-limited ═══
+const BATCH_CONCURRENCY=3;
+let batchRun=null; // {cancel:boolean, total, done, failed}
+function batchTargets(){
+  return sceneData.map((s,i)=>({s,i})).filter(({s})=>s.tag==='IMAGE' && !s.resultURL && !s._generating && (s.prompt||'').trim());
+}
+function updateBatchButton(){
+  const btn=document.getElementById('btn-gen-all');
+  if(!btn) return;
+  if(batchRun){ btn.textContent='■ Stop batch ('+(batchRun.done+batchRun.failed)+'/'+batchRun.total+' done)'; btn.disabled=false; return; }
+  const n=sceneData.length?batchTargets().length:0;
+  btn.textContent=n?('⚡ Generate all '+n+' remaining images'):'✓ All image scenes generated';
+  btn.disabled=!n;
+}
+async function generateAllImages(){
+  if(batchRun){ batchRun.cancel=true; updateBatchButton(); return; } // acts as Stop while running
+  if(!sessionStorage.getItem('cfa_fal_key')){ showErr('e6','fal.ai API key not set — open ⚙ Settings.'); return; }
+  const targets=batchTargets();
+  if(!targets.length){ updateBatchButton(); return; }
+  const est=targets.reduce((sum,{s})=>sum+MODEL_COSTS.image[s.characters==='NONE'?'imagen4':userImageModel==='imagen4'?'kling-o1':userImageModel],0);
+  if(!confirm('Generate '+targets.length+' image scenes in parallel ('+BATCH_CONCURRENCY+' at a time)?\nEstimated cost: ~$'+est.toFixed(2)+'\n\nCharacter scenes use '+IMAGE_MODEL_LABELS[userImageModel==='imagen4'?'kling-o1':userImageModel]+' with the Marcus/Jordan references; concept scenes use Nano Banana. Review each result afterwards.')) return;
+  const run=batchRun={cancel:false,total:targets.length,done:0,failed:0,errors:[]};
+  const data=sceneData;
+  showErr('e6','');
+  updateBatchButton();
+  const queue=targets.slice();
+  const worker=async()=>{
+    while(queue.length && !run.cancel && sceneData===data){
+      const {s,i}=queue.shift();
+      if(s.resultURL||s._generating) continue;
+      s._generating=true;
+      renderSceneDots();
+      try{
+        const refs=[];
+        if(s.characters==='BOTH'||s.characters==='BOTH_JM'){
+          const order=s.characters==='BOTH_JM'?[['Jordan',JORDAN_B64],['Marcus',MARCUS_B64]]:[['Marcus',MARCUS_B64],['Jordan',JORDAN_B64]];
+          for(const [n,b64] of order) refs.push(await getCharacterUrl(n,b64));
+        } else if(s.characters==='MARCUS') refs.push(await getCharacterUrl('Marcus',MARCUS_B64));
+        else if(s.characters==='JORDAN') refs.push(await getCharacterUrl('Jordan',JORDAN_B64));
+        const model = s.characters==='NONE' ? 'imagen4' : (userImageModel==='imagen4'?'kling-o1':userImageModel);
+        const prompt=composeScenePrompt(s, s.prompt, {sceneText:s.sceneDesc, styleText:s.styleDesc});
+        const cost=MODEL_COSTS.image[model];
+        const r=await falImageRequest(model, prompt, refs);
+        trackSpend(cost);
+        if(sceneData!==data) return;
+        applyImageResult(i, r.url, r.label);
+        run.done++;
+        saveWorkflowState();
+        if(currentScene===i){ loadScene(i); }
+      }catch(err){
+        run.failed++; run.errors.push('Scene '+(i+1)+': '+err.message);
+      }finally{
+        s._generating=false;
+        renderSceneDots(); updateBatchButton();
+      }
+    }
+  };
+  await Promise.all(Array.from({length:BATCH_CONCURRENCY},worker));
+  if(batchRun===run) batchRun=null;
+  updateBatchButton(); renderSceneDots();
+  const msg=(run.cancel?'Batch stopped. ':'Batch finished. ')+run.done+' generated'+(run.failed?', '+run.failed+' failed — '+run.errors.slice(0,3).join(' · '):'')+'. Review each scene, then Confirm.';
+  showErr('e6',msg);
+}
+
 async function generateScene(){
   // Pin the scene NOW — the user can navigate (arrows / dots) during a 60-90s generation,
   // and the result must land on the scene that was requested, not the one on screen.
@@ -4838,23 +5116,10 @@ async function generateScene(){
   const sfActionEl=document.getElementById('startframe-action');
   if(sfActionEl) sfActionEl.style.display='none';
 
-  let finalPrompt=prompt;
-  if(sceneRefs['scene']&&sceneRefs['scene'].text) finalPrompt+=' Setting: '+sceneRefs['scene'].text+'.';
-  if(sceneRefs['style']&&sceneRefs['style'].text) finalPrompt+=' Style: '+sceneRefs['style'].text+'.';
-  if(isVideo){
-    const cam=document.getElementById('s6-camera').value;
-    finalPrompt+=' '+CAMERA_PRESETS[cam];
-  }
-
-  // Secondary character guard — when Marcus/Jordan is the reference image AND a secondary
-  // person appears in the scene, tell Kling/Gemini explicitly not to apply the reference to them
-  const secondary = detectSecondaryChar(s.line || '');
-  if(secondary && s.characters !== 'NONE'){
-    const mainChar =
-      s.characters === 'BOTH' || s.characters === 'BOTH_JM' ? 'Marcus and Jordan' :
-      s.characters === 'MARCUS' ? 'Marcus' : 'Jordan';
-    finalPrompt += ` [Reference image is ONLY for ${mainChar}. The ${secondaryLabel(secondary)} in this scene is a completely different person — distinct appearance, different skin tone and build, gender-appropriate to the script, does not resemble ${mainChar} in any way.]`;
-  }
+  const finalPrompt=composeScenePrompt(s, prompt, {
+    sceneText: sceneRefs['scene']?.text, styleText: sceneRefs['style']?.text,
+    camera: isVideo ? document.getElementById('s6-camera').value : ''
+  });
 
   let genCost=0;
   try{
@@ -4864,17 +5129,12 @@ async function generateScene(){
     s._generating=true;
 
     if(!isVideo){
-      // ── IMAGE dispatch ────────────────────────────────────────────────────
-      const refImages=[];
-      if(sceneRefs['subject']?.url?.startsWith('https://'))   refImages.push(sceneRefs['subject'].url);
-      if(sceneRefs['cosubject']?.url?.startsWith('https://')) refImages.push(sceneRefs['cosubject'].url);
-      if(sceneRefs['scene']?.url?.startsWith('https://'))     refImages.push(sceneRefs['scene'].url);
-      if(sceneRefs['style']?.url?.startsWith('https://'))     refImages.push(sceneRefs['style'].url);
+      // ── IMAGE dispatch (order = @Image numbering: subject, cosubject, scene, style) ──
+      const refImages=['subject','cosubject','scene','style'].map(k=>sceneRefs[k]?.url).filter(u=>typeof u==='string'&&u.startsWith('https://'));
 
       if(refImages.length===0){
         if(s.characters==='NONE'){
-          // Concept scene — no character reference needed. Force Imagen 4.
-          setImageModel('imagen4', true);
+          setImageModel('imagen4', true); // concept scene — text-only model
         } else if(selectedImageModel!=='imagen4'){
           showErr('e6','⚠ Character image is still uploading — wait for the ✓ Ready indicator before generating.');
           s6ShowPanel('prompt');
@@ -4882,47 +5142,11 @@ async function generateScene(){
           return;
         }
       }
-
       genCost=getEstimatedCost();
-      if(selectedImageModel==='kling-o1'){
-        // ── Kling o1 ────────────────────────────────────────────────────────
-        document.getElementById('s6-gen-label').textContent='Generating with Kling o1 ('+refImages.length+' ref'+(refImages.length>1?'s':'')+')…';
-        const body={prompt:finalPrompt,aspect_ratio:'16:9',num_images:1,image_urls:refImages};
-        const resp=await fetch('https://fal.run/fal-ai/kling-image/o1',{
-          method:'POST',headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},body:JSON.stringify(body)
-        });
-        if(!resp.ok)throw new Error(await apiErrorMessage(resp));
-        const data=await resp.json();
-        resultURL=data.images?.[0]?.url||data.image?.url||'';
-        modelLabel='Kling o1';
-
-      }else if(selectedImageModel==='gemini-3pro'){
-        // ── Gemini 3 Pro ─────────────────────────────────────────────────────
-        document.getElementById('s6-gen-label').textContent='Generating with Gemini 3 Pro ('+refImages.length+' ref'+(refImages.length>1?'s':'')+')…';
-        const body={
-          prompt:finalPrompt,aspect_ratio:'16:9',num_images:1,image_urls:refImages,resolution:'2K',
-          system_prompt:'2D illustrated style. Bold clean outlines, flat color shading, consistent line weight throughout. No photorealism.'
-        };
-        const resp=await fetch('https://fal.run/fal-ai/gemini-3-pro-image-preview/edit',{
-          method:'POST',headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},body:JSON.stringify(body)
-        });
-        if(!resp.ok)throw new Error(await apiErrorMessage(resp));
-        const data=await resp.json();
-        resultURL=data.images?.[0]?.url||'';
-        modelLabel='Gemini 3 Pro';
-
-      }else{
-        // ── Nano Banana text-to-image (replaces retired fal-ai/imagen4; id stays 'imagen4') ───────────────────────────────────────
-        document.getElementById('s6-gen-label').textContent='Generating with Nano Banana…';
-        const body={prompt:finalPrompt+'  2D illustrated style. Bold clean outlines, flat color shading. No photorealism.',aspect_ratio:'16:9',num_images:1};
-        const resp=await fetch('https://fal.run/fal-ai/nano-banana',{
-          method:'POST',headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},body:JSON.stringify(body)
-        });
-        if(!resp.ok)throw new Error(await apiErrorMessage(resp));
-        const data=await resp.json();
-        resultURL=data.images?.[0]?.url||data.image?.url||'';
-        modelLabel='Nano Banana';
-      }
+      const model=selectedImageModel;
+      document.getElementById('s6-gen-label').textContent='Generating with '+IMAGE_MODEL_LABELS[model]+(model!=='imagen4'?' ('+refImages.length+' ref'+(refImages.length>1?'s':'')+')':'')+'…';
+      const r=await falImageRequest(model, finalPrompt, refImages);
+      resultURL=r.url; modelLabel=r.label;
       resultType='image';
 
     } else {
@@ -4942,11 +5166,7 @@ async function generateScene(){
         document.getElementById('s6-gen-label').textContent=body.image_url
           ?'Generating video with Kling v1.6 Pro… (~60-90 seconds)'
           :'Generating video from text with Kling v1.6 Pro… (~60-90 seconds)';
-        const resp=await fetch(vidEndpoint,{
-          method:'POST',headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},body:JSON.stringify(body)
-        });
-        if(!resp.ok)throw new Error(await apiErrorMessage(resp));
-        const data=await resp.json();
+        const data=await falPost(vidEndpoint.replace('https://fal.run/',''), body);
         resultURL=data.video?.url||data.url||'';
         modelLabel='Kling v1.6 Pro';
 
@@ -4961,11 +5181,7 @@ async function generateScene(){
         const veoDur=veoDurationStr(sceneDuration);
         const body={prompt:finalPrompt,image_url:startFrameURL,duration:veoDur,aspect_ratio:'16:9',generate_audio:false};
         document.getElementById('s6-gen-label').textContent='Generating video with Veo 3.1… (~60-90 seconds)';
-        const resp=await fetch('https://fal.run/fal-ai/veo3.1/image-to-video',{
-          method:'POST',headers:{'Authorization':'Key '+falKey,'Content-Type':'application/json'},body:JSON.stringify(body)
-        });
-        if(!resp.ok)throw new Error(await apiErrorMessage(resp));
-        const data=await resp.json();
+        const data=await falPost('fal-ai/veo3.1/image-to-video', body);
         resultURL=data.video?.url||'';
         modelLabel='Veo 3.1';
       }
@@ -4978,24 +5194,8 @@ async function generateScene(){
     trackSpend(genCost);
     if(sceneData[idx]!==s) return; // workflow restarted meanwhile
 
-    s.resultURL=resultURL;
-    s.resultType=resultType;
-    s.resultModel=modelLabel;
-
-    // Auto-set this image as the start frame for the NEXT video scene
-    // (only if that scene doesn't already have a start frame saved)
-    if(resultType==='image'){
-      for(let j=idx+1; j<sceneData.length; j++){
-        if(sceneData[j].tag==='VIDEO'){
-          // Overwrite auto-set start frames (a newer, closer image wins); never a manual one
-          if(!sceneData[j].savedStartFrameURL || !sceneData[j].startFrameManual){
-            sceneData[j].savedStartFrameURL=resultURL;
-            sceneData[j].startFrameManual=false;
-          }
-          break; // only target the next video, not all future ones
-        }
-      }
-    }
+    if(resultType==='image') applyImageResult(idx, resultURL, modelLabel);
+    else { s.resultURL=resultURL; s.resultType=resultType; s.resultModel=modelLabel; }
 
     saveWorkflowState();      // persist the result URL + auto-set start frames
     renderSceneDots();
@@ -5134,11 +5334,7 @@ function expandVS(){
   document.getElementById('vs-arrow').classList.remove('collapsed');
 }
 function updateVSSummary(){
-  const modelNames = {
-    'eleven_multilingual_v2': 'Multilingual v2',
-    'eleven_turbo_v2_5':      'Turbo v2.5',
-    'eleven_monolingual_v1':  'Monolingual v1'
-  };
+  const modelNames = Object.fromEntries(Object.entries(EL_MODELS).map(([k,v])=>[k,v.label]));
   const m = document.getElementById('el-model')?.value || 'eleven_multilingual_v2';
   const s = document.getElementById('el-stability')?.value || '0.5';
   const sim = document.getElementById('el-similarity')?.value || '0.75';
@@ -5152,7 +5348,7 @@ function updateVSSummary(){
 function showErr(id,msg){const el=document.getElementById(id);if(!el)return;el.textContent=msg?'⚠ '+msg:'';el.className='err'+(msg?' show':'');}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function restart(){
-  selId='';genScript='';finalScript='';segScript='';segOriginal='';
+  selId='';genScript='';finalScript='';segScript='';segOriginal='';voWords=[];
   if(genAbort){genAbort.abort();genAbort=null;}
   if(segAbort){segAbort.abort();segAbort=null;}
   clearInterval(elapsedTimer);
