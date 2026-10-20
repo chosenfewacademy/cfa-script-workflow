@@ -1214,6 +1214,7 @@ select option{background:var(--surface2)}
           <input type="hidden" id="d-narrative" value=""/>
           <input type="hidden" id="d-presence" value=""/>
           <input type="hidden" id="d-pacing" value=""/>
+          <input type="hidden" id="d-passes" value=""/>
 
           <div class="dial-row">
             <div class="dial-label">Audience Emotion</div>
@@ -1253,6 +1254,13 @@ select option{background:var(--surface2)}
               <button class="dial-btn" data-val="slow burn">slow burn</button>
             </div>
           </div>
+          <div class="dial-row">
+            <div class="dial-label" title="Plan + draft + polish takes about 2 minutes and costs about $0.08; single pass is about 40s and $0.03">Writing Passes</div>
+            <div class="dial-group" data-dial="d-passes">
+              <button class="dial-btn auto-btn sel" data-val="">plan + draft + polish</button>
+              <button class="dial-btn" data-val="fast">single pass (fast)</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1284,10 +1292,10 @@ select option{background:var(--surface2)}
       </div>
       <div class="stream-box" id="stream-box"><span class="stream-cursor"></span></div>
       <div class="stage-list">
-        <div class="sti" id="gs0"><div class="stik" id="gi0">1</div><span class="stlb" id="gs0-label">Connecting to language model</span></div>
-        <div class="sti" id="gs1"><div class="stik" id="gi1">2</div><span class="stlb">First tokens arriving</span></div>
-        <div class="sti" id="gs2"><div class="stik" id="gi2">3</div><span class="stlb">Building script body</span></div>
-        <div class="sti" id="gs3"><div class="stik" id="gi3">4</div><span class="stlb">Writing closing section</span></div>
+        <div class="sti" id="gs0"><div class="stik" id="gi0">1</div><span class="stlb" id="gs0-label">Planning beats &amp; details</span></div>
+        <div class="sti" id="gs1"><div class="stik" id="gi1">2</div><span class="stlb">Drafting</span></div>
+        <div class="sti" id="gs2"><div class="stik" id="gi2">3</div><span class="stlb">Building scenes</span></div>
+        <div class="sti" id="gs3"><div class="stik" id="gi3">4</div><span class="stlb">Polishing (critique + revise)</span></div>
         <div class="sti" id="gs4"><div class="stik" id="gi4">5</div><span class="stlb">Script complete</span></div>
       </div>
     </div>
@@ -2242,9 +2250,29 @@ HARD RULES for the hook:
 CINEMATIC FLOW + RETENTION SYSTEM
 - Every 60-90 seconds deliver one of: a clearer understanding, a calmer perspective, or a structured next step
 - Place one pattern interrupt per segment — a tone shift, surprising comparison, or rhetorical question
-- In each segment include one contrast line: "The Lost did X — got Y. The Guided did X — got Y."
+- In each segment include one Marcus/Jordan contrast moment, shown as two concrete actions side by side (never a formula like "The Lost did X — got Y"; vary the wording every time)
 - Every paragraph must advance understanding, reduce anxiety, or increase clarity. If it does none, cut it.
-- By the final segment, the Guided path must produce a simple repeatable 3-step framework
+- By the final segment, Marcus's path must produce a simple repeatable 3-step framework, shown as three things Marcus actually does (on screen, in order, with the objects involved), not read out as a numbered list or a slogan
+
+CRAFT — WHAT MAKES IT FEEL ALIVE (apply all of these)
+
+Specificity is the whole game. Generic writing is what makes a script feel AI-made.
+- Every scene needs physical, filmable anchors: where exactly (the bus home, a kitchen at 11:48 p.m., the break room), what is on the screen (the notification text, the red number, the green button that says Confirm), what is in their hands. Use 8+ concrete details across the script, including at least 3 exact small numbers ($212.40, 0.0031 coin, 4 minutes, 24 words, a fee of $3.17). Prefer odd, true-feeling numbers to round ones. The values in this brief are examples only: invent fresh numbers, times, places and objects for every script, and never fall back on stock defaults (the same balance, the same 11-something p.m., the same kitchen) used in other videos.
+- Give Jordan a personal stake that is not about getting rich: the money is earmarked for something real (his sister's car repair, rent due Friday, the first money he ever saved). The viewer must know what he stands to lose before the tension peaks.
+- Experience, then understand. Alternate: put the viewer inside a moment (what Jordan sees and feels), then give a short plain-English explanation of what is actually happening, then back into the moment. Never more than ~3 sentences of pure explanation in a row.
+- Open loops. The hook must plant a question the viewer needs answered (what happened to the $212? why did Marcus wait?). Pay it off only after the 60% mark. Before you close any loop, open the next one. Plant at least one small detail early that pays off later (a setback, a wallet note, a text from his cousin).
+- Stakes rise. Each segment should make the cost of getting it wrong feel a little more real, then let Marcus's calmer choice relieve it.
+- Pattern interrupts must be real changes: a one-line paragraph, a sudden time jump ("Three days later."), a cut to the other character mid-thought, an unexpected comparison from everyday life, a moment of quiet humour. Not rhetorical questions stacked together.
+- Show, don't tell. Never write that Jordan "felt anxious" or "was overwhelmed"; show the thumb hovering, the tab he keeps refreshing, the text he types and deletes. Emotion through behaviour.
+- Dialogue and inner lines must sound like real people: short, interrupted, a little messy, sometimes funny. ("Okay. Okay. It's fine. It's probably fine.") Marcus talks like a friend, not a teacher; no speeches, no perfectly phrased lessons in quotation marks.
+- Rhythm for voiceover: vary sentence length. Most sentences are complete, flowing spoken sentences with a clear subject and verb; short 2–4 word lines are seasoning for emphasis, never more than two in a row, and never telegraph-style fragments ("Same kitchen. Same screen. Same timer."). Use the occasional one-sentence paragraph for weight. Paragraph lengths must vary. Tell the story in the past tense, the way a good narrator talks. Read it as if out loud: every sentence must be easy to say in one breath and easy to follow on first hearing.
+- Clear beats clever. Explain the core concept once in plain words, with the everyday analogy, then show it working in the story. By the end, a beginner must be able to say the idea back in one simple sentence. Any sentence a beginner would have to replay to understand gets rewritten.
+- The narrator has a voice: dry, warm, observant, allowed a small joke. A friend telling you what really happened, not a brochure.
+- Analogies must come from everyday life the viewer has touched (a house key, a bank PIN, a mailbox, a receipt), and each analogy is used once and paid off, not stacked.
+- Endings are not tidy morals. The lesson lands as one sharp, specific line, never a poster quote.
+
+BANNED (AI tells and clichés; never use these or close variants):
+"Here's the thing", "Here's the kicker", "Here's the catch", "But here's what", "Let's dive in", "dive into", "delve", "In a world where", "Picture this", "Imagine this", "Enter:", "Fast forward", "little did he know", "the truth is", "the reality is", "turns out", "spoiler", "game-changer", "journey", "navigate", "landscape", "realm", "tapestry", "unlock", "empower", "seamless", "crucial", "vital", "pivotal", "ever-evolving", "in today's digital age", "it's worth noting", "at the end of the day", "the bottom line", "And that's the point", "That's the difference", "That changes everything", "It's not about X, it's about Y", "It's not X. It's Y.", "Not X, not Y, but Z", "a testament to", "the power of", "peace of mind", "knowledge is power". Also banned: stacked rhetorical questions, three-item lists used for rhythm ("fast, cheap, and easy"), sentences ending in ", reminding us that…", motivational-poster lines, and starting three sentences in a row the same way.
 
 LANGUAGE GUARDRAILS
 Always use: plain English, story-based analogies, beginner-safe vocabulary, reflective grounded pacing, educational framing ("here's how to think about this" / "what to consider").
@@ -2289,6 +2317,9 @@ PRE-OUTPUT SELF-AUDIT (run silently before writing):
 □ No hype language, price predictions, or urgency manipulation
 □ Transformation arc is traceable
 □ Every paragraph advances understanding, reduces anxiety, or increases clarity
+□ 8+ concrete filmable details, 3+ exact odd numbers, a personal stake for Jordan
+□ Hook plants a question that is only paid off after the 60% mark; another loop opens before it closes
+□ No banned phrase, no stacked questions, no tidy moral; sentence and paragraph lengths vary
 □ Overlap ending leads to continued learning — not pressure
 If any box fails, revise before outputting.
 
@@ -2362,14 +2393,16 @@ function friendlyNetError(err){
 }
 // llmComplete: role = 'writer' | 'fast'. Returns {text, truncated, cost}.
 // With onDelta it streams and calls onDelta(fullTextSoFar). Spend is tracked automatically.
-async function llmComplete({role, system, user, maxTokens, onDelta, signal}){
+async function llmComplete({role, system, user, maxTokens, onDelta, signal, effort}){
   const key=llmKey(), model=llmModel(role);
   if(!key) throw new Error(LLM_MISSING_KEY);
   const stream=typeof onDelta==='function';
   const headers={'Content-Type':'application/json','Authorization':'Bearer '+key};
   const body={model, max_tokens:maxTokens, stream, messages:[{role:'system',content:system},{role:'user',content:user}]};
   if(stream) body.stream_options={include_usage:true};
-  if(model===GROK.models[role]) body.reasoning_effort=GROK.effort[role];
+  if(model===GROK.models[role]) body.reasoning_effort=effort||GROK.effort[role];
+  // xAI's recommended sampling for Grok reasoning models; set explicitly so server defaults never decide
+  body.temperature=0.7; body.top_p=0.95;
   let resp;
   try{
     resp=await fetch(GROK.url,{method:'POST',headers,body:JSON.stringify(body),signal});
@@ -2700,6 +2733,95 @@ function sv(el,id){
 
   showErr('e1','');
 }
+// Hidden planning pass: the writer commits to specifics BEFORE drafting (never shown to the viewer)
+const SYS_PLAN=`You are the story editor for Chosen Few Academy (CFA), planning a narrated Marcus/Jordan explainer before it is written. You do not write the script. You output a compact private beat plan that a writer will follow.
+
+Think like the best story-driven explainer channels: a cold open inside a moment, specific visual evidence, then short context, with open loops carried across the video, rising personal stakes, and real pattern interrupts. Keep the CFA brand rules: calm, trust-first, no hype, no price predictions, no buy/sell commands. Marcus is structured and kind, never smug; Jordan is reactive and human, never foolish. Both start in the same situation.
+
+Output exactly these headed sections, terse, no prose paragraphs:
+PREMISE: one sentence, the narrow concrete situation taken from the title (who, where, what is on the screen, what is about to go wrong)
+JORDAN'S STAKE: what this money or decision really means to him personally (not "getting rich")
+DETAILS: 10 concrete filmable details (objects, on-screen text, places, times, sounds), including 4 exact odd numbers
+HOOK: the first two spoken sentences (person doing or feeling something, already mid-moment, emotional trigger in under 10 words)
+OPEN LOOPS: 2-3 questions the viewer will carry; for each, where it is planted and the beat where it pays off (after the 60% mark)
+GAP: how the Marcus/Jordan gap widens (which form: knowledge, behaviour or consequence) and the moment it is widest, before 40%
+BEATS: 9-12 numbered beats covering hook → setup → tension → manipulation shown in-scene → Marcus's different choice → consequence → Jordan's own earned decision → 3-step framework as Marcus's actions → ending. Mark each beat EXPERIENCE or UNDERSTAND and alternate them. Mark 2-3 beats INTERRUPT with the specific device (time jump, one-line beat, cut-away, everyday comparison, a small joke).
+JORDAN LINES: 4 short inner-voice lines, messy and human
+ANALOGY: one everyday analogy and where it pays off
+ENDING: Marcus's single sharp takeaway; Jordan's specific question seeded by the NEXT VIDEO title; the narrator's last line (not answering it)`;
+
+// Critique + revise pass: an editor fixes what makes drafts feel generic, without changing the story or the brand rules
+const SYS_REVISE=`You are a senior script editor for Chosen Few Academy (CFA), a calm, trust-first crypto education channel. You receive a narrated Marcus/Jordan script draft. Silently critique it, then output the improved full script.
+
+Critique (silently) for:
+1. Hook: does the first sentence drop us into a specific moment, with an emotional trigger in under 10 words? If not, rewrite it.
+2. Specificity: replace every vague phrase ("some money", "a lot of people", "a crypto app", "felt nervous") with a concrete, filmable detail or behaviour.
+3. Open loops: is a question planted early and paid off late? Does a new loop open before an old one closes? Strengthen if not.
+4. Rhythm for voiceover: vary sentence length and break uniform paragraphs, but keep it flowing. If the draft is choppy (stacked fragments, telegraph style, many one-word lines), smooth it into natural spoken sentences in the past tense. The goal is how a great narrator talks.
+9. Clarity: the core concept must be explained once in plain words a beginner could repeat, with the analogy. Rewrite any awkward, ambiguous or confusing explanation sentence. Clear beats clever.
+5. Dialogue: make lines sound like real people (short, interrupted, a bit funny). Remove lecture-style quotes from Marcus.
+6. Cut AI tells and clichés: any banned phrase from the writer brief, stacked rhetorical questions, three-item rhythm lists, "It's not X, it's Y" constructions, motivational-poster lines, sentences ending in ", reminding us that…", tidy moral summaries.
+7. Show, don't tell: replace named emotions with behaviour.
+8. Brand: keep all CFA rules: no hype, no predictions, no buy/sell commands, Jordan relatable not foolish, Marcus never smug, the 3-step framework shown as Marcus's actions, the ending with Marcus's takeaway, Jordan's next-video question and the narrator's final line, and none of "next time", "stay tuned", "coming up".
+Also fix any SPECIFIC ISSUES listed in the request.
+
+Keep the same story, characters, facts, beats and approximate length. Do not add new characters or new claims about crypto. Improve the writing, not the plot.
+
+OUTPUT: only the final spoken script. Plain paragraphs, no headings, labels, notes, quotes around the whole thing, or commentary. Start with the first spoken word.`;
+
+// Banned-phrase scan, used to hand the reviser concrete fixes and in tests
+const BANNED_PHRASES=["here's the thing","here's the kicker","here's the catch","but here's what","let's dive in","dive into","delve","in a world where","picture this","imagine this","fast forward","little did he know","the truth is","the reality is","turns out","spoiler","game-changer","game changer","journey","navigate","landscape","realm","tapestry","unlock","empower","seamless","crucial","pivotal","ever-evolving","in today's digital age","it's worth noting","at the end of the day","the bottom line","that's the point","that's the difference","that changes everything","a testament to","the power of","peace of mind","knowledge is power","next time","stay tuned","coming up"];
+function scriptLint(text){
+  const t=(text||'').toLowerCase().replace(/[’]/g,"'");
+  const issues=[];
+  const found=BANNED_PHRASES.filter(p=>t.includes(p));
+  if(found.length) issues.push('Banned phrases present: '+found.map(p=>'"'+p+'"').join(', '));
+  const notX=(text.match(/\b(it'?s|this is|that'?s)\s+not\s+(about\s+)?[^.?!]{1,40}[.,;—–-]\s*(it'?s|this is|that'?s)\b/gi)||[]);
+  if(notX.length) issues.push('"It\'s not X, it\'s Y" construction: '+notX.slice(0,2).map(x=>'"'+x.slice(0,60)+'"').join('; '));
+  const stacked=(text.match(/\?\s+[^.!?]{0,80}\?\s+[^.!?]{0,80}\?/g)||[]).length;
+  if(stacked) issues.push('Stacked rhetorical questions ('+stacked+'×)');
+  const paras=text.split(/\n\s*\n/).map(p=>p.trim()).filter(Boolean);
+  const lens=paras.map(p=>p.split(/\s+/).length);
+  if(lens.length>=5){
+    const mean=lens.reduce((a,b)=>a+b,0)/lens.length, sd=Math.sqrt(lens.reduce((a,b)=>a+(b-mean)**2,0)/lens.length);
+    if(sd/mean<0.35) issues.push('Paragraphs are all a similar length — vary them (add one-line paragraphs)');
+  }
+  const sents=text.split(/(?<=[.!?])\s+/).filter(x=>x.trim());
+  const sl=sents.map(x=>x.split(/\s+/).length);
+  if(sl.length>8 && sl.filter(n=>n<=4).length<3) issues.push('Too few very short sentences — add punchy 2–4 word lines');
+  for(let i=2;i<sents.length;i++){
+    const w=k=>(sents[k].split(/\s+/)[0]||'').toLowerCase();
+    if(w(i)&&w(i)===w(i-1)&&w(i)===w(i-2)&&!['marcus','jordan'].includes(w(i))){ issues.push('Three sentences in a row start with "'+w(i)+'"'); break; }
+  }
+  return {issues, banned:found};
+}
+
+// Turn each dial into concrete writing instructions (bare labels were mostly ignored)
+const DIAL_GUIDE={
+  emotion:{
+    'curiosity':'Lead with a puzzle. The hook raises a specific question the viewer cannot answer yet, and every segment adds a clue before the reveal.',
+    'tension':'Keep a clock or a risk visibly running (a pending transaction, a countdown, a message waiting). Delay relief; release it only when Jordan makes his own decision.',
+    'inspiration':'Let small wins land. Show Jordan getting something right with his own hands, and let the viewer feel it is within reach for them too. No hype.',
+    'calm urgency':'Real but un-panicked stakes: something matters this week, and Marcus\'s steadiness is what makes it manageable. Never pressure the viewer.'
+  },
+  narrative:{
+    'story-first':'Almost everything is scene. Explanations are one or two sentences slipped between moments.',
+    'educational':'Clear "experience → understand" pairs; each explanation uses one everyday analogy and is immediately tested in the next scene.',
+    'cinematic':'Write in shots: specific visuals, sounds, light, time of day; use cuts between Marcus and Jordan and at least one time jump.',
+    'investigative':'Frame it as following the money or the evidence: screenshots, timestamps, a transaction ID, a trail Marcus checks step by step while Jordan guesses.'
+  },
+  presence:{
+    'mentor':'The narrator is an older friend who has made these mistakes: warm, a little wry, occasionally says what they would have done.',
+    'relatable':'The narrator admits the pull is real and shares Jordan\'s feelings before gently showing another way; light humour allowed.',
+    'calm authority':'The narrator is spare and precise: short declarative sentences, exact numbers, no filler, total steadiness.'
+  },
+  pacing:{
+    'fast-cut':'Short paragraphs, frequent cuts between Marcus and Jordan, many 2–5 word sentences, a new beat every 2–3 sentences.',
+    'balanced':'Alternate quick beats with a few longer reflective sentences; vary paragraph length.',
+    'slow burn':'Let moments breathe: linger on one or two scenes with sensory detail, build tension slowly, and land the reveal late.'
+  }
+};
+
 function buildPrompt(id){
   const v=V[id];
 
@@ -2715,11 +2837,12 @@ function buildPrompt(id){
   const pacing    = document.getElementById('d-pacing')?.value    || '';
 
 
+  const g=(k,v)=>DIAL_GUIDE[k][v]?' — '+DIAL_GUIDE[k][v]:'';
   const dials = [
-    emotion   ? `Audience Emotion Target: ${emotion}`     : '',
-    narrative ? `Narrative Style: ${narrative}`            : '',
-    presence  ? `Creator Presence: ${presence}`            : '',
-    pacing    ? `Pacing Style: ${pacing}`                  : '',
+    emotion   ? `Audience Emotion Target: ${emotion}${g('emotion',emotion)}`       : '',
+    narrative ? `Narrative Style: ${narrative}${g('narrative',narrative)}`         : '',
+    presence  ? `Creator Presence: ${presence}${g('presence',presence)}`           : '',
+    pacing    ? `Pacing Style: ${pacing}${g('pacing',pacing)}`                     : '',
   ].filter(Boolean).join('\n');
 
 
@@ -2769,7 +2892,7 @@ async function startGen(){
   // Reset stream screen
   document.getElementById('s2vt').textContent=V[selId].title;
   document.getElementById('s2-stat').textContent='Connecting…';
-  const gl=document.getElementById('gs0-label'); if(gl)gl.textContent='Connecting to Grok ('+llmModel('writer')+')';
+  const gl=document.getElementById('gs0-label'); if(gl)gl.textContent=(document.getElementById('d-passes')?.value==='fast')?'Connecting to Grok ('+llmModel('writer')+')':'Planning beats & details ('+llmModel('writer')+')';
   const sbox0=document.getElementById('stream-box');sbox0.textContent='';const cur0=document.createElement('span');cur0.className='stream-cursor';sbox0.appendChild(cur0);
   document.getElementById('s2-words').textContent='0 words';
   document.getElementById('s2-speed').textContent='';
@@ -2788,27 +2911,50 @@ async function startGen(){
   genAbort=ctrl;
   let stage=0, firstToken=false;
 
+  const fullPasses=(document.getElementById('d-passes')?.value||'')!=='fast';
+  const showStream=(accumulated,label)=>{
+    if(genAbort!==ctrl)return;
+    if(!firstToken){firstToken=true;}
+    const box=document.getElementById('stream-box');
+    box.textContent=accumulated;const cur=document.createElement('span');cur.className='stream-cursor';box.appendChild(cur);
+    box.scrollTop=box.scrollHeight;
+    const wc=accumulated.trim().split(/\s+/).filter(Boolean).length;
+    const elapsed=(performance.now()-genStart)/1000;
+    document.getElementById('s2-words').textContent=wc+' words';
+    if(elapsed>1)document.getElementById('s2-speed').textContent=Math.round(wc/elapsed)+' w/s';
+    document.getElementById('s2-stat').textContent=label;
+  };
   try{
-    const {text, truncated}=await llmComplete({
-      role:'writer', system:SYS_GEN, user:buildPrompt(selId),
-      maxTokens:6000, // headroom: 900 words ≈ 1,200 tokens (+ reasoning)
-      signal: ctrl.signal,
-      onDelta: accumulated=>{
-        if(genAbort!==ctrl)return;
-        if(!firstToken){firstToken=true;document.getElementById('s2-stat').textContent='Streaming…';setGStage(1);}
-        const box=document.getElementById('stream-box');
-        box.textContent=accumulated;const cur=document.createElement('span');cur.className='stream-cursor';box.appendChild(cur);
-        box.scrollTop=box.scrollHeight;
-        const wc=accumulated.trim().split(/\s+/).filter(Boolean).length;
-        const elapsed=(performance.now()-genStart)/1000;
-        document.getElementById('s2-words').textContent=wc+' words';
-        if(elapsed>1)document.getElementById('s2-speed').textContent=Math.round(wc/elapsed)+' w/s';
-        if(wc>0&&stage<1){stage=1;setGStage(1);}
-        if(wc>60&&stage<2){stage=2;setGStage(2);document.getElementById('s2-stat').textContent='Building script…';}
-        if(wc>160&&stage<3){stage=3;setGStage(3);document.getElementById('s2-stat').textContent='Writing closing…';}
-        if(wc>240&&stage<4){stage=4;setGStage(4);document.getElementById('s2-stat').textContent='Almost done…';}
-      }
+    const brief=buildPrompt(selId);
+    let plan='';
+    if(fullPasses){
+      setGStage(0);
+      document.getElementById('s2-stat').textContent='Planning beats, stakes and details…';
+      const p=await llmComplete({role:'writer', system:SYS_PLAN, user:brief, maxTokens:5000, effort:'low', signal:ctrl.signal});
+      if(genAbort!==ctrl)return;
+      plan=(p.text||'').trim();
+    }
+    setGStage(1);
+    const draftRes=await llmComplete({
+      role:'writer', system:SYS_GEN,
+      user: plan ? brief+'\n\nPRIVATE BEAT PLAN (follow it closely; never mention or output it):\n'+plan : brief,
+      maxTokens:8000, signal: ctrl.signal,
+      onDelta: t=>{ showStream(t,'Drafting…'); if(stage<2&&t.length>300){stage=2;setGStage(2);} }
     });
+    if(genAbort!==ctrl)return;
+    let text=draftRes.text, truncated=draftRes.truncated;
+    if(fullPasses && text.trim() && !truncated){
+      setGStage(3);
+      const lint=scriptLint(text);
+      const req=brief+'\n\n'+(lint.issues.length?'SPECIFIC ISSUES FOUND BY THE LINTER:\n- '+lint.issues.join('\n- ')+'\n\n':'')+'DRAFT SCRIPT:\n'+text.trim();
+      try{
+        const rev=await llmComplete({role:'writer', system:SYS_REVISE, user:req, maxTokens:8000, effort:'medium', signal:ctrl.signal,
+          onDelta: t=>showStream(t,'Polishing (critique + revise)…')});
+        if(genAbort!==ctrl)return;
+        // Keep the draft if the revision came back empty, cut off, or suspiciously short
+        if(rev.text.trim() && !rev.truncated && rev.text.trim().split(/\s+/).length > 0.7*text.trim().split(/\s+/).length) text=rev.text;
+      }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Revise pass failed, keeping draft:',e.message); }
+    }
     if(genAbort!==ctrl)return; // cancelled or superseded
     if(!text.trim())throw new Error('No content received — please try again');
 
@@ -5382,7 +5528,7 @@ function restart(){
   // Reset direction dial buttons back to auto
   document.querySelectorAll('.dial-btn.sel').forEach(b=>b.classList.remove('sel'));
   document.querySelectorAll('.dial-btn.auto-btn').forEach(b=>b.classList.add('sel'));
-  ['d-emotion','d-narrative','d-presence','d-pacing'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  ['d-emotion','d-narrative','d-presence','d-pacing','d-passes'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   ['e1','e2','e3','e4','e5','e6'].forEach(id=>showErr(id,''));
   if(voAudioURL){URL.revokeObjectURL(voAudioURL);voAudioURL=null;}
   // Reset S5 voiceover panel to initial state

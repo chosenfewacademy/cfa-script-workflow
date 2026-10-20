@@ -5,7 +5,7 @@ external code, fonts, or libraries are loaded. Everything (CSS, JS, jsPDF, Marcu
 is inline, and any change must keep it that way.
 
 ## Flow
-1. **Pick a concept** → 2. **Grok writes the script** (xAI `grok-4.7`, streamed) → 3. **Review/edit** →
+1. **Pick a concept** (+ optional Creative Dials) → 2. **Grok writes the script** (xAI `grok-4.7`: a hidden beat plan → streamed draft → critique-and-revise polish; set Writing Passes to "single pass" for a faster draft) → 3. **Review/edit** →
 4. **Segment** into numbered 4–6 s beats (`grok-4.3`) → 5. **Voiceover** with ElevenLabs (Young Jamal voice;
 the `/with-timestamps` endpoint also times every beat; download the beat timings as `.srt`) →
 6. **Scenes**: Grok tags each beat IMAGE/VIDEO and writes prompts; generate images on fal.ai (Kling o1 /
