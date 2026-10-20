@@ -34,6 +34,10 @@ async def xai_route(route):
     if 'story editor' in sysmsg and 'senior' not in sysmsg:
         cnt['plan']=cnt.get('plan',0)+1
         text='PREMISE: Jordan at the bus stop\nDETAILS: $212.40, 4 minutes'
+    elif 'senior script editor' in sysmsg and user.startswith('ONLY TASK'):
+        cnt['fit']=cnt.get('fit',0)+1
+        body_=user.split('SCRIPT:\n',1)[1]
+        text=SC.get('fitOut') if SC.get('fitOut') is not None else body_
     elif 'senior script editor' in sysmsg:
         cnt['revise']=cnt.get('revise',0)+1
         SC['lastRevise']=user
@@ -128,7 +132,7 @@ async def main():
             for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
             ctx,pg,errs=await newpage(b)
             await go_review(pg); check('happy: review reached', await J(pg,'()=>curScreen')==3)
-            check('happy: text spend tracked (plan 0.0005 + draft 0.005 + revise 0.005)', abs(await J(pg,'()=>textSpend')-0.0105)<1e-6, await J(pg,'()=>textSpend'))
+            check('happy: text spend tracked (plan 0.0005 + draft + revise + length-fit 0.005 each)', abs(await J(pg,'()=>textSpend')-0.0155)<1e-6, await J(pg,'()=>textSpend'))
             await go_seg(pg); check('happy: segments', await J(pg,"()=>(segScript.match(/^\\d+\\./gm)||[]).length")>=3)
             await go_scenes(pg)
             st=await J(pg,"()=>({n:sceneData.length,consec:sceneData.some((s,i)=>i&&s.tag==='VIDEO'&&sceneData[i-1].tag==='VIDEO'),prompts:sceneData.every(s=>s.prompt)})")
@@ -425,6 +429,17 @@ async def main():
             lr=SC.get('lastRevise','')
             check('writing: linter issues handed to reviser', 'SPECIFIC ISSUES' in lr and "here's the thing" in lr.lower() and 'Stacked rhetorical' in lr, lr[-400:])
             SC['script']=None
+            # length enforcement: short mock script → one fit pass + UI flag; in-range fit output is used
+            f0=cnt.get('fit',0)
+            await J(pg,"()=>goTo(1,'left')"); await go_review(pg)
+            check('length: out-of-range triggers exactly one fit pass', cnt.get('fit',0)-f0==1, cnt.get('fit',0)-f0)
+            check('length: review flags out-of-range words', 'outside the 650' in await J(pg,"()=>document.getElementById('e3').textContent"))
+            SC['fitOut']=' '.join(['word']*780)
+            await J(pg,"()=>goTo(1,'left')"); await go_review(pg)
+            st=await J(pg,"()=>({w:wordCount(genScript),e:document.getElementById('e3').textContent})")
+            check('length: in-range fit result used, no flag', st['w']==780 and 'outside' not in st['e'], st)
+            SC['fitOut']=None
+            check('length: linter reports word count', 'must be 650' in await J(pg,"()=>scriptLint('a b c').issues.join(' ')"))
             # fast mode = single call
             n0=cnt['xai']
             await J(pg,"()=>{goTo(1,'left');document.getElementById('d-passes').value='fast';}"); await go_review(pg)
