@@ -2277,6 +2277,7 @@ CRAFT — ENGAGING BECAUSE IT TEACHES (apply all of these)
 - Dialogue sounds like real people: short and natural. Marcus explains like a friend, not a lecturer; Jordan asks the questions a beginner would actually ask.
 - Rhythm for voiceover: vary sentence length. Most sentences are complete, flowing spoken sentences; short lines are seasoning for emphasis, never more than two in a row, never telegraph-style fragments. Vary paragraph length. Past tense for the story. Every sentence must be easy to say in one breath and easy to follow on first hearing. Clear beats clever.
 - Endings are not tidy morals. The lesson lands as one sharp, accurate line about the concept.
+- One analogy at a time, set up clearly and tied to the scene; no mixed or abstract metaphors. Break dense technical passages into short spoken steps with a beat of action between them.
 - Not generic: each episode has a distinctive setting and situation from the series world (see the SERIES STORY BIBLE) and one memorable, specific moment that only fits this topic and this point in Jordan's journey. Banned stock scenarios: coffee-shop or café chats, "a friend told him", vague group chats or "everyone online", staring at a screen late at night at the kitchen table, generic "he scrolled social media". No interchangeable lines that could sit in any episode. No cliché arcs (instant epiphany, the lecture that fixes everything).
 - Series continuity: open with a quick, specific callback to the last episode (in the first ~80 words), keep Jordan's knowledge consistent with what he has already learned, and hand off to the next video at the end.
 
@@ -2778,8 +2779,9 @@ Ch8 Thinking Long Term (v47–v52): Jordan is calm and structured. Marcus and he
 
 RELATIONSHIP GROWTH: Ch1–2 Marcus answers Jordan's questions. Ch3–4 Jordan does things with Marcus beside him. Ch5–6 Jordan does them alone and checks in afterwards, sometimes correcting Marcus. Ch7–8 they compare systems as equals, and Jordan mentors Dee.
 
-CONTINUITY RULES: Jordan never forgets something he has already learned (he may still feel the pull, but he knows better). Reference the previous episode in one quick, specific beat in the first ~80 words (a callback, not a recap). Each episode needs its own distinctive setting and situation and one memorable, specific moment tied to its topic. Never repeat an earlier episode's setup or twist.`;
+CONTINUITY RULES: Jordan's competence matches his chapter (see JORDAN'S COMPETENCE NOW); late in the series he never reacts like a beginner. Jordan never forgets something he has already learned (he may still feel the pull, but he knows better). Reference the previous episode in one quick, specific beat in the first ~80 words (a callback, not a recap). Each episode needs its own distinctive setting and situation and one memorable, specific moment tied to its topic. Never repeat an earlier episode's setup or twist.`;
 
+const COMPETENCE=['Total beginner: curious, unsure, may nod along or misread hype; owns nothing yet.','Knows the basics (what digital assets are, why prices swing); now learning mechanics hands-on with Marcus; still cautious, no purchase yet.','Understands wallets, addresses, networks, fees and irreversibility; makes a first small purchase, careful but new to it.','Has bought on an exchange and understands fees; now taking custody himself; deliberate, asks precise questions.','Owns a wallet and seed-phrase backup; sends and receives on his own with test amounts; occasionally catches what Marcus missed.','Competent everyday user; recognises pressure and scam patterns; a near-miss comes from a convincing trick, never from not knowing basics.','Confident and calm; the challenge is organisation and habits, not understanding; never nods along or acts like a beginner.','Experienced and steady; a peer to Marcus and mentor to Dee; explains clearly; any doubt is strategic, never basic confusion.'];
 const CHAPTERS=[['Digital Asset Curiosity',1,7],['Making Sense of Digital Assets',8,14],['Buying Your First Digital Assets',15,20],['Storing Digital Assets Safely',21,27],['Sending and Receiving Digital Assets',28,34],['Avoiding Costly Mistakes',35,41],['Staying Organised',42,46],['Thinking Long Term',47,52]];
 const RECAPS_KEY='cfa_episode_recaps_v1';
 function getRecaps(){ try{ const r=JSON.parse(safeGetItem(RECAPS_KEY)||'{}'); return r&&typeof r==='object'?r:{}; }catch(e){ return {}; } }
@@ -2789,6 +2791,7 @@ function buildContinuity(id){
   const keys=Object.keys(V), i=keys.indexOf(id), n=i+1;
   const ch=CHAPTERS.findIndex(([,a,b])=>n>=a&&n<=b);
   const recaps=getRecaps();
+  const comp=COMPETENCE[ch]||'';
   const prevId=i>0?keys[i-1]:null;
   const lines=[`SERIES POSITION: video ${n} of ${keys.length} — Chapter ${ch+1} "${CHAPTERS[ch]?.[0]||''}", episode ${n-(CHAPTERS[ch]?.[1]||1)+1} of ${(CHAPTERS[ch]?.[2]||n)-(CHAPTERS[ch]?.[1]||n)+1} in this chapter.`];
   if(prevId){
@@ -2797,6 +2800,7 @@ function buildContinuity(id){
   } else lines.push('LAST EPISODE: none — this is the first episode. Introduce Jordan, Marcus, Dee and the green notebook.');
   const known=keys.slice(Math.max(0,i-6),i).map(k=>V[k].cq.replace(/\?$/,''));
   if(i>0) lines.push('JORDAN ALREADY UNDERSTANDS (recent lessons; earlier chapters too): '+(ch>0?'everything in Chapters 1–'+ch+'. ':'')+known.join('; ')+'.');
+  lines.push(`JORDAN'S COMPETENCE NOW: ${comp} His reactions, questions and mistakes must match this level; no beginner reactions (nodding along, confusion about basics he already learned) after Chapter 2.`);
   lines.push(`WHAT IS NEW THIS EPISODE: ${V[id].cq}`);
   const used=keys.slice(0,i).map(k=>recaps[k]&&recaps[k].setting).filter(Boolean);
   if(used.length) lines.push('SETTINGS / MOMENTS ALREADY USED (do not reuse): '+used.slice(-12).join(' | '));
