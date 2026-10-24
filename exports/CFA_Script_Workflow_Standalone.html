@@ -5889,17 +5889,25 @@ async function styledImageRequest(idx, model, prompt, refs, status){
   }
   if(best && best.r!==r){ r=best.r; check=best.check; } // every retry failed: keep the closest-to-model attempt
   let url=r.url, label=r.label, gptText=false, gptErr='';
-  // B: stray writing left after the retries on a beat that should have none -> GPT removes it (style untouched)
-  if(check && check.stray_text && check.style_match && check.identity_match!==false && autoGptTextOn() && sessionStorage.getItem('cfa_openai_key')){
-    status&&status('Removing stray writing with GPT…');
-    try{ url=await gptTextFixUrl(url, check.text||[], prompt, 'remove'); label+=' + GPT clean'; gptText=true; cost+=GPT_TEXT_COST; check.stray_text=false; check.textRemoved=true; }
-    catch(e){ gptErr=e.message; }
-  }
-  // GPT text cleanup only for beats whose script needs readable words
-  if(autoGptTextOn() && sessionStorage.getItem('cfa_openai_key') && needsText && (!check || check.has_text)){
-    status&&status('Cleaning up image text with GPT…');
-    try{ url=await gptTextFixUrl(url, check?.text||[], prompt); label+=' + GPT'; gptText=true; cost+=GPT_TEXT_COST; }
-    catch(e){ gptErr=e.message; }
+  // B: stray writing left after the retries on a beat that should have none -> GPT removes it, then re-check (never assume it worked)
+  const gptOk=()=>autoGptTextOn() && sessionStorage.getItem('cfa_openai_key');
+  const lineWords=[...new Set(String(s?.line||'').replace(/^\s*\d+\.\s*/,'').toLowerCase().match(/[a-z0-9']+/g)||[])];
+  const near=(x,y)=>{ if(Math.abs(x.length-y.length)>2) return false; const d=[...Array(y.length+1).keys()]; for(let i=1;i<=x.length;i++){ let p=d[0]; d[0]=i; for(let j=1;j<=y.length;j++){ const t=d[j]; d[j]=Math.min(d[j]+1,d[j-1]+1,p+(x[i-1]===y[j-1]?0:1)); p=t; } } return d[y.length]<=(y.length>5?2:1); };
+  const isScriptText=t=>{ const w=String(t).toLowerCase().match(/[a-z0-9']+/g)||[]; return w.length>0 && w.every(x=>lineWords.some(y=>x===y||near(x,y))); };
+  const strayOf=c=>needsText? (c.text||[]).some(t=>!isScriptText(t)) : !!c.has_text;
+  const recheck=async()=>{ try{ const c=await visionStyleCheck(url, people); if(c){ c.stray_text=strayOf(c); check=c; } }catch(e){ checkErr=e.message; } };
+  if(check) check.stray_text=strayOf(check);
+  const hint=needsText? 'ONLY words from this script line may appear, spelled correctly: "'+String(s?.line||'').replace(/^\s*\d+\.\s*/,'').slice(0,160)+'". Erase every other word, label, number or pseudo-text and paint it over with blank surface. '+prompt : prompt;
+  if(check && gptOk() && check.style_match && check.identity_match!==false && (check.stray_text || (needsText && check.has_text))){
+    for(let g=0; g<2; g++){
+      const mode=needsText?'fix':'remove';
+      status&&status(mode==='remove'?'Removing stray writing with GPT…':'Cleaning up image text with GPT…');
+      try{ url=await gptTextFixUrl(url, check.text||[], hint, mode); gptText=true; cost+=GPT_TEXT_COST; }
+      catch(e){ gptErr=e.message; break; }
+      await recheck(); if(!check.stray_text) break;
+    }
+    if(gptText) label+=(needsText?' + GPT':' + GPT clean')+(check.stray_text?' (text remains)':'');
+    if(check) check.textRemoved=gptText && !check.stray_text;
   }
   if(sceneData[idx]===s) s.styleQA={score:check?check.style_score:null, match:check?check.style_match:null, identity:check?check.identity:[], identityMatch:check?check.identity_match:null, strayText:check?!!check.stray_text:null, attempts, text:check?check.text:[], gptText, gptErr, checkErr};
   return {url, label, model, refs, check, attempts, gptText, cost};
