@@ -583,6 +583,9 @@ async def main():
             gl=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
             qa=await J(pg,"()=>sceneData[0].styleQA")
             check('identity: strict model-sheet check catches an off-model face the combined check passed', len(gl)==2 and 'larger eyes' in gl[1]['prompt'] and qa['identityMatch'] is True and cnt.get('idcheck',0)-i0>=2, (len(gl),qa))
+            lu=await J(pg,"""async()=>{ const mk=c=>{ const k=document.createElement('canvas'); k.width=k.height=8; const x=k.getContext('2d'); x.fillStyle=c; x.fillRect(0,0,8,8); return k.toDataURL(); };
+              return [await imageLuma(mk('#0a0a0a')), await imageLuma(mk('#e0e0e0')), DARK_LUMA]; }""")
+            check('darkness: canvas luma measures dark vs bright stills', lu[0] < lu[2] < lu[1], lu)
             # ── audit fixes ──
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sessionStorage.setItem('cfa_openai_key','sk-test');}")
             SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
