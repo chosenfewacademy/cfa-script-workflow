@@ -1382,7 +1382,7 @@ select option{background:var(--surface2)}
 
 <!-- S5: VOICEOVER -->
 <div class="screen hr" id="s5" style="display:block">
-  <div class="sh"><h2>Generate Voiceover</h2><p>Convert your final script to audio using Young Jamal's voice via ElevenLabs.</p></div>
+  <div class="sh"><h2>Generate Voiceover</h2><p>Convert your final script to audio with the narrator voice (Bill by default) via ElevenLabs.</p></div>
 
   <div class="kss-strip">
     <div class="kss-dot miss" id="kss-el2"></div>
@@ -1394,7 +1394,7 @@ select option{background:var(--surface2)}
     <div class="ch" style="cursor:pointer;user-select:none" role="button" tabindex="0" onclick="toggleVS()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleVS()}" id="vs-head">
       <div class="ct">Voice Settings</div>
       <div class="vs-head-meta">
-        <div class="vs-summary" id="vs-summary">Young Jamal &middot; Multilingual v2</div>
+        <div class="vs-summary" id="vs-summary">Bill &middot; Eleven v4</div>
         <div class="vs-arrow" id="vs-arrow">&#9660;</div>
       </div>
     </div>
@@ -1402,14 +1402,17 @@ select option{background:var(--surface2)}
       <div class="vs-grid-2">
         <div>
           <div class="vs-field-label">Voice</div>
-          <div class="vs-voice-name">Young Jamal</div>
-          <div class="vs-voice-id">6OzrBCQf8cjERkYgzSg8</div>
+          <select id="el-voice" aria-label="Narrator voice" onchange="updateVSSummary()">
+            <option value="bill" selected>Bill — default narrator</option>
+            <option value="jamal">Young Jamal</option>
+          </select>
+          <div class="vs-voice-id" id="el-voice-id">pqHfZKP75CvOlQylNhV4</div>
         </div>
         <div>
           <div class="vs-field-label">Model</div>
           <select id="el-model" aria-label="ElevenLabs voice model" onchange="updateVSSummary()">
-            <option value="eleven_multilingual_v2">Multilingual v2 — channel default voice</option>
-            <option value="eleven_v4">Eleven v4 — most expressive</option>
+            <option value="eleven_v4" selected>Eleven v4 — default, most expressive</option>
+            <option value="eleven_multilingual_v2">Multilingual v2</option>
             <option value="eleven_v4_turbo">Eleven v4 Turbo — fast, half price</option>
             <option value="eleven_flash_v2_5">Flash v2.5 — fastest drafts, half price</option>
           </select>
@@ -1417,8 +1420,8 @@ select option{background:var(--surface2)}
         <div>
           <div class="vs-field-label">Pace</div>
           <select id="el-pace" aria-label="Voiceover pace" onchange="updateVSSummary()" title="Calm + expressive = unhurried (speed 0.93) but more vocal variation (−0.12 stability, +0.25 style). Slow = flattest, calmest read. Timestamps, beat timings and the final-edit export always match the audio that was generated.">
-            <option value="expressive" selected>Calm + expressive — unhurried, more energy (default)</option>
-            <option value="slow">Slow — flat calm teaching pace</option>
+            <option value="expressive">Calm + expressive — unhurried, more energy</option>
+            <option value="slow" selected>Slow — calm teaching pace (default)</option>
             <option value="normal">Normal</option>
           </select>
         </div>
@@ -1451,7 +1454,7 @@ select option{background:var(--surface2)}
       <div class="gen-wrap">
         <div class="spw" style="width:64px;height:64px"><div class="spo"></div><div class="spi"></div><div class="spe" style="font-size:22px">&#x1F3A4;</div></div>
         <div class="ltl">Generating Voiceover</div>
-        <div class="lsb">Young Jamal &mdash; ElevenLabs</div>
+        <div class="lsb">Narrator &mdash; ElevenLabs</div>
         <div class="vo-progress">
           <div class="vo-progress-bar"><div class="vo-progress-fill" id="vo-prog-fill"></div></div>
           <div class="vo-status" id="vo-status">Sending script to ElevenLabs&hellip;</div>
@@ -1465,7 +1468,7 @@ select option{background:var(--surface2)}
     <div class="success-strip show"></div>
     <div class="success-row show">
       <div class="success-row-icon">&#x2713;</div>
-      <span class="success-row-text">Voiceover ready &mdash; Young Jamal</span>
+      <span class="success-row-text">Voiceover ready</span>
       <span class="success-row-sub" id="vo-model-chip"></span>
     </div>
     <div id="vo-timing-note" style="display:none;font-size:11px;color:var(--muted);padding:0 16px 6px"></div>
@@ -3321,7 +3324,10 @@ function goVO(){
 }
 
 // ═══ SCREEN 5 — ELEVENLABS VOICEOVER ═══
-const EL_VOICE_ID = '6OzrBCQf8cjERkYgzSg8'; // Young Jamal
+const EL_VOICES={bill:{id:'pqHfZKP75CvOlQylNhV4',name:'Bill'},jamal:{id:'6OzrBCQf8cjERkYgzSg8',name:'Young Jamal'}};
+const EL_DEFAULT_VOICE='bill';
+function elVoice(){ const k=document.getElementById('el-voice')?.value; return EL_VOICES[k]||EL_VOICES[EL_DEFAULT_VOICE]; }
+const EL_VOICE_ID = EL_VOICES[EL_DEFAULT_VOICE].id; // default narrator: Bill
 
 function setVOProgress(pct,msg){
   document.getElementById('vo-prog-fill').style.width=pct+'%';
@@ -3339,7 +3345,7 @@ async function generateVO(){
   const stability  = parseFloat(document.getElementById('el-stability').value);
   const similarity = parseFloat(document.getElementById('el-similarity').value);
   const styleVal   = parseFloat(document.getElementById('el-style').value);
-  const pace       = VO_PACES[document.getElementById('el-pace')?.value] ? document.getElementById('el-pace').value : 'expressive';
+  const pace       = VO_PACES[document.getElementById('el-pace')?.value] ? document.getElementById('el-pace').value : 'slow';
   { const chars=String(finalScript).length, m=EL_MODELS[model]||EL_MODELS.eleven_multilingual_v2; if(!budgetPreflight('eleven',{usd:chars*m.perChar,chars},'this voiceover ('+chars+' characters)')) return; }
 
   document.getElementById('btn-vo').disabled=true;
@@ -3351,7 +3357,7 @@ async function generateVO(){
   setVOProgress(10,'Connecting to ElevenLabs…');
 
   try{
-    setVOProgress(25,'Sending script to Young Jamal voice…');
+    setVOProgress(25,'Sending script to '+elVoice().name+' voice…');
 
     const elModel=EL_MODELS[model]||EL_MODELS.eleven_multilingual_v2;
     if(finalScript.length>elModel.maxChars) throw new Error('Script is '+finalScript.length.toLocaleString()+' characters — '+elModel.label+' accepts up to '+elModel.maxChars.toLocaleString()+'. Shorten it or pick Flash v2.5.');
@@ -3359,7 +3365,7 @@ async function generateVO(){
     // which we use to time every segment and auto-pick video lengths.
     let resp;
     try{
-    resp = await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+EL_VOICE_ID+'/with-timestamps',{
+    resp = await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+elVoice().id+'/with-timestamps',{
       method:'POST',
       headers:{
         'xi-api-key':   elKey,
@@ -3737,8 +3743,8 @@ function updateTopbarCostChip(){
 // voWords: [[word, startSec, endSec], …] from the character alignment of the voiceover.
 let voWords=[];
 // Voiceover pace. Slow is the default: calmer delivery for beginners.
-const VO_PACES={expressive:{label:'Calm + expressive',speed:0.93,stabilityBoost:-0.12,styleBoost:0.25},slow:{label:'Slow',speed:0.9,stabilityBoost:0.1},normal:{label:'Normal',speed:1.0,stabilityBoost:0}};
-let voPace='expressive';
+const VO_PACES={expressive:{label:'Calm + expressive',speed:0.93,stabilityBoost:-0.12,styleBoost:0.25},slow:{label:'Slow',speed:0.9,stabilityBoost:0},normal:{label:'Normal',speed:1.0,stabilityBoost:0}};
+let voPace='slow';
 function alignmentToWords(al){
   const out=[];
   if(!al || !Array.isArray(al.characters)) return out;
@@ -6463,12 +6469,13 @@ function expandVS(){
 }
 function updateVSSummary(){
   const modelNames = Object.fromEntries(Object.entries(EL_MODELS).map(([k,v])=>[k,v.label]));
-  const m = document.getElementById('el-model')?.value || 'eleven_multilingual_v2';
+  const m = document.getElementById('el-model')?.value || 'eleven_v4';
+  const vid=document.getElementById('el-voice-id'); if(vid) vid.textContent=elVoice().id;
   const s = document.getElementById('el-stability')?.value || '0.5';
   const sim = document.getElementById('el-similarity')?.value || '0.75';
   const st = document.getElementById('el-style')?.value || '0.3';
   document.getElementById('vs-summary').textContent =
-    'Young Jamal · ' + (modelNames[m]||m) + ' · ' +
+    elVoice().name+' · ' + (modelNames[m]||m) + ' · ' +
     'Stab '+s+' Sim '+sim+' Style '+st + ' · ' + ((VO_PACES[document.getElementById('el-pace')?.value]||VO_PACES.slow).label) + ' pace';
 }
 
