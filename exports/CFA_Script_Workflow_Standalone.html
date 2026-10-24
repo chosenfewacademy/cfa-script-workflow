@@ -1412,8 +1412,9 @@ select option{background:var(--surface2)}
         </div>
         <div>
           <div class="vs-field-label">Pace</div>
-          <select id="el-pace" aria-label="Voiceover pace" onchange="updateVSSummary()" title="Slow = calmer delivery (speed 0.9, +0.1 stability). Timestamps, beat timings and the final-edit export always match the audio that was generated.">
-            <option value="slow" selected>Slow — calm teaching pace (default)</option>
+          <select id="el-pace" aria-label="Voiceover pace" onchange="updateVSSummary()" title="Calm + expressive = unhurried (speed 0.93) but more vocal variation (−0.12 stability, +0.25 style). Slow = flattest, calmest read. Timestamps, beat timings and the final-edit export always match the audio that was generated.">
+            <option value="expressive" selected>Calm + expressive — unhurried, more energy (default)</option>
+            <option value="slow">Slow — flat calm teaching pace</option>
             <option value="normal">Normal</option>
           </select>
         </div>
@@ -2267,6 +2268,9 @@ HARD RULES for the hook:
 - No definitions ("A blockchain is...")
 - The first sentence must be about a person doing something or feeling something — not about a concept
 - The emotional trigger must land before the 10-word mark
+- The first sentence is at most 12 words (it must be spoken in about 3 seconds) and creates TENSION: a stake, a near-mistake or an open question the viewer needs answered
+- By the end of sentence two, the open loop is explicit (what is at risk, or what Jordan cannot explain yet) and it is only paid off at the turning point — never in the first 20 seconds
+- Do not open on a description of a calm scene or a recap; open on the moment of friction
 - If the hook could appear on any digital asset channel, rewrite it — it must be specific to Marcus or Jordan's exact situation in this video
 
 CINEMATIC FLOW + RETENTION SYSTEM
@@ -3304,7 +3308,7 @@ async function generateVO(){
   const stability  = parseFloat(document.getElementById('el-stability').value);
   const similarity = parseFloat(document.getElementById('el-similarity').value);
   const styleVal   = parseFloat(document.getElementById('el-style').value);
-  const pace       = VO_PACES[document.getElementById('el-pace')?.value] ? document.getElementById('el-pace').value : 'slow';
+  const pace       = VO_PACES[document.getElementById('el-pace')?.value] ? document.getElementById('el-pace').value : 'expressive';
 
   document.getElementById('btn-vo').disabled=true;
   document.getElementById('s5-generating').style.display='';
@@ -3333,9 +3337,9 @@ async function generateVO(){
         text:          finalScript,
         model_id:      model,
         voice_settings:{
-          stability:        Math.min(1, stability + VO_PACES[pace].stabilityBoost),
+          stability:        Math.max(0.2, Math.min(1, stability + VO_PACES[pace].stabilityBoost)),
           similarity_boost: similarity,
-          style:            styleVal,
+          style:            Math.min(0.8, styleVal + (VO_PACES[pace].styleBoost||0)),
           speed:            VO_PACES[pace].speed,
           use_speaker_boost: true
         }
@@ -3621,8 +3625,8 @@ function updateTopbarCostChip(){
 // voWords: [[word, startSec, endSec], …] from the character alignment of the voiceover.
 let voWords=[];
 // Voiceover pace. Slow is the default: calmer delivery for beginners.
-const VO_PACES={slow:{label:'Slow',speed:0.9,stabilityBoost:0.1},normal:{label:'Normal',speed:1.0,stabilityBoost:0}};
-let voPace='slow';
+const VO_PACES={expressive:{label:'Calm + expressive',speed:0.93,stabilityBoost:-0.12,styleBoost:0.25},slow:{label:'Slow',speed:0.9,stabilityBoost:0.1},normal:{label:'Normal',speed:1.0,stabilityBoost:0}};
+let voPace='expressive';
 function alignmentToWords(al){
   const out=[];
   if(!al || !Array.isArray(al.characters)) return out;
@@ -5466,8 +5470,16 @@ function composeScenePrompt(s, prompt, {sceneText, styleText, camera}={}){
   if(sceneText) p+=' Setting: '+sceneText+'.';
   if(styleText) p+=' Style: '+styleText+'.';
   if(camera && CAMERA_PRESETS[camera]) p+=' '+CAMERA_PRESETS[camera];
-  return p+secondaryGuardText(s)+castLookText(s)+' '+STYLE_SPEC;
+  return p+secondaryGuardText(s)+castLookText(s)+' '+STYLE_SPEC+' '+(beatNeedsText(s)?TEXT_ALLOWED_RULE:NO_TEXT_RULE);
 }
+// ═══ NO WRITING unless the script needs it ═══
+// Image models invent garbled words on every page, screen and sign. Default: forbid all writing.
+// Only a beat whose line explicitly needs readable words (a quoted word on screen, someone writing/reading
+// a specific thing, a named headline or sign) may show text, and only those words.
+const NO_TEXT_RULE='NO WRITING ANYWHERE: no visible text, letters, numbers, words, signs, labels, logos, captions, headlines or handwriting. Papers, books, notebooks, screens, charts and signs show only blank space, simple shapes, bars or soft unreadable grey lines.';
+const TEXT_ALLOWED_RULE='Only the specific words the script line requires may appear, spelled exactly and large enough to read; no other text anywhere.';
+const NEEDS_TEXT_RE=/["“][^"”]{2,40}["”]|\b(writes?|wrote|written|writing|scribbles?|underlin\w*|circles?d?|headline|sign (says|reads)|reads? (the|a|it|that)\b|label(l?ed)? |typed?|types)\b/i;
+function beatNeedsText(s){ return NEEDS_TEXT_RE.test(String(s?.line||'')); }
 // ═══ STYLE ANCHOR — every character and every image in the Marcus/Jordan art style ═══
 // Written spec (in every prompt) + the Marcus/Jordan sheets sent as style references to every
 // still, + a vision check against those sheets that regenerates drifting results.
@@ -5479,14 +5491,25 @@ function autoGptTextOn(){ return safeGetItem('cfa_gpt_text')!=='0'; }
 function setQaToggle(k,on){ try{ localStorage.setItem(k,on?'1':'0'); }catch(e){} }
 const TEXT_HINT_RE=/\b(sign|signs|label|labels|labeled|headline|newspaper|banner|poster|caption|title|text|words?|reads|says|written|writing|letters|chart|graph|receipt|price tag|screen shows|app screen|notebook|whiteboard|menu|logo)\b|["“][^"”]{2,}["”]/i;
 function promptImpliesText(p){ return TEXT_HINT_RE.test(String(p||'').split(/ Setting: | ART STYLE/)[0]); }
+// Who must appear, with which reference sheet (for the identity check)
+function sceneIdentityRefs(s){
+  const out=[]; const main=sceneCharSet(s?.characters);
+  for(const c of main) out.push({name:c==='MARCUS'?'Marcus':'Jordan', b64:c==='MARCUS'?MARCUS_B64:JORDAN_B64});
+  for(const n of castInScene(s)) if(RECURRING_CAST[n]?.b64) out.push({name:n, b64:RECURRING_CAST[n].b64});
+  return out;
+}
 async function styleRefUrls(){ return [await getCharacterUrl('Marcus',MARCUS_B64), await getCharacterUrl('Jordan',JORDAN_B64)]; }
-const STYLE_QA_SYS='You are a strict art-direction QA checker for a cartoon series. Images 1 and 2 are the LOCKED style references (the show\'s character art). The LAST image is a candidate frame for the same show.\nJudge ONLY rendering style, not content: it must be the same flat 2D cartoon illustration — bold clean dark outlines, flat cel colour with at most one simple shadow tone, simplified cartoon faces/anatomy, no painterly or photographic texture, no realistic lighting/depth-of-field, no 3D render look. Every person in the candidate (including new characters and extras) must be drawn in that same cartoon style.\nAlso list every visible piece of writing (words, numbers, labels) in the candidate, and say whether any of it is garbled or misspelled.\nReturn JSON only: {"style_score":0-10,"style_match":bool (true only if score>=7),"problems":"short","has_text":bool,"text":["..."],"text_garbled":bool}';
-async function visionStyleCheck(url){
+const STYLE_QA_SYS='You are a strict art-direction QA checker for a cartoon series. Images 1 and 2 are the LOCKED style references (the show\'s character art). The LAST image is a candidate frame for the same show.\nJudge ONLY rendering style, not content: it must be the same flat 2D cartoon illustration — bold clean dark outlines, flat cel colour with at most one simple shadow tone, simplified cartoon faces/anatomy, no painterly or photographic texture, no realistic lighting/depth-of-field, no 3D render look. Every person in the candidate (including new characters and extras) must be drawn in that same cartoon style.\nAlso list every piece of legible-looking writing (letters, words, numbers, labels — not abstract lines or shapes) in the candidate, and say whether any of it is garbled or misspelled.\nIDENTITY: after the two style references come the reference sheets of the characters who must appear (named in the user message). For EACH named character, find them in the candidate and score identity 0-10 against THEIR sheet: same face shape and features, skin tone, hair style/colour/length, facial hair, glasses, apparent age, body build and outfit colours. A different-looking person of the same gender is a 2-4, not a pass. visible=false if they are not in the frame.\nReturn JSON only: {"style_score":0-10,"style_match":bool (true only if score>=7),"problems":"short","has_text":bool,"text":["..."],"text_garbled":bool,"identity":[{"name":"...","visible":bool,"score":0-10,"problems":"short"}]}';
+const IDENTITY_MIN=7;
+async function visionStyleCheck(url, people){
   const key=llmKey(); if(!key || !styleCheckOn()) return null;
   const [m,j]=await styleRefUrls();
-  const body={model:VISION_MODEL,max_tokens:600,response_format:{type:'json_object'},messages:[
+  people=(people||[]).slice(0,3);
+  const sheets=[]; for(const p of people) sheets.push(await getCharacterUrl(p.name==='Marcus'||p.name==='Jordan'?p.name:'cast_'+p.name, p.b64));
+  const intro='Image 1 and 2: style references (Marcus, Jordan). '+(people.length?people.map((p,k)=>'Image '+(k+3)+': '+p.name+"'s reference sheet.").join(' ')+' Characters that must appear: '+people.map(p=>p.name).join(', ')+'.':'No named characters in this scene (identity: []).')+' LAST image: the candidate.';
+  const body={model:VISION_MODEL,max_tokens:700,response_format:{type:'json_object'},messages:[
     {role:'system',content:STYLE_QA_SYS},
-    {role:'user',content:[{type:'text',text:'Reference 1, reference 2, then the candidate.'},{type:'image_url',image_url:{url:m}},{type:'image_url',image_url:{url:j}},{type:'image_url',image_url:{url}}]}]};
+    {role:'user',content:[{type:'text',text:intro},{type:'image_url',image_url:{url:m}},{type:'image_url',image_url:{url:j}},...sheets.map(u=>({type:'image_url',image_url:{url:u}})),{type:'image_url',image_url:{url}}]}]};
   const resp=await fetch(GROK.url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify(body)});
   if(!resp.ok) throw new Error('style check: '+await apiErrorMessage(resp));
   const d=await resp.json(); trackSpend(0.003);
@@ -5494,6 +5517,11 @@ async function visionStyleCheck(url){
   const o=JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}')+1));
   o.style_score=Number(o.style_score)||0; o.style_match=!!o.style_match && o.style_score>=7;
   o.text=Array.isArray(o.text)?o.text.filter(Boolean):[]; o.has_text=!!o.has_text || o.text.length>0;
+  o.identity=(Array.isArray(o.identity)?o.identity:[]).map(x=>({name:String(x.name||''),visible:x.visible!==false,score:Number(x.score)||0,problems:String(x.problems||'')}));
+  // every named character that is in frame must match their sheet; a named character missing from a still is a miss too
+  const misses=people.filter(p=>{ const x=o.identity.find(y=>y.name.toLowerCase().includes(p.name.toLowerCase())); return !x || !x.visible || x.score<IDENTITY_MIN; });
+  o.identity_match=misses.length===0; o.identity_misses=misses.map(p=>p.name);
+  o.identity_score=o.identity.length?Math.min(...o.identity.map(x=>x.score)):null;
   return o;
 }
 // One image request with the style anchor, vision style check (retry cap) and auto GPT text cleanup.
@@ -5507,27 +5535,37 @@ async function styledImageRequest(idx, model, prompt, refs, status){
   let styleNote='';
   try{
     const styleOnly=[];
-    for(const u of await styleRefUrls()){ if(refs.length<4 && !refs.includes(u)){ refs.push(u); styleOnly.push(refs.length); } }
+    // Character scenes: their own sheets already carry the style; adding the other lead's sheet pulls the face
+    // toward him (identity drift). Only scenes with no character sheet get the Marcus/Jordan style refs.
+    if(!refs.length) for(const u of await styleRefUrls()){ if(refs.length<4 && !refs.includes(u)){ refs.push(u); styleOnly.push(refs.length); } }
     if(styleOnly.length) styleNote=' '+styleOnly.map(n=>'@Image'+n).join(' and ')+(styleOnly.length>1?' are':' is')+' an ART-STYLE reference only: copy the drawing style exactly but do NOT draw '+(styleOnly.length>1?'those people':'that person')+' unless the scene names them.';
   }catch(e){}
   let r=null, check=null, attempts=0, cost=0, checkErr='';
+  const people=sceneIdentityRefs(s), needsText=beatNeedsText(s);
+  const fixNote=c=>{ if(!c) return ''; const n=[];
+    if(!c.style_match) n.push('the art style drifted'+(c.problems?' ('+c.problems+')':'')+' — match the reference art style exactly: flat 2D cartoon, bold outlines, flat colour, no realism');
+    if(c.identity_match===false) n.push('wrong look for '+c.identity_misses.join(', ')+' ('+c.identity.filter(x=>x.problems).map(x=>x.name+': '+x.problems).join('; ')+') — copy face, hair, age, build and outfit exactly from their reference sheet');
+    if(c.stray_text) n.push('it contained writing — remove ALL text, letters and numbers');
+    return n.length?' STRICT, previous attempt failed: '+n.join('; ')+'.':''; };
   for(let a=0;a<=STYLE_RETRY_CAP;a++){
     attempts=a+1;
-    status&&status(a?'Off-style result — regenerating ('+a+'/'+STYLE_RETRY_CAP+')…':'Generating with '+IMAGE_MODEL_LABELS[model]+' ('+refs.length+' refs)…');
-    const p=prompt+styleNote+(a?' STRICT: the previous attempt drifted from the art style'+(check?.problems?' ('+check.problems+')':'')+'. Match the reference art style exactly — flat 2D cartoon, bold outlines, flat colour, no realism.':'');
+    status&&status(a?'Off-model result — regenerating ('+a+'/'+STYLE_RETRY_CAP+')…':'Generating with '+IMAGE_MODEL_LABELS[model]+' ('+refs.length+' refs)…');
+    const p=prompt+styleNote+(a?fixNote(check):'');
     r=await falImageRequest(model, p, refs);
     cost+=MODEL_COSTS.image[model]; trackSpend(MODEL_COSTS.image[model]);
-    status&&status('Checking art style against the Marcus/Jordan references…');
-    try{ check=await visionStyleCheck(r.url); }catch(e){ check=null; checkErr=e.message; }
-    if(!check || check.style_match) break;
+    status&&status('Checking art style and character identity against the reference sheets…');
+    try{ check=await visionStyleCheck(r.url, people); }catch(e){ check=null; checkErr=e.message; }
+    if(check) check.stray_text=!needsText && check.has_text;
+    if(!check || (check.style_match && check.identity_match!==false && !check.stray_text)) break;
   }
   let url=r.url, label=r.label, gptText=false, gptErr='';
-  if(autoGptTextOn() && sessionStorage.getItem('cfa_openai_key') && ((check&&check.has_text) || promptImpliesText(prompt))){
+  // GPT text cleanup only for beats whose script needs readable words
+  if(autoGptTextOn() && sessionStorage.getItem('cfa_openai_key') && needsText && (!check || check.has_text)){
     status&&status('Cleaning up image text with GPT…');
     try{ url=await gptTextFixUrl(url, check?.text||[], prompt); label+=' + GPT'; gptText=true; cost+=GPT_TEXT_COST; }
     catch(e){ gptErr=e.message; }
   }
-  if(sceneData[idx]===s) s.styleQA={score:check?check.style_score:null, match:check?check.style_match:null, attempts, text:check?check.text:[], gptText, gptErr, checkErr};
+  if(sceneData[idx]===s) s.styleQA={score:check?check.style_score:null, match:check?check.style_match:null, identity:check?check.identity:[], identityMatch:check?check.identity_match:null, strayText:check?!!check.stray_text:null, attempts, text:check?check.text:[], gptText, gptErr, checkErr};
   return {url, label, model, refs, check, attempts, gptText, cost};
 }
 // ═══ RECURRING CAST — keep series regulars (Dee, Mr. Okafor) looking the same ═══
