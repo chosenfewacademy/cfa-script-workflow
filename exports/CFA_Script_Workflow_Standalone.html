@@ -1939,6 +1939,13 @@ select option{background:var(--surface2)}
       <button class="btn bsec" onclick="exportManifest()" style="font-size:12px;padding:11px 20px">&#x1F4C4; Export Manifest (.txt)</button>
       <button class="btn bprim" onclick="exportFinalEditBundle()" id="btn-final-edit" style="font-size:13px;padding:11px 22px" title="One .zip with script, segments, every scene's media, voiceover, beat timings and SRT — send it to Grok Bot to render the finished MP4">&#x1F3AC; Export for final edit</button>
     </div>
+    <div class="complete-actions" style="margin-top:-4px">
+      <button class="btn bprim" onclick="sendToGrokRender()" id="btn-send-grok" style="font-size:13px;padding:11px 22px;background:linear-gradient(135deg,#7c3aed,#2563eb)" title="Upload every scene, the voiceover and the timings to Grok Bot, which plans the edit and renders the finished MP4 for review here">&#x1F680; Send to Grok for final edit</button>
+      <label style="font-size:12px;display:flex;align-items:center;gap:6px">Format
+        <select id="rs-aspect" class="inp" style="width:auto;padding:6px 8px"><option value="landscape">16:9 (YouTube)</option><option value="vertical">9:16 vertical (Shorts / Reels)</option></select></label>
+    </div>
+    <div id="rs-upload" style="display:none;margin:4px 0 12px"><div style="font-size:12px;color:var(--muted)" id="rs-upload-txt"></div>
+      <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;margin-top:4px"><div id="rs-upload-bar" style="height:100%;width:0;background:linear-gradient(90deg,#7c3aed,#2563eb);transition:width .2s"></div></div></div>
     <div id="fe-vo-pick" style="display:none;font-size:12px;margin:6px 0">Voiceover MP3: <input type="file" id="fe-vo-file" accept="audio/*"></div>
     <div id="fe-status" style="display:none;font-size:12px;color:var(--muted);margin:6px 0 14px"></div>
 
@@ -1956,6 +1963,39 @@ select option{background:var(--surface2)}
 
 </div>
 
+<!-- ═══ GROK FINAL EDIT: progress + review screens ═══ -->
+<div class="screen hr" id="s-render" style="display:none">
+  <div id="rs-progress-view">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Grok Bot is editing your video</div>
+    <h2 style="margin:6px 0 2px" id="rs-title">Final edit in progress</h2>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:18px">You can leave this tab open; the finished video appears here automatically.</div>
+    <div style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:16px">
+      <div><div style="font-size:34px;font-weight:800;font-variant-numeric:tabular-nums" id="rs-elapsed">0:00</div><div style="font-size:11px;color:var(--muted)">elapsed</div></div>
+      <div><div style="font-size:34px;font-weight:800;font-variant-numeric:tabular-nums" id="rs-eta">–</div><div style="font-size:11px;color:var(--muted)">estimated remaining</div></div>
+    </div>
+    <div style="height:10px;background:var(--border);border-radius:5px;overflow:hidden"><div id="rs-bar" style="height:100%;width:0;background:linear-gradient(90deg,#7c3aed,#2563eb);transition:width .6s"></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0" id="rs-stages"></div>
+    <div style="font-size:13px" id="rs-stage-txt">Waiting…</div>
+    <div class="err" id="rs-err" style="display:none;margin-top:12px"></div>
+    <div style="margin-top:18px;display:flex;gap:10px"><button class="btn bsec" onclick="closeRenderScreen()">&#x2190; Back to scenes</button><button class="btn bsec" id="rs-retry" style="display:none" onclick="sendToGrokRender()">Try again</button></div>
+  </div>
+  <div id="rs-review-view" style="display:none">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Review</div>
+    <h2 style="margin:6px 0 10px">Your finished video</h2>
+    <video id="rs-video" controls playsinline style="width:100%;max-height:70vh;background:#000;border-radius:10px"></video>
+    <div style="font-size:12px;color:var(--muted);margin:8px 0" id="rs-meta"></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 18px">
+      <a class="btn bprim" id="rs-download" download="final.mp4" style="text-decoration:none">&#x2B07; Download MP4</a>
+      <a class="btn bsec" id="rs-thumb-dl" download="thumbnail.jpg" style="text-decoration:none">&#x1F5BC; Thumbnail</a>
+      <label style="font-size:12px;display:flex;align-items:center;gap:6px">Format
+        <select id="rs-aspect2" class="inp" style="width:auto;padding:6px 8px"><option value="landscape">16:9</option><option value="vertical">9:16 vertical</option></select></label>
+      <button class="btn bsec" onclick="reEditRender(true)">Render this format</button>
+    </div>
+    <div style="font-size:12px;font-weight:700;margin-bottom:4px">Re-edit with notes</div>
+    <textarea id="rs-notes" class="inp" rows="3" placeholder="e.g. Hold the October 2008 shot longer, fewer whooshes, end on Jordan writing the date"></textarea>
+    <div style="margin-top:8px;display:flex;gap:10px"><button class="btn bprim" onclick="reEditRender(false)">&#x1F501; Send notes to Grok</button><button class="btn bsec" onclick="closeRenderScreen()">&#x2190; Back to scenes</button></div>
+  </div>
+</div>
 </div><!-- /screens -->
 <!-- ═══ SETTINGS MODAL ═══ -->
 <div class="modal-overlay" id="settings-modal" onclick="closeSettingsOutside(event)">
@@ -2034,6 +2074,22 @@ select option{background:var(--surface2)}
           <button class="settings-save" onclick="smSaveOpenAI()">Save</button>
         </div>
         <div class="settings-ok" id="sm-oai-ok">&#x2713; OpenAI key saved for this session</div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-label">
+          <div class="ks-dot miss" id="sm-ks-render" style="width:8px;height:8px"></div>
+          Grok Bot render service <span style="font-size:9px;color:var(--muted);font-weight:400;margin-left:6px">optional</span>
+        </div>
+        <div class="settings-section-desc">Lets <strong>&#x1F680; Send to Grok for final edit</strong> upload the finished scenes to Grok Bot, which plans the edit and renders the MP4 for review here. Paste the service URL and access token Grok Bot gave you. Both stay in this browser session only.</div>
+        <div class="settings-row">
+          <input class="inp" id="sm-render-url" type="url" placeholder="https://….ngrok-free.app" autocomplete="off" aria-label="Render service URL" onkeydown="if(event.key==='Enter')smSaveRender()"/>
+        </div>
+        <div class="settings-row">
+          <input class="inp" id="sm-render-token" type="password" placeholder="access token" autocomplete="off" aria-label="Render service access token" onkeydown="if(event.key==='Enter')smSaveRender()"/>
+          <button class="settings-save" onclick="smSaveRender()">Save</button>
+        </div>
+        <div class="settings-ok" id="sm-render-ok">&#x2713; Render service saved for this session</div>
       </div>
 
       <!-- fal.ai Credit Budget -->
@@ -2493,7 +2549,7 @@ function openSettings(){
   document.getElementById('settings-modal').classList.add('open');
   document.body.style.overflow='hidden';
   // Populate fields + saved states from session
-  [['cfa_xai_key','sm-xai-key','sm-xai-ok'],['cfa_el_key','sm-el-key','sm-el-ok'],['cfa_fal_key','sm-fal-key','sm-fal-ok'],['cfa_openai_key','sm-oai-key','sm-oai-ok']]
+  [['cfa_xai_key','sm-xai-key','sm-xai-ok'],['cfa_el_key','sm-el-key','sm-el-ok'],['cfa_fal_key','sm-fal-key','sm-fal-ok'],['cfa_openai_key','sm-oai-key','sm-oai-ok'],['cfa_render_url','sm-render-url','sm-render-ok'],['cfa_render_token','sm-render-token','sm-render-ok']]
     .forEach(([k,inp,ok])=>{const v=sessionStorage.getItem(k); if(v){document.getElementById(inp).value=v;document.getElementById(ok).classList.add('show');}});
   ['writer','fast'].forEach(r=>{const el=document.getElementById('sm-model-'+r); if(el){el.value=localStorage.getItem('cfa_grok_model_'+r)||''; el.placeholder=r+': '+GROK.models[r];}});
   updateSettingsSpendDisplay();
@@ -2529,6 +2585,11 @@ function smSaveModels(){
   const ok=document.getElementById('sm-models-ok'); ok.classList.add('show'); setTimeout(()=>ok.classList.remove('show'),2000);
 }
 function smSaveOpenAI(){ saveSessionKey('cfa_openai_key','sm-oai-key','sm-oai-ok'); }
+function smSaveRender(){
+  const u=document.getElementById('sm-render-url'); u.value=u.value.trim().replace(/\/+$/,'');
+  saveSessionKey('cfa_render_url','sm-render-url','sm-render-ok'); saveSessionKey('cfa_render_token','sm-render-token','sm-render-ok');
+  const d=document.getElementById('sm-ks-render'); if(d) d.className='ks-dot '+(renderServiceReady()?'ok':'miss');
+}
 // Settings → "Test fal.ai Endpoints". Exercises the production paths cheaply:
 // storage upload (free), Nano Banana (~$0.04) and Kling o1 with the Marcus reference
 // (~$0.04). Video endpoints are NOT tested here (a single clip costs $0.40+).
@@ -4117,19 +4178,30 @@ function extFromBlob(blob,url,kind){ // kind wins over a wrong Content-Type
 async function exportFinalEditBundle(){
   const btn=document.getElementById('btn-final-edit'), st=document.getElementById('fe-status');
   const say=m=>{ if(st){ st.style.display=m?'':'none'; st.textContent=m; } };
-  if(!sceneData.length){ say('No scenes yet.'); return; }
+  if(btn){ btn.disabled=true; }
+  try{
+    const b=await buildFinalEditZip(say); if(!b) return;
+    const url=URL.createObjectURL(b.zip), a=document.createElement('a');
+    a.href=url; a.download=b.name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);
+    say('✓ Bundle downloaded ('+(b.zip.size/1048576).toFixed(1)+' MB)'+b.note+'. Send this .zip in chat to render the finished MP4 — or use 🚀 Send to Grok for final edit.');
+  }catch(e){ say('Export failed: '+(e&&e.message||e)); }
+  finally{ if(btn) btn.disabled=false; }
+}
+// Builds the final-edit bundle (zip Blob) — shared by the download export and the Grok render service upload.
+async function buildFinalEditZip(say){
+  if(!sceneData.length){ say('No scenes yet.'); return null; }
   // Voiceover: in-memory blob from step 5, or a file the user picks (resumed sessions lose the blob).
   let voBlob=null;
   if(voAudioURL){ try{ voBlob=await (await fetch(voAudioURL)).blob(); }catch(e){ voBlob=null; } }
   const pick=document.getElementById('fe-vo-file');
   if(!voBlob && pick && pick.files && pick.files[0]) voBlob=pick.files[0];
   if(!voBlob){
-    say('The voiceover audio isn\u2019t in memory (page was reloaded). Choose the voiceover MP3 you downloaded in Step 5, then click Export again.');
+    say('The voiceover audio isn\u2019t in memory (page was reloaded). Choose the voiceover MP3 you downloaded in Step 5, then click again.');
     const w=document.getElementById('fe-vo-pick'); if(w) w.style.display='';
-    return;
+    return null;
   }
-  if(btn){ btn.disabled=true; }
-  try{
+  {
     const enc=new TextEncoder(), files=[], segs=[], missing=[];
     const lines=sceneData.map(x=>x.line);
     const times=voWords.length?computeBeatTimes(lines,voWords):[];
@@ -4166,12 +4238,120 @@ async function exportFinalEditBundle(){
     files.push({name:'segments.txt',data:enc.encode(segs.map(g=>g.index+'. '+g.text).join('\n'))});
     files.push({name:'beats.srt',data:enc.encode(srt.join('\n'))});
     const zip=buildZip(files);
-    const url=URL.createObjectURL(zip), a=document.createElement('a');
-    a.href=url; a.download='CFA_FinalEdit_'+(episode?'EP'+String(episode).padStart(2,'0')+'_':'')+title.replace(/[^a-z0-9]+/gi,'_').slice(0,50)+'.zip';
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);
-    say('✓ Bundle downloaded ('+(zip.size/1048576).toFixed(1)+' MB)'+(missing.length?' — scenes without media: '+missing.join(', ')+' (renderer will hold the previous shot)':'')+(voWords.length?'':' — no beat timings (re-run voiceover for exact sync)')+'. Send this .zip in chat to render the finished MP4.');
-  }catch(e){ say('Export failed: '+(e&&e.message||e)); }
-  finally{ if(btn) btn.disabled=false; }
+    return {zip, title, name:'CFA_FinalEdit_'+(episode?'EP'+String(episode).padStart(2,'0')+'_':'')+title.replace(/[^a-z0-9]+/gi,'_').slice(0,50)+'.zip',
+      note:(missing.length?' — scenes without media: '+missing.join(', ')+' (renderer will hold the previous shot)':'')+(voWords.length?'':' — no beat timings (re-run voiceover for exact sync)')};
+  }
+}
+
+// ═══ GROK BOT RENDER SERVICE (send → timer → review) ═════════════════════════
+const RENDER_STAGES=['queued','planning edit','rendering','captions','mixing','encoding','done'];
+let renderJob=null, renderPoll=null, renderTick=null, renderT0=0, renderLast=null, renderVideoURL=null;
+function renderServiceReady(){ return !!(sessionStorage.getItem('cfa_render_url')&&sessionStorage.getItem('cfa_render_token')); }
+function renderBase(){ return String(sessionStorage.getItem('cfa_render_url')||'').trim().replace(/\/+$/,''); }
+async function renderFetch(path, opts){
+  opts=opts||{}; opts.headers=Object.assign({'Authorization':'Bearer '+sessionStorage.getItem('cfa_render_token')}, opts.headers||{});
+  const r=await fetch(renderBase()+path, opts);
+  if(r.status===401) throw new Error('The render service rejected the access token — check it in ⚙ Settings.');
+  if(!r.ok){ let m='HTTP '+r.status; try{ m=(await r.json()).error||m; }catch(e){} throw new Error(m); }
+  return r;
+}
+function fmtClock(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60), s=sec%60; return m+':'+String(s).padStart(2,'0'); }
+function showRenderScreen(view){
+  document.querySelectorAll('.screens > .screen').forEach(el=>{ if(el.id!=='s-render' && !('rsHidden' in el.dataset)){ el.dataset.rsHidden=el.style.display||''; el.style.display='none'; } });
+  const sc=document.getElementById('s-render'); sc.style.display='flex'; sc.classList.remove('hr'); sc.classList.add('vis');
+  document.getElementById('rs-progress-view').style.display=view==='review'?'none':'';
+  document.getElementById('rs-review-view').style.display=view==='review'?'':'none';
+  window.scrollTo(0,0);
+}
+function closeRenderScreen(){
+  const sc=document.getElementById('s-render'); sc.style.display='none'; sc.classList.remove('vis'); sc.classList.add('hr');
+  document.querySelectorAll('.screens > .screen[data-rs-hidden]').forEach(el=>{ el.style.display=el.dataset.rsHidden; delete el.dataset.rsHidden; });
+}
+function uploadWithProgress(url, blob, onProg){
+  return new Promise((res,rej)=>{
+    const x=new XMLHttpRequest(); x.open('POST',url);
+    x.setRequestHeader('Authorization','Bearer '+sessionStorage.getItem('cfa_render_token'));
+    x.setRequestHeader('Content-Type','application/zip');
+    x.upload.onprogress=e=>{ if(e.lengthComputable) onProg(e.loaded/e.total, e.loaded); };
+    x.onload=()=>{ let j=null; try{ j=JSON.parse(x.responseText); }catch(e){}
+      if(x.status===401) return rej(new Error('The render service rejected the access token — check it in ⚙ Settings.'));
+      if(x.status>=200&&x.status<300&&j&&j.id) res(j); else rej(new Error((j&&j.error)||('Upload failed (HTTP '+x.status+')'))); };
+    x.onerror=()=>rej(new Error('Could not reach the render service. Is Grok Bot’s computer running? Check the URL in ⚙ Settings, or use 🎬 Export for final edit and send the .zip in chat.'));
+    x.send(blob);
+  });
+}
+async function sendToGrokRender(){
+  const st=document.getElementById('fe-status');
+  const say=m=>{ if(st){ st.style.display=m?'':'none'; st.textContent=m; } };
+  if(!renderServiceReady()){ say('Add the Grok Bot render service URL and access token in ⚙ Settings first (or use 🎬 Export for final edit and send the .zip in chat).'); openSettings(); return; }
+  const btn=document.getElementById('btn-send-grok'), up=document.getElementById('rs-upload'), bar=document.getElementById('rs-upload-bar'), txt=document.getElementById('rs-upload-txt');
+  btn.disabled=true;
+  try{
+    try{ await fetch(renderBase()+'/health',{cache:'no-store'}); }catch(e){ throw new Error('Could not reach the render service at '+renderBase()+'. Is Grok Bot’s computer running? You can still use 🎬 Export for final edit.'); }
+    const b=await buildFinalEditZip(say); if(!b) return;
+    say(''); up.style.display=''; bar.style.width='0';
+    const mb=b.zip.size/1048576;
+    const aspect=document.getElementById('rs-aspect').value;
+    const job=await uploadWithProgress(renderBase()+'/jobs?aspect='+aspect, b.zip, (f,n)=>{ bar.style.width=(f*100).toFixed(1)+'%'; txt.textContent='Uploading to Grok Bot… '+(n/1048576).toFixed(1)+' / '+mb.toFixed(1)+' MB ('+Math.round(f*100)+'%)'; });
+    bar.style.width='100%';
+    txt.textContent='✓ Uploaded '+mb.toFixed(1)+' MB'+b.note;
+    startRenderWatch(job, b.title);
+  }catch(e){ say('Send failed: '+(e&&e.message||e)); up.style.display='none'; }
+  finally{ btn.disabled=false; }
+}
+function startRenderWatch(job, title){
+  renderJob=job; renderT0=Date.now(); renderLast=job;
+  try{ sessionStorage.setItem('cfa_render_job', JSON.stringify({id:job.id,title:title||''})); }catch(e){}
+  document.getElementById('rs-title').textContent=(title||'Final edit')+' — '+(job.aspect==='vertical'?'9:16':'16:9')+(job.notes?' · re-edit':'');
+  document.getElementById('rs-err').style.display='none'; document.getElementById('rs-retry').style.display='none';
+  showRenderScreen('progress'); paintRender(job);
+  clearInterval(renderPoll); clearInterval(renderTick);
+  renderTick=setInterval(()=>{ if(!renderLast) return; const el=(renderLast.elapsed||0)+(Date.now()-renderLast._at)/1000;
+    document.getElementById('rs-elapsed').textContent=fmtClock(renderLast.state==='queued'?(renderLast.wait||0)+(Date.now()-renderLast._at)/1000:el);
+    if(renderLast.eta!=null) document.getElementById('rs-eta').textContent='~'+fmtClock(Math.max(0,renderLast.eta-(Date.now()-renderLast._at)/1000)); },500);
+  const poll=async()=>{ try{ const j=await (await renderFetch('/jobs/'+job.id,{cache:'no-store'})).json(); paintRender(j);
+      if(j.state==='done'){ clearInterval(renderPoll); clearInterval(renderTick); await showRenderResult(j); }
+      else if(j.state==='error'){ clearInterval(renderPoll); clearInterval(renderTick); renderFailed(j.error||'Render failed'); }
+    }catch(e){ document.getElementById('rs-stage-txt').textContent='Reconnecting to Grok Bot… ('+(e.message||e)+')'; } };
+  renderPoll=setInterval(poll,2000); poll();
+}
+function paintRender(j){
+  j._at=Date.now(); renderLast=j;
+  document.getElementById('rs-bar').style.width=(j.progress||0)+'%';
+  const cur=RENDER_STAGES.indexOf(j.stage==='unpacking'?'planning edit':j.stage);
+  document.getElementById('rs-stages').innerHTML=RENDER_STAGES.slice(1,6).map((n,k)=>{ const i=k+1, on=i===cur, done=cur>i;
+    return '<span style="font-size:11px;padding:4px 10px;border-radius:12px;border:1px solid var(--border);'+(on?'background:#7c3aed;color:#fff;border-color:#7c3aed':done?'background:rgba(37,99,235,.12);color:var(--fg,inherit)':'color:var(--muted)')+'">'+(done?'✓ ':'')+n+'</span>'; }).join('');
+  document.getElementById('rs-stage-txt').textContent=j.state==='queued'?('Waiting in line'+(j.queue_position?' (position '+j.queue_position+')':'')+'…'):
+    ({'unpacking':'Unpacking scenes…','planning edit':'Grok is planning the edit — hook, pacing, punch-ins, sound cues…','rendering':'Rendering shots… '+(j.progress||0)+'%','captions':'Placing captions…','mixing':'Mixing voice, music and sound design…','encoding':'Encoding the final MP4…','done':'Done'})[j.stage]||j.stage;
+  if(j.eta!=null) document.getElementById('rs-eta').textContent='~'+fmtClock(j.eta);
+}
+function renderFailed(msg){
+  const e=document.getElementById('rs-err'); e.style.display=''; e.textContent='Render failed: '+msg+' — you can try again, or use 🎬 Export for final edit and send the .zip in chat.';
+  document.getElementById('rs-retry').style.display='';
+}
+async function showRenderResult(j){
+  document.getElementById('rs-stage-txt').textContent='Downloading the finished video…';
+  const v=await (await renderFetch('/jobs/'+j.id+'/video')).blob();
+  if(renderVideoURL){ try{ URL.revokeObjectURL(renderVideoURL); }catch(e){} }
+  renderVideoURL=URL.createObjectURL(new Blob([v],{type:'video/mp4'}));
+  const vid=document.getElementById('rs-video'); vid.src=renderVideoURL;
+  const dl=document.getElementById('rs-download'); dl.href=renderVideoURL;
+  const t=(JSON.parse(sessionStorage.getItem('cfa_render_job')||'{}').title||'CFA_final').replace(/[^a-z0-9]+/gi,'_').slice(0,50);
+  dl.download=t+(j.aspect==='vertical'?'_vertical':'')+'.mp4';
+  try{ const th=await (await renderFetch('/jobs/'+j.id+'/thumbnail')).blob(); const tu=URL.createObjectURL(th); vid.poster=tu; const a=document.getElementById('rs-thumb-dl'); a.href=tu; a.download=t+'_thumbnail.jpg'; }catch(e){}
+  const r=j.report||{};
+  document.getElementById('rs-meta').textContent=[(r.duration?r.duration.toFixed(1)+'s':''),r.resolution,(r.lufs!=null?r.lufs+' LUFS':''),'rendered in '+fmtClock(j.elapsed||0),(r.edl_source?'edit plan: '+r.edl_source:'')].filter(Boolean).join(' · ');
+  document.getElementById('rs-aspect2').value=j.aspect||'landscape';
+  renderJob=j; showRenderScreen('review');
+}
+async function reEditRender(formatOnly){
+  if(!renderJob) return;
+  const notes=formatOnly?(renderJob.notes||''):document.getElementById('rs-notes').value.trim();
+  if(!formatOnly && !notes){ document.getElementById('rs-notes').focus(); return; }
+  try{
+    const j=await (await renderFetch('/jobs/'+renderJob.id+'/reedit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes,aspect:document.getElementById('rs-aspect2').value})})).json();
+    startRenderWatch(j, JSON.parse(sessionStorage.getItem('cfa_render_job')||'{}').title);
+  }catch(e){ alert('Re-edit failed: '+(e.message||e)); }
 }
 
 // ═══ DURATION OPTIONS (Veo vs Kling differ) ════════════════════════════════

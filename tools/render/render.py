@@ -343,11 +343,13 @@ Captions are punchy 2-4 word chunks; 1-2 emphasis words per shot (numbers, names
 The title card appears right after the hook, not over it. On-screen text must say "digital assets", never "crypto". No hype words."""
 
 
-def grok_edl(bundle, shots, key, model="grok-4.3", timeout=120):
+def grok_edl(bundle, shots, key, model="grok-4.3", timeout=120, notes=""):
     sh = [{"index": s["index"], "text": s["text"], "media": s.get("mediaType") or "none",
            "seconds": round(s["end"] - s["start"], 2), "beats": len(s["beats"])} for s in shots]
     user = json.dumps({"title": bundle.get("title"), "episode": bundle.get("episode"),
                        "total_seconds": round(shots[-1]["end"], 2), "shots": sh})
+    if notes:
+        user += "\n\nEDITOR NOTES from the creator for this re-edit (follow them within the rules): " + notes[:2000]
     body = json.dumps({"model": model, "response_format": {"type": "json_object"},
                        "messages": [{"role": "system", "content": EDL_SYSTEM}, {"role": "user", "content": user}]}).encode()
     req = urllib.request.Request(XAI_URL, data=body, headers={"Authorization": "Bearer " + key,
@@ -845,6 +847,7 @@ def main():
     ap.add_argument("--beat-pause", type=float, default=0.6, help="min silence between beats, padded from timestamps (0 = off)")
     ap.add_argument("--sentence-pause", type=float, default=0.45, help="min silence after a sentence inside a beat (0 = off)")
     ap.add_argument("--no-title", action="store_true")
+    ap.add_argument("--notes", default="", help="re-edit notes passed to Grok's edit plan")
     ap.add_argument("--no-sfx", action="store_true", help="skip whooshes / riser / impact")
     ap.add_argument("--no-end-card", action="store_true")
     ap.add_argument("--keep-work", action="store_true")
@@ -886,7 +889,7 @@ def main():
     if key and not a.no_grok:
         for attempt in range(2):
             try:
-                raw, usage = grok_edl(b, base_shots, key, a.model)
+                raw, usage = grok_edl(b, base_shots, key, a.model, notes=a.notes or "")
                 edl, problems = validate_edl(raw, b, base_shots)
                 source = "grok:" + a.model
                 break
@@ -930,6 +933,7 @@ def main():
 
     # assemble: xfade chain (offset = next cut time) + captions
     ass = os.path.join(work, "captions.ass")
+    log("stage: captions")
     cues = build_ass(words, segs, edl, W, H, total, ass)
     inputs, fc, prev = [], ["[0:v]settb=1/%d[b0]" % FPS], "[b0]"
     for c in clips:
@@ -947,10 +951,12 @@ def main():
     ass_esc_path = ass.replace("\\", "/").replace(":", "\\:")
     fc.append("%sfps=%d,trim=0:%.3f,setpts=PTS-STARTPTS,subtitles='%s'[v]" % (prev, FPS, total, ass_esc_path))
     audio = os.path.join(work, "audio.m4a")
+    log("stage: mixing")
     events = [] if a.no_sfx else sfx_events(edl["shots"], edl["arc_times"])
     sfx = build_sfx_track(events, total, work)
     build_audio(voice, a.music, total, audio, work, sfx, edl["arc_times"].get("turn"))
     final = os.path.join(a.out, "final.mp4")
+    log("stage: encoding")
     fcs = os.path.join(work, "graph.txt")
     open(fcs, "w").write(";\n".join(fc))
     run(["ffmpeg", "-y", "-v", "error"] + inputs + ["-i", audio, "-filter_complex_script", fcs,
