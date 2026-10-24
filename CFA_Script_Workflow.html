@@ -5902,6 +5902,15 @@ function deRealize(p){
     .replace(/\b(dimly lit|low[- ]light|darkened|pitch[- ]black|in the dark|at night|late at night|shadowy)\b/gi,'softly lit')
     .replace(/\bglow(s|ing)?\b/gi,'shine$1');
 }
+// Darkness check: mean luma (0-255) of a result measured on a small canvas; null if it cannot be read (CORS etc).
+const DARK_LUMA=55;
+function imageLuma(url){
+  return new Promise(res=>{ const im=new Image(); im.crossOrigin='anonymous';
+    const t=setTimeout(()=>res(null),15000);
+    im.onload=()=>{ clearTimeout(t); try{ const c=document.createElement('canvas'); c.width=64; c.height=36; const x=c.getContext('2d'); x.drawImage(im,0,0,64,36);
+      const d=x.getImageData(0,0,64,36).data; let y=0; for(let i=0;i<d.length;i+=4) y+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; res(y/(d.length/4)); }catch(e){ res(null); } };
+    im.onerror=()=>{ clearTimeout(t); res(null); }; im.src=url; });
+}
 async function styledImageRequest(idx, model, prompt, refs, status){
   prompt=deRealize(prompt)+' Bright, evenly lit flat 2D cartoon frame, same art style as the reference sheets — not a photo, not 3D.';
   const s=sceneData[idx]||{};
@@ -5919,13 +5928,14 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(styleOnly.length) styleNote=' '+styleOnly.map(n=>'@Image'+n).join(' and ')+(styleOnly.length>1?' are':' is')+' an ART-STYLE reference only: copy the drawing style exactly but do NOT draw '+(styleOnly.length>1?'those people':'that person')+' unless the scene names them.';
   }catch(e){}
   let r=null, check=null, attempts=0, cost=0, checkErr='', best=null;
-  const rank=c=>!c?-1:(c.logic_ok!==false?3:0)+(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
+  const rank=c=>!c?-1:(c.too_dark?0:2)+(c.logic_ok!==false?3:0)+(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
   const people=sceneIdentityRefs(s), needsText=beatNeedsText(s), lctx=sceneLogicCtx(idx, prompt);
   const fixNote=c=>{ if(!c) return ''; const n=[];
     if(!c.style_match) n.push('the art style drifted'+(c.problems?' ('+c.problems+')':'')+' — match the reference art style exactly: flat 2D cartoon, bold outlines, flat colour, no realism');
     if(c.identity_match===false) n.push('wrong look for '+c.identity_misses.join(', ')+' ('+c.identity.filter(x=>x.problems).map(x=>x.name+': '+x.problems).join('; ')+') — copy face, hair, age, build and outfit exactly from their reference sheet');
     if(c.logic_ok===false) n.push('the picture did not make sense: '+(c.logic_problems.join('; ')||'objects that do not belong')+' — show only objects that belong in this place, at realistic size and placement');
     if(c.stray_text) n.push('it contained writing — remove ALL text, letters and numbers');
+    if(c.too_dark) n.push('the image was far too dark (mean brightness '+Math.round(c.luma)+'/255) — bright daytime lighting, light walls, every face and object clearly lit, no night or dim scene');
     return n.length?' STRICT, previous attempt failed: '+n.join('; ')+'.':''; };
   for(let a=0;a<=STYLE_RETRY_CAP;a++){
     attempts=a+1;
@@ -5936,8 +5946,9 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     status&&status('Checking art style and character identity against the reference sheets…');
     try{ check=await visionStyleCheck(r.url, people, lctx); }catch(e){ check=null; checkErr=e.message; }
     if(check) check.stray_text=!needsText && check.has_text;
+    if(check){ const y=await imageLuma(r.url); check.luma=y; check.too_dark=y!=null && y<DARK_LUMA; }
     if(!best || rank(check)>rank(best.check)) best={r,check};
-    if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text)) break;
+    if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text && !check.too_dark)) break;
   }
   if(best && best.r!==r){ r=best.r; check=best.check; } // every retry failed: keep the closest-to-model attempt
   let url=r.url, label=r.label, gptText=false, gptErr='';
@@ -5947,7 +5958,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
   const near=(x,y)=>{ if(Math.abs(x.length-y.length)>2) return false; const d=[...Array(y.length+1).keys()]; for(let i=1;i<=x.length;i++){ let p=d[0]; d[0]=i; for(let j=1;j<=y.length;j++){ const t=d[j]; d[j]=Math.min(d[j]+1,d[j-1]+1,p+(x[i-1]===y[j-1]?0:1)); p=t; } } return d[y.length]<=(y.length>5?2:1); };
   const isScriptText=t=>{ const w=String(t).toLowerCase().match(/[a-z0-9']+/g)||[]; return w.length>0 && w.every(x=>lineWords.some(y=>x===y||near(x,y))); };
   const strayOf=c=>needsText? (c.text||[]).some(t=>!isScriptText(t)) : !!c.has_text;
-  const recheck=async()=>{ try{ const c=await visionStyleCheck(url, people, lctx); if(c){ c.stray_text=strayOf(c); check=c; } }catch(e){ checkErr=e.message; } };
+  const recheck=async()=>{ try{ const c=await visionStyleCheck(url, people, lctx); if(c){ c.stray_text=strayOf(c); c.luma=check?.luma; c.too_dark=check?.too_dark; check=c; } }catch(e){ checkErr=e.message; } };
   if(check) check.stray_text=strayOf(check);
   const hint=needsText? 'ONLY words from this script line may appear, spelled correctly: "'+String(s?.line||'').replace(/^\s*\d+\.\s*/,'').slice(0,160)+'". Erase every other word, label, number or pseudo-text and paint it over with blank surface. '+prompt : prompt;
   if(check && gptOk() && check.style_match && check.identity_match!==false && (check.stray_text || (needsText && check.has_text))){
@@ -5961,7 +5972,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(gptText) label+=(needsText?' + GPT':' + GPT clean')+(check.stray_text?' (text remains)':'');
     if(check) check.textRemoved=gptText && !check.stray_text;
   }
-  if(sceneData[idx]===s) s.styleQA={score:check?check.style_score:null, match:check?check.style_match:null, identity:check?check.identity:[], identityMatch:check?check.identity_match:null, strayText:check?!!check.stray_text:null, logicOk:check?check.logic_ok!==false:null, logicProblems:check?check.logic_problems||[]:[], attempts, text:check?check.text:[], gptText, gptErr, checkErr};
+  if(sceneData[idx]===s) s.styleQA={score:check?check.style_score:null, match:check?check.style_match:null, identity:check?check.identity:[], identityMatch:check?check.identity_match:null, strayText:check?!!check.stray_text:null, logicOk:check?check.logic_ok!==false:null, logicProblems:check?check.logic_problems||[]:[], luma:check&&check.luma!=null?Math.round(check.luma):null, tooDark:check?!!check.too_dark:null, attempts, text:check?check.text:[], gptText, gptErr, checkErr};
   return {url, label, model, refs, check, attempts, gptText, cost};
 }
 // ═══ RECURRING CAST — keep series regulars (Dee, Mr. Okafor) looking the same ═══

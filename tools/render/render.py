@@ -602,6 +602,33 @@ def sfx_events(shots, arc_times):
 # ── rendering ────────────────────────────────────────────────────────────────
 _BARS = {}
 _SUBJ = {}
+_LUMA = {}
+DARK_LIFT_BELOW, DARK_TARGET = 80.0, 95.0
+
+
+def mean_luma(src, kind):
+    """Average luma (0-255) of the still / an early clip frame; None if it cannot be measured."""
+    if src in _LUMA:
+        return _LUMA[src]
+    y = None
+    try:
+        err = subprocess.run(["ffmpeg", "-v", "info", "-hide_banner"] + (["-ss", "0.3"] if kind == "video" else []) +
+                             ["-i", src, "-frames:v", "1", "-vf", "scale=96:-2,signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"],
+                             capture_output=True, text=True, timeout=60).stderr
+        v = re.findall(r"YAVG=([\d.]+)", err)
+        y = float(v[-1]) if v else None
+    except Exception:
+        y = None
+    _LUMA[src] = y
+    return y
+
+
+def lift_filter(y):
+    """Gamma lift that brings a too-dark frame's mean luma to ~DARK_TARGET (keeps blacks black, opens midtones)."""
+    if y is None or y >= DARK_LIFT_BELOW or y <= 1:
+        return ""
+    g = max(1.05, min(1.9, math.log(y / 255.0) / math.log(DARK_TARGET / 255.0)))
+    return ",eq=gamma=%.2f:contrast=1.12:saturation=1.1" % g
 SUBJECT_KEY = None  # xAI key for subject location (vertical reframing); None -> centre
 
 
@@ -681,11 +708,14 @@ def render_shot(src, kind, shot, W, H, out, frames):
                 reframe = subject_center(src, kind, shot.get("subject"))
         except Exception:
             reframe = None
+    lift = lift_filter(mean_luma(src, kind)) if src is not None else ""
+    if lift:
+        log("brighten", os.path.basename(src), "mean luma %.0f ->" % mean_luma(src, kind), lift[1:])
     def cover(w, h):
         pre = ("crop=%d:%d:%d:%d," % box) if box else ""
         if reframe:
-            return pre + subject_crop(w, h, reframe) + ",setsar=1"
-        return fill_graph(box, w, h) if box else "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1" % (w, h, w, h)
+            return pre + subject_crop(w, h, reframe) + ",setsar=1" + lift
+        return (fill_graph(box, w, h) if box else "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1" % (w, h, w, h)) + lift
     enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-pix_fmt", "yuv420p", "-r", str(FPS), "-an"]
     if src is None:
         vf = "color=c=0x101418:s=%dx%d:r=%d" % (W, H, FPS)
