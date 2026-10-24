@@ -86,7 +86,7 @@ async def el_route(route):
     m=SC['el']
     if m in('401','429'): return await route.fulfill(status=int(m),content_type='application/json',body=json.dumps({'detail':{'message':'nope'}}))
     if m=='empty': return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'audio_base64':'','alignment':None}))
-    body=json.loads(route.request.post_data or '{}'); text=body.get('text','')
+    body=json.loads(route.request.post_data or '{}'); text=body.get('text',''); SC['elBody']=body
     assert route.request.url.endswith('/with-timestamps'), route.request.url
     chars=list(text); st=[round(i*0.06,3) for i in range(len(chars))]; en=[round(x+0.06,3) for x in st]
     return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'audio_base64':base64.b64encode(b'ID3fakeaudio').decode(),'alignment':{'characters':chars,'character_start_times_seconds':st,'character_end_times_seconds':en}}))
@@ -451,6 +451,23 @@ async def main():
             check('writing: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
 
+        if want('pace'):
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,SC[k]) if k in('xai','fal','el') else SC[k]
+            ctx,pg,errs=await newpage(b)
+            check('pace: Slow is the default', await J(pg,"()=>document.getElementById('el-pace').value")=='slow')
+            await J(pg,"()=>{finalScript='Hello there. Calm now.';selId='v01';goVO();generateVO();}"); await pg.wait_for_timeout(900)
+            vs=(SC.get('elBody') or {}).get('voice_settings',{})
+            check('pace: slow sends speed 0.9 and +0.1 stability', vs.get('speed')==0.9 and abs(vs.get('stability',0)-0.6)<1e-9, vs)
+            check('pace: recorded with the timestamps', await J(pg,"()=>voPace")=='slow' and await J(pg,"()=>voWords.length")>0)
+            await J(pg,"()=>{document.getElementById('el-pace').value='normal';generateVO();}"); await pg.wait_for_timeout(900)
+            vs=(SC.get('elBody') or {}).get('voice_settings',{})
+            check('pace: normal sends speed 1.0', vs.get('speed')==1.0 and abs(vs.get('stability',0)-0.5)<1e-9, vs)
+            check('pace: summary shows pace', 'Normal pace' in await J(pg,"()=>{updateVSSummary();return document.getElementById('vs-summary').textContent}"))
+            r=await J(pg,"()=>inferCharactersAcrossBeats(['1. Jordan sits down.','2. He sighs and opens the app.','3. A blockchain is a shared ledger.','4. Marcus and Jordan laugh.','5. They high-five.','6. The fee is tiny.'])")
+            check('continuity: pronoun beats inherit the named character, concept beats stay NONE', r==['JORDAN','JORDAN','NONE','BOTH','BOTH','NONE'], r)
+            check('pace: no page errors', not [e for e in errs if 'pageerror' in e], errs)
+            await ctx.close()
+
         if want('export'):
             ctx,pg,errs=await newpage(b)
             await J(pg,"""()=>{selId='v07';finalScript='Jordan waits. Marcus says crypto is a ledger.';
@@ -471,7 +488,7 @@ async def main():
             check('export: zip valid (CRCs ok)', z.testzip() is None, names)
             check('export: zip contents', all(n in names for n in ['bundle.json','media/scene_001.png','media/scene_002.mp4','voiceover.mp3','script.txt','segments.txt','beats.srt']), names)
             bj=json.loads(z.read('bundle.json'))
-            check('export: bundle metadata', bj['format']=='cfa-final-edit-bundle' and bj['episode']==7 and bj['title'] and len(bj['segments'])==3 and bj['segments'][1]['start']==1.2 and bj['segments'][2]['media'] is None, bj['segments'])
+            check('export: bundle metadata', bj['format']=='cfa-final-edit-bundle' and bj['episode']==7 and bj['title'] and len(bj['segments'])==3 and bj['voicePace']['pace'] in ('slow','normal') and bj['segments'][1]['start']==1.2 and bj['segments'][2]['media'] is None, bj['segments'])
             check('export: srt has timed beats', '00:00:01,200 --> 00:00:03,300' in z.read('beats.srt').decode())
             check('export: filename', d.suggested_filename.startswith('CFA_FinalEdit_EP07_'), d.suggested_filename)
             check('export: status reports missing media', 'scenes without media: 3' in await J(pg,"()=>document.getElementById('fe-status').textContent"))

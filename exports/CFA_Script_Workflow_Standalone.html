@@ -1410,6 +1410,13 @@ select option{background:var(--surface2)}
             <option value="eleven_flash_v2_5">Flash v2.5 — fastest drafts, half price</option>
           </select>
         </div>
+        <div>
+          <div class="vs-field-label">Pace</div>
+          <select id="el-pace" aria-label="Voiceover pace" onchange="updateVSSummary()" title="Slow = calmer delivery (speed 0.9, +0.1 stability). Timestamps, beat timings and the final-edit export always match the audio that was generated.">
+            <option value="slow" selected>Slow — calm teaching pace (default)</option>
+            <option value="normal">Normal</option>
+          </select>
+        </div>
       </div>
       <div class="vs-grid-3">
         <div>
@@ -3295,6 +3302,7 @@ async function generateVO(){
   const stability  = parseFloat(document.getElementById('el-stability').value);
   const similarity = parseFloat(document.getElementById('el-similarity').value);
   const styleVal   = parseFloat(document.getElementById('el-style').value);
+  const pace       = VO_PACES[document.getElementById('el-pace')?.value] ? document.getElementById('el-pace').value : 'slow';
 
   document.getElementById('btn-vo').disabled=true;
   document.getElementById('s5-generating').style.display='';
@@ -3323,9 +3331,10 @@ async function generateVO(){
         text:          finalScript,
         model_id:      model,
         voice_settings:{
-          stability:        stability,
+          stability:        Math.min(1, stability + VO_PACES[pace].stabilityBoost),
           similarity_boost: similarity,
           style:            styleVal,
+          speed:            VO_PACES[pace].speed,
           use_speaker_boost: true
         }
       })
@@ -3358,6 +3367,7 @@ async function generateVO(){
     if(!blob||blob.size===0)throw new Error('Empty audio returned — try again.');
     trackVoiceSpend(finalScript.length*elModel.perChar);
     voWords=alignmentToWords(voJson.alignment||voJson.normalized_alignment);
+    voPace=pace; // timestamps above were produced at this pace; export records it
     if(voAudioURL){ try{URL.revokeObjectURL(voAudioURL);}catch(e){} }
     const url  = URL.createObjectURL(blob);
     voAudioURL = url;
@@ -3608,6 +3618,9 @@ function updateTopbarCostChip(){
 // ═══ VOICEOVER TIMING (ElevenLabs /with-timestamps) ═════════════════════════
 // voWords: [[word, startSec, endSec], …] from the character alignment of the voiceover.
 let voWords=[];
+// Voiceover pace. Slow is the default: calmer delivery for beginners.
+const VO_PACES={slow:{label:'Slow',speed:0.9,stabilityBoost:0.1},normal:{label:'Normal',speed:1.0,stabilityBoost:0}};
+let voPace='slow';
 function alignmentToWords(al){
   const out=[];
   if(!al || !Array.isArray(al.characters)) return out;
@@ -3708,6 +3721,7 @@ function saveWorkflowState(){
         tStart: s.tStart, tEnd: s.tEnd, videoDur: s.videoDur
       })),
       voWords: voWords,
+      voPace: voPace,
       currentScene: currentScene || 0,
       currentScreen: typeof curScreen !== 'undefined' ? curScreen : 6,
       selectedImageModel: selectedImageModel,
@@ -3809,6 +3823,7 @@ function resumeSavedSession(){
 
     segOriginal        = state.segOriginal || segScript;
     voWords            = state.voWords || [];
+    voPace             = VO_PACES[state.voPace] ? state.voPace : 'slow';
     // Sync model card visual state (preserve whether Imagen was auto-selected)
     setImageModel(state.userImageModel || state.selectedImageModel || 'kling-o1');
     if(state.imagenAutoSelected) setImageModel('imagen4', true);
@@ -4131,7 +4146,8 @@ async function exportFinalEditBundle(){
     const episode=selId?(parseInt(String(selId).replace(/\D/g,''),10)||null):null;
     const bundle={format:'cfa-final-edit-bundle',version:1,createdAt:new Date().toISOString(),title,episode,videoId:selId||'',
       script:finalScript||'',segmentedScript:segScript||'',voiceover:voName,srt:'beats.srt',
-      duration:voWords.length?voWords[voWords.length-1][2]:null,words:voWords,segments:segs};
+      duration:voWords.length?voWords[voWords.length-1][2]:null,words:voWords,segments:segs,
+      voicePace:{pace:voPace,speed:VO_PACES[voPace].speed}};
     files.unshift({name:'bundle.json',data:enc.encode(JSON.stringify(bundle,null,1))});
     files.push({name:'script.txt',data:enc.encode(finalScript||'')});
     files.push({name:'segments.txt',data:enc.encode(segs.map(g=>g.index+'. '+g.text).join('\n'))});
@@ -4221,6 +4237,27 @@ function detectCharacters(line){
   if(hasMarcus) return 'MARCUS';
   if(hasJordan) return 'JORDAN';
   return 'NONE';
+}
+
+// Character continuity across beats: a line like "He finally gets it." names nobody,
+// but it is still Jordan on screen. Without this the scene was tagged NONE and sent to a
+// reference-free model, so a different-looking person appeared mid-story. A NONE line that
+// refers to a person by pronoun inherits the most recent named character(s); explanatory
+// lines with no person stay NONE (concept visuals).
+const CONTINUITY_PRONOUN_RE=/\b(he|him|his|himself|they|them|their|both|together)\b/i;
+const CONTINUITY_CONCEPT_RE=/^\s*(\d+\.\s*)?(a|an|the|this|that|it|every|each|think of|imagine)\b/i;
+function inferCharactersAcrossBeats(lines){
+  let last='NONE';
+  return lines.map(line=>{
+    const c=detectCharacters(line);
+    if(c!=='NONE'){ last=c; return c; }
+    const t=String(line);
+    if(last!=='NONE' && CONTINUITY_PRONOUN_RE.test(t) && !CONTINUITY_CONCEPT_RE.test(t)){
+      if(/\b(they|them|their|both|together)\b/i.test(t)) return (last==='MARCUS'||last==='JORDAN')?last:last;
+      return last==='BOTH'?'MARCUS':last==='BOTH_JM'?'JORDAN':last;
+    }
+    return 'NONE';
+  });
 }
 
 // Detects secondary (non-Marcus/Jordan) human characters in a script line.
@@ -4319,10 +4356,11 @@ async function enterSceneGeneration(){
     const {text:classText}=await llmComplete({role:'fast', system:SYS_CLASSIFY, user:lines.join('\n'), maxTokens:2000});
     if(!classText)throw new Error('API returned an empty classification — check your xAI key and try again.');
 
+    const inferred = inferCharactersAcrossBeats(lines);
     sceneData = lines.map((line,i)=>{
       const match=classText.match(new RegExp('\\['+(i+1)+'\\]\\s*(IMAGE|VIDEO)','i'));
       const tag = match ? match[1].toUpperCase() : 'IMAGE';
-      const characters = detectCharacters(line);
+      const characters = inferred[i];
       return {line, tag, characters, prompt:'', sceneDesc:'', done:false, resultURL:'', resultType:'', resultModel:'', savedStartFrameURL:''};
     });
     // Enforce: never two consecutive VIDEO scenes — videos break up images, not stack
@@ -5742,7 +5780,7 @@ function updateVSSummary(){
   const st = document.getElementById('el-style')?.value || '0.3';
   document.getElementById('vs-summary').textContent =
     'Young Jamal · ' + (modelNames[m]||m) + ' · ' +
-    'Stab '+s+' Sim '+sim+' Style '+st;
+    'Stab '+s+' Sim '+sim+' Style '+st + ' · ' + ((VO_PACES[document.getElementById('el-pace')?.value]||VO_PACES.slow).label) + ' pace';
 }
 
 // ═══ HELPERS ═══

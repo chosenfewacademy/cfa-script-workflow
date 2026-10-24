@@ -42,8 +42,8 @@ def make_bundle(d):
         segs.append({"index": i + 1, "text": ln, "tag": "VIDEO" if i == 3 else "IMAGE", "characters": "",
                      "media": "media/scene_%03d.%s" % (i + 1, "mp4" if i == 3 else "png"),
                      "mediaType": "video" if i == 3 else "image", "start": round(st, 2), "end": round(t - 0.08, 2)})
-        t += 0.5
-    total = t
+        t += 0.15  # tight beat gap (~0.23s) - renderer must pad it
+    total = t + 0.3
     expr = "+".join("between(t,%.2f,%.2f)" % (w[1], w[2]) for w in words)
     ff("-f", "lavfi", "-i", "sine=f=180:d=%.2f" % total, "-af", "volume='0.5*(%s)':eval=frame" % expr,
        "-c:a", "libmp3lame", "-b:a", "128k", os.path.join(d, "voiceover.mp3"))
@@ -67,8 +67,11 @@ def verify(out, words, vertical):
     check(rep["resolution"] == ("1080x1920" if vertical else "1920x1080"), "%s resolution %s" % (tag, rep["resolution"]))
     check(rep["lufs"] is not None and abs(rep["lufs"] + 14) < 1.0, "%s loudness %s LUFS" % (tag, rep["lufs"]))
     cues = rep["caption_cues"]
-    miss = [w[0] for w in words if not any(c["start"] - 0.01 <= (w[1] + w[2]) / 2 <= c["end"] + 0.01
-                                           and render.norm(render.screen_text(w[0]).split()[0]) in [render.norm(x) for x in c["text"].split()] for c in cues)]
+    # words as shown on screen, timed with the padded timestamps the renderer used
+    shown = render.screen_tokens([w[0] for w in words])
+    pw = rep["padded_words"]
+    miss = [w[0] for w, sh in zip(pw, shown) if not any(c["start"] - 0.01 <= (w[1] + w[2]) / 2 <= c["end"] + 0.01
+                                           and render.norm(sh.split()[0]) in [render.norm(x) for x in c["text"].split()] for c in cues)]
     check(not miss, "%s every word captioned at its spoken time (missing: %s)" % (tag, miss))
     ass = open(os.path.join(out, "captions.ass")).read()
     check(not re.search(r"crypto", ass.split("[Events]")[1], re.I), "%s no 'crypto' in on-screen text" % tag)
@@ -81,7 +84,6 @@ def main():
     z, words = make_bundle(os.path.join(d, "src"))
     music = os.path.join(d, "music.wav")
     ff("-f", "lavfi", "-i", "sine=f=440:d=5", music)
-    check(render.screen_text("Crypto and cryptocurrencies") == "Digital assets and digital assets", "screen_text rewrite")
     for vertical in (False, True):
         out = os.path.join(d, "out_v" if vertical else "out_h")
         cmd = [sys.executable, os.path.join(HERE, "render.py"), z, "-o", out, "--no-grok", "--music", music]
@@ -89,18 +91,49 @@ def main():
             cmd += ["--vertical", "--caption-style", "boxed"]
         subprocess.run(cmd, check=True)
         verify(out, words, vertical)
-    # validator: garbage Grok output must fall back, partial output must be coerced onto real timings
+    # pacing: pauses, min hold, crossfades, phrase captions
+    rep = json.load(open(os.path.join(d, "out_h", "report.json")))
+    check(rep["pauses_added"] > 0.5 and abs(rep["duration"] - rep["voice_raw_duration"] - rep["pauses_added"]) < 0.15,
+          "pauses padded into voice (+%.2fs) and video follows" % rep["pauses_added"])
+    check(rep["min_shot"] >= render.MIN_HOLD - 0.01, "minimum shot hold %.2fs >= %.2fs" % (rep["min_shot"], render.MIN_HOLD))
+    check(len(rep["shots"]) < 4 and sum(len(s["beats"]) for s in rep["shots"]) == 4, "short beats merged: 4 beats -> %d shots" % len(rep["shots"]))
+    check(all(s["xfade"] >= 0.8 for s in rep["shots"][1:]), "crossfades >= 0.8s")
+    cues = rep["caption_cues"]
+    avg = sum(c["end"] - c["start"] for c in cues) / len(cues)
+    check(len(cues) <= len(words) / 4 and avg >= 1.5, "phrase captions: %d cues for %d words, avg %.2fs on screen" % (len(cues), len(words), avg))
+    ws = json.load(zipfile.ZipFile(z).open("bundle.json"))["words"]
+    import shutil
+    wk = tempfile.mkdtemp()
+    sg = [dict(x) for x in json.load(zipfile.ZipFile(z).open("bundle.json"))["segments"]]
+    zipfile.ZipFile(z).extract("voiceover.mp3", wk)
+    _, nw, ins, add = render.add_pauses(os.path.join(wk, "voiceover.mp3"), ws, sg, wk, 0.6, 0.45)
+    gaps = [sg[i + 1]["start"] - sg[i]["end"] for i in range(len(sg) - 1)]
+    check(all(g >= 0.59 for g in gaps), "beat gaps after padding >= 0.6s: %s" % [round(g, 2) for g in gaps])
+    check(all(nw[i][1] >= ws[i][1] for i in range(len(ws))), "word timestamps shifted forward, order kept")
+    shutil.rmtree(wk, ignore_errors=True)
+    # grammar-aware "crypto" swap
+    for src, want in [("Crypto isn't a slot machine.", "Digital assets aren't a slot machine."),
+                      ("He bought a crypto yesterday.", "He bought a digital asset yesterday."),
+                      ("Open a crypto wallet today", "Open a digital asset wallet today"),
+                      ("crypto is volatile", "digital assets are volatile"),
+                      ("Cryptocurrencies are new.", "Digital assets are new."),
+                      ("I like crypto.", "I like digital assets.")]:
+        check(render.screen_text(src) == want, "swap: %r -> %r (got %r)" % (src, want, render.screen_text(src)))
+    # validator: garbage Grok output must fall back, partial output coerced onto real timings
     b = json.load(zipfile.ZipFile(z).open("bundle.json"))
     segs = b["segments"]
     cuts = render.cut_points(segs, 12.0)
+    shots = render.group_shots(segs, cuts)
     try:
-        render.validate_edl({"shots": "nope"}, b, segs, cuts); check(False, "garbage EDL rejected")
+        render.validate_edl({"shots": "nope"}, b, shots); check(False, "garbage EDL rejected")
     except ValueError:
         check(True, "garbage EDL rejected")
-    e, _ = render.validate_edl({"shots": [{"index": i + 1, "motion": "spin", "transition_in": "explode", "transition_duration": 9,
-                                            "duration": 99} for i in range(4)],
-                                "title_card": {"enabled": True, "text": "Crypto 101"}}, b, segs, cuts)
+    e, _ = render.validate_edl({"shots": [{"index": i + 1, "motion": "spin", "transition_in": "explode", "transition_duration": 0.2,
+                                            "intensity": 0.5, "duration": 99} for i in range(len(shots))],
+                                "title_card": {"enabled": True, "text": "Crypto 101"}}, b, shots)
     check(all(s["motion"] in render.MOTIONS and s["transition_in"] in render.TRANSITIONS for s in e["shots"]), "bad motions/transitions coerced")
+    check(all(s["intensity"] <= render.KB_MAX for s in e["shots"]), "Ken Burns intensity capped (subtle)")
+    check(all(s["transition_duration"] >= 0.8 for s in e["shots"][1:]), "short Grok crossfade raised to >= 0.8s")
     check(abs(sum(s["duration"] for s in e["shots"]) - 12.0) < 1e-6, "durations locked to voice, Grok durations ignored")
     check("crypto" not in e["title_card"]["text"].lower(), "card text rewritten to digital assets")
     print("\n%d failure(s)" % len(fails))

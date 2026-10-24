@@ -20,8 +20,7 @@ import argparse, json, math, os, re, shutil, subprocess, sys, tempfile, time, ur
 FPS = 30
 XAI_URL = "https://api.x.ai/v1/chat/completions"
 MOTIONS = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "static"]
-TRANSITIONS = {"cut": None, "dissolve": "fade", "fadeblack": "fadeblack", "wipeleft": "wipeleft",
-               "slideleft": "slideleft", "smoothleft": "smoothleft", "circleopen": "circleopen"}
+TRANSITIONS = {"cut": None, "dissolve": "fade", "fadeblack": "fadeblack"}  # gentle only
 CAPTION_STYLES = ["bold_pop", "clean_lower", "boxed"]
 FONT = "Montserrat"
 
@@ -60,19 +59,55 @@ def media_duration(path):
 
 
 # ── on-screen wording ────────────────────────────────────────────────────────
+# Narration should already say "digital assets" (the script prompts enforce it).
+# If a "crypto" word slips through, captions swap it *with grammar fixes*:
+#   crypto is/was/has/isn't...  -> digital assets are/were/have/aren't...
+#   a/an crypto(currency)       -> a digital asset
+#   crypto wallet / exchange    -> digital asset wallet / exchange
+#   crypto, cryptos, cryptocurrencies (noun) -> digital assets
+_CRYPTO = re.compile(r"^(crypto|cryptos|cryptocurrency|cryptocurrencies)([^\w]*)$", re.I)
+_VERB_FIX = {"is": "are", "was": "were", "has": "have", "isn't": "aren't", "wasn't": "weren't", "hasn't": "haven't",
+             "does": "do", "doesn't": "don't", "isn’t": "aren’t", "wasn’t": "weren’t", "doesn’t": "don’t", "hasn’t": "haven’t"}
+_NOUN_NEXT = set("and or but in on for to of with is are was were has have does do isn't aren't doesn't "
+                 "can will could would should might may just really itself so that than as at by from".split())
+
+
+def _case(src, out):
+    if src.isupper() and len(src) > 1:
+        return out.upper()
+    return out[0].upper() + out[1:] if src[:1].isupper() else out
+
+
+def screen_tokens(tokens):
+    """Rewrite a list of words for on-screen use. Returns the same number of
+    entries (so word timings still line up); a swapped word may expand to two."""
+    out = list(tokens)
+    for i, t in enumerate(tokens):
+        m = _CRYPTO.match(t)
+        if not m:
+            continue
+        word, punct = m.group(1), m.group(2)
+        nxt = re.sub(r"[^\w’']", "", tokens[i + 1]).lower() if i + 1 < len(tokens) else ""
+        prev = tokens[i - 1].lower() if i else ""
+        plural_src = word.lower() in ("cryptos", "cryptocurrencies")
+        if prev in ("a", "an"):
+            rep = "digital asset"
+            out[i - 1] = _case(tokens[i - 1], "a")
+        elif punct or not nxt or nxt in _NOUN_NEXT or nxt in _VERB_FIX or plural_src:
+            rep = "digital assets"
+            if not punct and nxt in _VERB_FIX and not plural_src:
+                lead = re.match(r"^\W*", tokens[i + 1]).group(0)
+                tail = tokens[i + 1][len(lead) + len(nxt):]
+                out[i + 1] = lead + _case(tokens[i + 1][len(lead):], _VERB_FIX[nxt]) + tail
+        else:  # adjective: crypto wallet -> digital asset wallet
+            rep = "digital asset"
+        out[i] = _case(word, rep) + punct
+    return [re.sub(r"crypto", "digital asset", o, flags=re.I) for o in out]  # any leftover fragment
+
+
 def screen_text(s):
-    """On-screen text says "digital assets", never "crypto" (narration is untouched)."""
-    def rep(m):
-        w = m.group(0)
-        out = "digital assets" if w.lower().startswith("crypto") else w
-        if w[:1].isupper():
-            out = out[0].upper() + out[1:]
-        if w.isupper() and len(w) > 1:
-            out = out.upper()
-        return out
-    s = re.sub(r"\bcrypto(?:currenc(?:y|ies)|s)?\b", rep, s, flags=re.I)
-    s = re.sub(r"\b(?:a|an)\s+(digital assets)\b", r"\1", s, flags=re.I)
-    return re.sub(r"crypto", "digital asset", s, flags=re.I)  # any leftover fragment
+    """On-screen text says "digital assets", never "crypto", and stays grammatical."""
+    return " ".join(screen_tokens(str(s).split()))
 
 
 # ── bundle ───────────────────────────────────────────────────────────────────
@@ -150,44 +185,122 @@ def fill_timings(segs, words, total):
     return segs
 
 
+MIN_HOLD = 3.75        # seconds a picture stays up at minimum (short beats share a shot)
+XFADE = 0.9            # default crossfade
+KB_DEFAULT, KB_MAX = 0.045, 0.07   # Ken Burns: slow and subtle
+
+
+def add_pauses(voice, words, segs, work, beat_pause=0.6, sentence_pause=0.45):
+    """Insert silence so there is >= beat_pause between beats and >= sentence_pause
+    after a sentence end inside a beat. Shifts words and beat timings to match.
+    Returns (new_voice_path, words, inserted [(t, extra)], total_added)."""
+    if not words or (beat_pause <= 0 and sentence_pause <= 0):
+        return voice, words, [], 0.0
+    beat_first = set()
+    for s in segs:
+        if s.get("start") is None:
+            continue
+        k = min(range(len(words)), key=lambda j: abs(words[j][1] - s["start"]))
+        if k:
+            beat_first.add(k)
+    ins = []
+    for k in range(len(words) - 1):
+        gap = words[k + 1][1] - words[k][2]
+        target = beat_pause if (k + 1) in beat_first else (sentence_pause if re.search(r"[.!?…][\"”’']?$", words[k][0]) else 0)
+        extra = round(target - max(0.0, gap), 3)
+        if target and extra > 0.02:
+            ins.append((words[k][2] + max(0.0, gap) / 2, extra))
+    if not ins:
+        return voice, words, [], 0.0
+
+    def shift(t):
+        return t + sum(e for p, e in ins if p <= t + 1e-6)
+    src = os.path.join(work, "voice_src.wav")
+    run(["ffmpeg", "-y", "-v", "error", "-i", voice, "-ar", "48000", "-ac", "2", src])
+    cuts = [0.0] + [p for p, _ in ins]
+    fc, labs = [], []
+    for i, a in enumerate(cuts):
+        b = cuts[i + 1] if i + 1 < len(cuts) else None
+        trim = "atrim=start=%.4f%s" % (a, (":end=%.4f" % b) if b is not None else "")
+        pad = (",apad=pad_dur=%.4f" % ins[i][1]) if i < len(ins) else ""
+        fc.append("[0:a]%s,asetpts=PTS-STARTPTS%s[p%d]" % (trim, pad, i))
+        labs.append("[p%d]" % i)
+    fc.append("%sconcat=n=%d:v=0:a=1[a]" % ("".join(labs), len(labs)))
+    out = os.path.join(work, "voice_paced.wav")
+    gs = os.path.join(work, "pause_graph.txt")
+    open(gs, "w").write(";\n".join(fc))
+    run(["ffmpeg", "-y", "-v", "error", "-i", src, "-filter_complex_script", gs, "-map", "[a]", "-ar", "48000", out])
+    new_words = [[w[0], round(shift(w[1]), 3), round(shift(w[2]), 3)] for w in words]
+    for s in segs:
+        if s.get("start") is not None:
+            s["start"], s["end"] = round(shift(s["start"]), 3), round(shift(s["end"]), 3)
+    return out, new_words, ins, sum(e for _, e in ins)
+
+
 def cut_points(segs, total):
-    """Shot i runs [cut_i, cut_{i+1}); cuts sit just before each beat starts,
-    i.e. in the pause between beats, so pictures change with the voice."""
+    """Beat boundaries: cuts sit in the middle of the pause before each beat."""
     cuts = [0.0]
     for i in range(1, len(segs)):
         prev_end, st = segs[i - 1]["end"], segs[i]["start"]
-        c = st - min(0.12, max(0.0, (st - prev_end) / 2))
-        cuts.append(max(cuts[-1] + 0.5, min(c, total - 0.5)))
+        c = st - max(0.0, st - prev_end) / 2
+        cuts.append(max(cuts[-1] + 0.3, min(c, total - 0.3)))
     cuts.append(total)
     return cuts
 
 
+def group_shots(segs, cuts, min_hold=MIN_HOLD):
+    """Merge consecutive beats onto one shot until it holds >= min_hold seconds.
+    The shot uses the group's video clip if it has one (paid-for motion), else its first still."""
+    groups, cur = [], []
+    for i in range(len(segs)):
+        cur.append(i)
+        if cuts[cur[-1] + 1] - cuts[cur[0]] >= min_hold:
+            groups.append(cur)
+            cur = []
+    if cur:
+        if groups and cuts[cur[-1] + 1] - cuts[cur[0]] < min_hold:
+            groups[-1] += cur
+        else:
+            groups.append(cur)
+    shots = []
+    for n, g in enumerate(groups):
+        media = [segs[i] for i in g if segs[i].get("media")]
+        pick = next((s for s in media if s.get("mediaType") == "video"), media[0] if media else None)
+        shots.append({"index": n + 1, "beats": [segs[i]["index"] for i in g],
+                      "start": cuts[g[0]], "end": cuts[g[-1] + 1],
+                      "media": pick.get("media") if pick else None,
+                      "mediaType": (pick.get("mediaType") or "image") if pick else "",
+                      "text": " ".join(segs[i]["text"] for i in g)})
+    return shots
+
+
 # ── Grok edit decision list ──────────────────────────────────────────────────
-EDL_SYSTEM = """You are a senior YouTube video editor for Chosen Few Academy, a calm, beginner-friendly
+EDL_SYSTEM = """You are a senior YouTube video editor for Chosen Few Academy, a calm, unhurried, beginner-friendly
 education channel about digital assets (story-driven 2D illustrated explainers with characters Marcus and Jordan).
-You receive the voiceover beats with LOCKED timings and the media for each beat.
+The pace must feel slow and easy to follow. You receive SHOTS (each already holds one or more voiceover beats,
+at least ~3.75 s each) with LOCKED timings and the media for each shot.
 Return ONLY a JSON object, no prose:
 {
  "shots":[{"index":int,"motion":"zoom_in|zoom_out|pan_left|pan_right|pan_up|pan_down|static",
-           "intensity":0.04-0.18,"transition_in":"cut|dissolve|fadeblack|wipeleft|slideleft|smoothleft|circleopen",
-           "transition_duration":0.0-1.0,"emphasis":["word",...]}],
- "caption_style":{"preset":"bold_pop|clean_lower|boxed","words_per_caption":2-6,"highlight_color":"#RRGGBB","position":"bottom|center"},
- "title_card":{"enabled":bool,"text":"...","subtitle":"...","duration":1.5-4},
- "end_card":{"enabled":bool,"text":"...","duration":1.5-4},
+           "intensity":0.02-0.07,"transition_in":"cut|dissolve|fadeblack",
+           "transition_duration":0.8-1.0,"emphasis":["word",...]}],
+ "caption_style":{"preset":"clean_lower|boxed|bold_pop","words_per_caption":5-8,"highlight_color":"#RRGGBB","position":"bottom|center"},
+ "title_card":{"enabled":bool,"text":"...","subtitle":"...","duration":2.5-4},
+ "end_card":{"enabled":bool,"text":"...","duration":2.5-4},
  "thumbnail":{"shot_index":int,"text":"max 5 words"}
 }
-Rules: exactly one entry per beat, same index. Durations are fixed by the voice; never invent timing.
-Vary motion so consecutive stills differ; use "static" for video clips. Prefer quick dissolves (0.3-0.5s)
-between beats in the same moment, fadeblack only at big story turns, plain cuts for energy. First shot transition_in is "cut".
+Rules: exactly one entry per shot, same index. Durations are fixed by the voice; never invent timing.
+Motion is slow and subtle (intensity 0.03-0.05 typical, never above 0.07); alternate direction between consecutive stills; "static" for video clips.
+Transitions are gentle: dissolve 0.8-1.0 s by default, fadeblack only at a big story turn, plain cut only for a deliberate jolt (rare). First shot transition_in is "cut".
+Captions are calm phrase-level chunks (5-8 words, broken at natural phrase boundaries), not word-by-word pops; 1-2 emphasis words per shot at most.
 On-screen text must say "digital assets", never the word "crypto". Keep text short and calm, no hype."""
 
 
-def grok_edl(bundle, segs, cuts, key, model="grok-4.3", timeout=120):
-    beats = [{"index": s["index"], "text": s["text"], "media": s.get("mediaType") or "none",
-              "seconds": round(cuts[i + 1] - cuts[i], 2), "characters": s.get("characters", "")}
-             for i, s in enumerate(segs)]
+def grok_edl(bundle, shots, key, model="grok-4.3", timeout=120):
+    sh = [{"index": s["index"], "text": s["text"], "media": s.get("mediaType") or "none",
+           "seconds": round(s["end"] - s["start"], 2), "beats": len(s["beats"])} for s in shots]
     user = json.dumps({"title": bundle.get("title"), "episode": bundle.get("episode"),
-                       "total_seconds": round(cuts[-1], 2), "beats": beats})
+                       "total_seconds": round(shots[-1]["end"], 2), "shots": sh})
     body = json.dumps({"model": model, "response_format": {"type": "json_object"},
                        "messages": [{"role": "system", "content": EDL_SYSTEM}, {"role": "user", "content": user}]}).encode()
     req = urllib.request.Request(XAI_URL, data=body, headers={"Authorization": "Bearer " + key,
@@ -199,20 +312,21 @@ def grok_edl(bundle, segs, cuts, key, model="grok-4.3", timeout=120):
     return json.loads(txt), j.get("usage", {})
 
 
-def fallback_edl(bundle, segs):
-    cycle = ["zoom_in", "pan_right", "zoom_out", "pan_left", "pan_up", "zoom_in", "pan_down"]
-    shots = []
-    for i, s in enumerate(segs):
+def fallback_edl(bundle, shots):
+    cycle = ["zoom_in", "pan_right", "zoom_out", "pan_left"]
+    out, k = [], 0
+    for i, s in enumerate(shots):
         vid = s.get("mediaType") == "video"
-        shots.append({"index": s["index"], "motion": "static" if vid else cycle[i % len(cycle)],
-                      "intensity": 0.10, "transition_in": "cut" if i == 0 else "dissolve",
-                      "transition_duration": 0.0 if i == 0 else 0.4, "emphasis": []})
+        out.append({"index": s["index"], "motion": "static" if vid else cycle[k % len(cycle)],
+                    "intensity": KB_DEFAULT, "transition_in": "cut" if i == 0 else "dissolve",
+                    "transition_duration": 0.0 if i == 0 else XFADE, "emphasis": []})
+        k += 0 if vid else 1
     t = bundle.get("title") or "Chosen Few Academy"
     ep = bundle.get("episode")
-    return {"shots": shots,
-            "caption_style": {"preset": "bold_pop", "words_per_caption": 4, "highlight_color": "#FFD23F", "position": "bottom"},
-            "title_card": {"enabled": True, "text": t, "subtitle": ("Episode %d" % ep) if ep else "Chosen Few Academy", "duration": 3.0},
-            "end_card": {"enabled": True, "text": "Subscribe for the next episode", "duration": 3.0},
+    return {"shots": out,
+            "caption_style": {"preset": "clean_lower", "words_per_caption": 7, "highlight_color": "#FFD23F", "position": "bottom"},
+            "title_card": {"enabled": True, "text": t, "subtitle": ("Episode %d" % ep) if ep else "Chosen Few Academy", "duration": 3.5},
+            "end_card": {"enabled": True, "text": "Subscribe for the next episode", "duration": 3.5},
             "thumbnail": {"shot_index": 1, "text": t}}
 
 
@@ -224,12 +338,12 @@ def clamp(v, lo, hi, d):
     return d if math.isnan(v) else max(lo, min(hi, v))
 
 
-def validate_edl(raw, bundle, segs, cuts):
-    """Coerce Grok's EDL onto the real timings. Returns (edl, problems).
+def validate_edl(raw, bundle, shots_in):
+    """Coerce Grok's EDL onto the real shot timings. Returns (edl, problems).
     Raises ValueError when it is unusable (caller falls back)."""
     if not isinstance(raw, dict) or not isinstance(raw.get("shots"), list):
         raise ValueError("no shots list")
-    fb = fallback_edl(bundle, segs)
+    fb = fallback_edl(bundle, shots_in)
     by_idx = {}
     for s in raw["shots"]:
         if isinstance(s, dict):
@@ -238,37 +352,37 @@ def validate_edl(raw, bundle, segs, cuts):
             except Exception:
                 pass
     problems = []
-    if len(by_idx) < max(1, int(0.8 * len(segs))):
-        raise ValueError("EDL covers %d of %d beats" % (len(by_idx), len(segs)))
+    if len(by_idx) < max(1, int(0.8 * len(shots_in))):
+        raise ValueError("EDL covers %d of %d shots" % (len(by_idx), len(shots_in)))
     shots = []
-    for i, seg in enumerate(segs):
-        s, f = by_idx.get(seg["index"]), fb["shots"][i]
+    for i, base in enumerate(shots_in):
+        s, f = by_idx.get(base["index"]), fb["shots"][i]
         if s is None:
-            problems.append("beat %d missing; fallback used" % seg["index"])
+            problems.append("shot %d missing; fallback used" % base["index"])
             s = f
-        dur = cuts[i + 1] - cuts[i]
+        dur = base["end"] - base["start"]
         motion = s.get("motion") if s.get("motion") in MOTIONS else f["motion"]
-        if seg.get("mediaType") == "video":
+        if base.get("mediaType") == "video":
             motion = "static"
         tr = s.get("transition_in") if s.get("transition_in") in TRANSITIONS else f["transition_in"]
-        td = clamp(s.get("transition_duration"), 0.0, 1.0, 0.4)
+        td = clamp(s.get("transition_duration"), 0.8, 1.0, XFADE)
         if i == 0:
             tr, td = "cut", 0.0
         # a transition may use at most 40% of either neighbouring shot
-        td = min(td, 0.4 * dur, 0.4 * (cuts[i] - cuts[i - 1]) if i else 0)
-        if tr == "cut":
-            td = 0.0
-        if td < 0.1 and tr != "cut":
+        prev_dur = shots_in[i - 1]["end"] - shots_in[i - 1]["start"] if i else 0
+        td = min(td, 0.4 * dur, 0.4 * prev_dur) if i else 0.0
+        if tr == "cut" or td < 0.1:
             tr, td = "cut", 0.0
-        shots.append({"index": seg["index"], "start": round(cuts[i], 3), "end": round(cuts[i + 1], 3),
-                      "duration": round(dur, 3), "motion": motion,
-                      "intensity": clamp(s.get("intensity"), 0.03, 0.2, 0.1),
+        shots.append({"index": base["index"], "beats": base["beats"], "start": round(base["start"], 3),
+                      "end": round(base["end"], 3), "duration": round(dur, 3),
+                      "media": base["media"], "mediaType": base["mediaType"], "motion": motion,
+                      "intensity": clamp(s.get("intensity"), 0.02, KB_MAX, KB_DEFAULT),
                       "transition_in": tr, "transition_duration": round(td, 3),
-                      "emphasis": [str(x) for x in (s.get("emphasis") or []) if isinstance(x, (str, int))][:3]})
+                      "emphasis": [str(x) for x in (s.get("emphasis") or []) if isinstance(x, (str, int))][:2]})
     cs = raw.get("caption_style") if isinstance(raw.get("caption_style"), dict) else {}
     hc = cs.get("highlight_color", "")
-    cap = {"preset": cs.get("preset") if cs.get("preset") in CAPTION_STYLES else "bold_pop",
-           "words_per_caption": int(clamp(cs.get("words_per_caption"), 2, 6, 4)),
+    cap = {"preset": cs.get("preset") if cs.get("preset") in CAPTION_STYLES else "clean_lower",
+           "words_per_caption": int(clamp(cs.get("words_per_caption"), 5, 8, 7)),
            "highlight_color": hc if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(hc)) else "#FFD23F",
            "position": cs.get("position") if cs.get("position") in ("bottom", "center") else "bottom"}
 
@@ -276,14 +390,14 @@ def validate_edl(raw, bundle, segs, cuts):
         c = c if isinstance(c, dict) else {}
         out = {"enabled": bool(c.get("enabled", d["enabled"])),
                "text": screen_text(str(c.get("text") or d["text"]))[:80],
-               "duration": clamp(c.get("duration"), 1.5, 4.0, d["duration"])}
+               "duration": clamp(c.get("duration"), 2.5, 4.0, d["duration"])}
         if "subtitle" in d:
             out["subtitle"] = screen_text(str(c.get("subtitle") or d["subtitle"]))[:80]
         return out
     th = raw.get("thumbnail") if isinstance(raw.get("thumbnail"), dict) else {}
-    ti = int(clamp(th.get("shot_index"), 1, len(segs), 1))
-    if not segs[ti - 1].get("media"):
-        ti = next((s["index"] for s in segs if s.get("media")), 1)
+    ti = int(clamp(th.get("shot_index"), 1, len(shots_in), 1))
+    if not shots_in[ti - 1].get("media"):
+        ti = next((s["index"] for s in shots_in if s.get("media")), 1)
     return ({"shots": shots, "caption_style": cap,
              "title_card": card(raw.get("title_card"), fb["title_card"]),
              "end_card": card(raw.get("end_card"), fb["end_card"]),
@@ -373,50 +487,39 @@ Style: Sub,{FONT},{int(H*0.035)},{hl},&H00FFFFFF,&H00101010,&H96000000,1,0,0,0,1
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     ev, cues = [], []
-    # word-level captions, grouped per beat so a caption never spans a cut
+    # phrase-level captions: break at punctuation / max words, never across a beat,
+    # held until the next phrase (up to 0.8 s past the last word), min 1.2 s on screen
     W_ = [(w[0], float(w[1]), float(w[2])) for w in words]
+    disp_all = screen_tokens([w[0] for w in W_])
     n = cap["words_per_caption"]
-    seg_bounds = [s["end"] for s in segs]
-    groups, cur, bi = [], [], 0
-    for w in W_:
-        while bi < len(seg_bounds) - 1 and w[1] >= seg_bounds[bi] - 0.02:
-            bi += 1
-            if cur:
-                groups.append((cur, gbi))
-                cur = []
-        gbi = bi
-        cur.append(w)
-        if len(cur) >= n or re.search(r"[.!?…]$", w[0]):
-            groups.append((cur, gbi))
+    starts = sorted(s["start"] for s in segs if s.get("start") is not None)[1:]
+    groups, cur = [], []
+    for k, w in enumerate(W_):
+        if cur and any(W_[cur[-1]][1] < st <= w[1] + 0.02 for st in starts):
+            groups.append(cur)
+            cur = []
+        cur.append(k)
+        soft = re.search(r"[,;:—–]$", w[0]) and len(cur) >= max(3, n - 3)
+        if len(cur) >= n or re.search(r"[.!?…][\"”’']?$", w[0]) or soft:
+            groups.append(cur)
             cur = []
     if cur:
-        groups.append((cur, gbi))
+        groups.append(cur)
+    shot_of = lambda t: next((i for i, sh in enumerate(edl["shots"]) if sh["start"] <= t < sh["end"]), len(edl["shots"]) - 1)
     emph = [{norm(x) for x in sh.get("emphasis", [])} for sh in edl["shots"]]
-    pop = cap["preset"] == "bold_pop"
-    for gi, (g, gb) in enumerate(groups):
-        g_start = g[0][1]
-        g_end = g[-1][2] + 0.25
+    for gi, g in enumerate(groups):
+        g_start = W_[g[0]][1]
+        g_end = W_[g[-1]][2] + 0.8
         if gi + 1 < len(groups):
-            g_end = min(g_end, groups[gi + 1][0][0][1])
-        g_end = min(max(g_end, g_start + 0.3), total)
-        disp = [screen_text(w[0]) for w in g]
-        if pop:
-            # one event per word: whole caption, current word highlighted + slight scale
-            for wi, w in enumerate(g):
-                s0 = w[1] if wi else g_start
-                s1 = g[wi + 1][1] if wi + 1 < len(g) else g_end
-                if s1 <= s0:
-                    continue
-                parts = []
-                for k, t in enumerate(disp):
-                    t = ass_esc(t)
-                    parts.append("{\\c%s\\fscx108\\fscy108}%s{\\c&H00FFFFFF&\\fscx100\\fscy100}" % (hl, t) if k == wi else t)
-                ev.append("Dialogue: 1,%s,%s,Cap,,0,0,0,,%s" % (ass_time(s0), ass_time(s1), " ".join(parts)))
-        else:
-            em = emph[gb] if gb < len(emph) else set()
-            txt = " ".join(("{\\c%s}%s{\\c&H00FFFFFF&}" % (hl, ass_esc(t))) if norm(w[0]) in em else ass_esc(t)
-                           for t, w in zip(disp, g))
-            ev.append("Dialogue: 1,%s,%s,Cap,,0,0,0,,{\\fad(80,80)}%s" % (ass_time(g_start), ass_time(g_end), txt))
+            g_end = min(g_end, W_[groups[gi + 1][0]][1])
+        g_end = min(max(g_end, g_start + 1.2), total)
+        if gi + 1 < len(groups):
+            g_end = min(g_end, W_[groups[gi + 1][0]][1])
+        disp = [disp_all[k] for k in g]
+        em = emph[shot_of(g_start)]
+        txt = " ".join(("{\\c%s}%s{\\c&H00FFFFFF&}" % (hl, ass_esc(t))) if norm(W_[k][0]) in em else ass_esc(t)
+                       for t, k in zip(disp, g))
+        ev.append("Dialogue: 1,%s,%s,Cap,,0,0,0,,{\\fad(200,200)}%s" % (ass_time(g_start), ass_time(g_end), txt))
         cues.append({"start": round(g_start, 3), "end": round(g_end, 3), "text": " ".join(disp)})
     tc, ec = edl["title_card"], edl["end_card"]
     if tc["enabled"]:
@@ -512,6 +615,9 @@ def main():
     ap.add_argument("--model", default="grok-4.3")
     ap.add_argument("--keys-env", default="/home/box/secrets/cfa_keys.env", help="optional env file for XAI_API_KEY")
     ap.add_argument("--caption-style", choices=CAPTION_STYLES, help="override Grok's caption preset")
+    ap.add_argument("--min-hold", type=float, default=MIN_HOLD, help="min seconds per shot; short beats are merged (default 3.75)")
+    ap.add_argument("--beat-pause", type=float, default=0.6, help="min silence between beats, padded from timestamps (0 = off)")
+    ap.add_argument("--sentence-pause", type=float, default=0.45, help="min silence after a sentence inside a beat (0 = off)")
     ap.add_argument("--no-title", action="store_true")
     ap.add_argument("--no-end-card", action="store_true")
     ap.add_argument("--keep-work", action="store_true")
@@ -533,8 +639,14 @@ def main():
         if s.get("media") and not os.path.exists(os.path.join(d, s["media"])):
             s["media"] = None
     fill_timings(segs, words, total)
+    voice_raw = total
+    voice, words, pauses, added = add_pauses(voice, words, segs, work, a.beat_pause, a.sentence_pause)
+    if added:
+        total = media_duration(voice)
     cuts = cut_points(segs, total)
-    log("%s | %d beats | voice %.2fs | %dx%d" % (b.get("title"), len(segs), total, W, H))
+    base_shots = group_shots(segs, cuts, a.min_hold)
+    log("%s | %d beats -> %d shots | voice %.2fs (+%.2fs pauses) | %dx%d" % (
+        b.get("title"), len(segs), len(base_shots), total, added, W, H))
 
     # EDL
     key = os.environ.get("XAI_API_KEY")
@@ -547,14 +659,14 @@ def main():
     if key and not a.no_grok:
         for attempt in range(2):
             try:
-                raw, usage = grok_edl(b, segs, cuts, key, a.model)
-                edl, problems = validate_edl(raw, b, segs, cuts)
+                raw, usage = grok_edl(b, base_shots, key, a.model)
+                edl, problems = validate_edl(raw, b, base_shots)
                 source = "grok:" + a.model
                 break
             except Exception as e:
                 problems.append("grok attempt %d failed: %s" % (attempt + 1, str(e)[:200]))
     if edl is None:
-        edl, _ = validate_edl(fallback_edl(b, segs), b, segs, cuts)
+        edl, _ = validate_edl(fallback_edl(b, base_shots), b, base_shots)
     if a.caption_style:
         edl["caption_style"]["preset"] = a.caption_style
     if a.no_title:
@@ -562,25 +674,27 @@ def main():
     if a.no_end_card:
         edl["end_card"]["enabled"] = False
     edl["source"] = source
+    edl["pauses_added"] = round(added, 3)
     json.dump(edl, open(os.path.join(a.out, "edl.json"), "w"), indent=1)
     log("EDL from", source, "| problems:", problems or "none")
 
     # shots
     clips, last_media = [], None
-    for i, (seg, shot) in enumerate(zip(segs, edl["shots"])):
-        nxt = edl["shots"][i + 1]["transition_duration"] if i + 1 < len(segs) else 0.0
+    shots = edl["shots"]
+    for i, shot in enumerate(shots):
+        nxt = shots[i + 1]["transition_duration"] if i + 1 < len(shots) else 0.0
         src, kind = None, "image"
-        if seg.get("media"):
-            src, kind = os.path.join(d, seg["media"]), seg.get("mediaType") or "image"
+        if shot.get("media"):
+            src, kind = os.path.join(d, shot["media"]), shot.get("mediaType") or "image"
             last_media = (src, kind)
         elif last_media:  # hold the previous visual rather than going black
             src, kind = last_media
         out = os.path.join(work, "shot_%03d.mp4" % i)
         f0 = round(shot["start"] * FPS)
-        f1 = round((shot["end"] + nxt) * FPS) if i + 1 < len(segs) else round(total * FPS) + 2
+        f1 = round((shot["end"] + nxt) * FPS) if i + 1 < len(shots) else round(total * FPS) + 2
         render_shot(src, kind, shot, W, H, out, max(2, f1 - f0))
         clips.append(out)
-        log("shot %d/%d %s %s %.2fs" % (i + 1, len(segs), kind, shot["motion"], shot["duration"]))
+        log("shot %d/%d beats %s %s %s %.2fs" % (i + 1, len(shots), shot["beats"], kind, shot["motion"], shot["duration"]))
 
     # assemble: xfade chain (offset = next cut time) + captions
     ass = os.path.join(work, "captions.ass")
@@ -613,7 +727,7 @@ def main():
     th = edl["thumbnail"]
     si = th["shot_index"] - 1
     thumb = os.path.join(a.out, "thumbnail.jpg")
-    make_thumbnail(clips[si], edl["shots"][si]["duration"] * 0.6, th["text"], a.vertical, work, thumb)
+    make_thumbnail(clips[si], shots[si]["duration"] * 0.6, th["text"], a.vertical, work, thumb)
 
     pr = probe(final)
     v = next(s for s in pr["streams"] if s["codec_type"] == "video")
@@ -622,8 +736,13 @@ def main():
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
               "audio_streams": len(au), "lufs": measure_lufs(final), "edl_source": source,
               "edl_problems": problems, "grok_usage": usage, "beats": len(segs),
+              "voice_raw_duration": voice_raw, "pauses_added": round(added, 3), "pause_count": len(pauses),
+              "shots": [{"index": x["index"], "beats": x["beats"], "media": x["media"], "type": x["mediaType"],
+                         "start": x["start"], "duration": x["duration"], "motion": x["motion"],
+                         "transition": x["transition_in"], "xfade": x["transition_duration"]} for x in shots],
+              "avg_shot": round(total / len(shots), 3), "min_shot": min(x["duration"] for x in shots),
               "interpolated_beats": [s["index"] for s in segs if s.get("interpolated")],
-              "caption_cues": cues, "render_seconds": round(time.time() - t0, 1)}
+              "caption_cues": cues, "padded_words": words, "render_seconds": round(time.time() - t0, 1)}
     json.dump(report, open(os.path.join(a.out, "report.json"), "w"), indent=1)
     shutil.copy(ass, os.path.join(a.out, "captions.ass"))
     if not a.keep_work:
