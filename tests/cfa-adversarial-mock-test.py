@@ -233,7 +233,7 @@ async def main():
         if want('fal'):
             ctx,pg,errs=await newpage(b)
             await J(pg,"""()=>{sceneData=[{line:'1. Marcus waits.',tag:'IMAGE',characters:'MARCUS',prompt:'p',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
-              {line:'2. Jordan sends.',tag:'VIDEO',characters:'JORDAN',prompt:'p',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
+              {line:'2. Marcus sends.',tag:'VIDEO',characters:'MARCUS',prompt:'p',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
               {line:'3. A chart.',tag:'IMAGE',characters:'NONE',prompt:'p',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
               {line:'4. Marcus and Jordan talk.',tag:'IMAGE',characters:'BOTH',prompt:'p',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''}];
               goTo(6);document.getElementById('s6-phase1').style.display='none';document.getElementById('s6-phase2').style.display='';currentScene=0;loadScene(0);}""")
@@ -465,6 +465,13 @@ async def main():
             check('pace: summary shows pace', 'Normal pace' in await J(pg,"()=>{updateVSSummary();return document.getElementById('vs-summary').textContent}"))
             r=await J(pg,"()=>inferCharactersAcrossBeats(['1. Jordan sits down.','2. He sighs and opens the app.','3. A blockchain is a shared ledger.','4. Marcus and Jordan laugh.','5. They high-five.','6. The fee is tiny.'])")
             check('continuity: pronoun beats inherit the named character, concept beats stay NONE', r==['JORDAN','JORDAN','NONE','BOTH','BOTH','NONE'], r)
+            r=await J(pg,"""()=>{sceneData=[{tag:'IMAGE',characters:'JORDAN',resultURL:'https://x/j.png',resultType:'image'},{tag:'IMAGE',characters:'NONE',resultURL:'https://x/c.png',resultType:'image'},{tag:'VIDEO',characters:'JORDAN'},{tag:'VIDEO',characters:'NONE'},{tag:'VIDEO',characters:'MARCUS'}];
+              return [bestStartFrameFor(2),bestStartFrameFor(3),bestStartFrameFor(4)];}""")
+            check('continuity: character clips start from a frame with that character, never a concept still', r==['https://x/j.png','https://x/c.png',''], r)
+            r=await J(pg,"""()=>{sceneData=[{tag:'IMAGE',characters:'NONE',resultURL:'',resultType:''},{tag:'VIDEO',characters:'NONE'},{tag:'IMAGE',characters:'JORDAN',resultURL:'',resultType:''},{tag:'VIDEO',characters:'JORDAN'}];
+              applyImageResult(0,'https://x/c.png','m'); const a=sceneData[3].savedStartFrameURL||''; applyImageResult(2,'https://x/j.png','m');
+              return [sceneData[1].savedStartFrameURL,a,sceneData[3].savedStartFrameURL];}""")
+            check('continuity: new images update start frames of later clips by character', r==['https://x/c.png','','https://x/j.png'], r)
             check('pace: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
 

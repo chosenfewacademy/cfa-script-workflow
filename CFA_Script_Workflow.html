@@ -4567,10 +4567,9 @@ function loadScene(i){
 
   // Start frame (video scenes): saved one, else most recent completed image before this scene
   if(isVideo){
-    if(!s.savedStartFrameURL){
-      for(let j=i-1; j>=0; j--){
-        if(sceneData[j].tag==='IMAGE' && sceneData[j].resultURL){ s.savedStartFrameURL = sceneData[j].resultURL; break; }
-      }
+    if(!s.startFrameManual){
+      const best=bestStartFrameFor(i);
+      if(best) s.savedStartFrameURL = best;
     }
   }
   clearStartFrameSlotUI();
@@ -5446,11 +5445,28 @@ function applyImageResult(idx, url, label){
   const s=sceneData[idx];
   s.resultURL=url; s.resultType='image'; s.resultModel=label;
   for(let j=idx+1;j<sceneData.length;j++){
-    if(sceneData[j].tag==='VIDEO'){
-      if(!sceneData[j].savedStartFrameURL || !sceneData[j].startFrameManual){ sceneData[j].savedStartFrameURL=url; sceneData[j].startFrameManual=false; }
-      break;
+    if(sceneData[j].tag==='VIDEO' && !sceneData[j].startFrameManual){
+      const best=bestStartFrameFor(j);
+      if(best){ sceneData[j].savedStartFrameURL=best; sceneData[j].startFrameManual=false; }
     }
   }
+}
+// Character continuity for clips: Kling image-to-video takes its look from the start frame,
+// so a VIDEO beat with Jordan must start from an image that was generated with Jordan's
+// reference — not from the nearest concept still. Prefer the closest earlier image with the
+// same characters, then one sharing a character, then the closest image (concept beats only).
+function sceneCharSet(c){ return c==='BOTH'||c==='BOTH_JM'?['MARCUS','JORDAN']:c==='NONE'||!c?[]:[c]; }
+function bestStartFrameFor(j){
+  const want=sceneCharSet(sceneData[j]?.characters);
+  const imgs=[];
+  for(let k=j-1;k>=0;k--){ const x=sceneData[k]; if(x.tag==='IMAGE'&&x.resultURL&&x.resultType!=='video') imgs.push(x); }
+  if(!imgs.length) return '';
+  if(!want.length) return imgs[0].resultURL;
+  const key=a=>a.slice().sort().join('+');
+  const exact=imgs.find(x=>key(sceneCharSet(x.characters))===key(want));
+  if(exact) return exact.resultURL;
+  const share=imgs.find(x=>sceneCharSet(x.characters).some(c=>want.includes(c)));
+  return share?share.resultURL:'';
 }
 
 // ═══ GENERATE ALL IMAGES — parallel, concurrency-limited ═══
@@ -5595,6 +5611,12 @@ async function generateScene(){
 
       if(selectedVideoModel==='kling-v16'){
         // ── Kling v1.6 Pro ───────────────────────────────────────────────────
+        if(!startFrameURL && s.characters!=='NONE'){
+          showErr('e6','⚠ This clip shows '+(s.characters==='JORDAN'?'Jordan':s.characters==='MARCUS'?'Marcus':'Marcus and Jordan')+'. Text-to-video has no character reference, so they would look like strangers. Generate an earlier image scene with them (or upload a start frame) first.');
+          s6ShowPanel('startframe');
+          genBtn.disabled=false;
+          return;
+        }
         const body={prompt:finalPrompt,duration:sceneDuration,aspect_ratio:'16:9'};
         if(startFrameURL) body.image_url=startFrameURL;
         if(body.image_url&&sceneRefs['subject']?.url?.startsWith('https://'))
