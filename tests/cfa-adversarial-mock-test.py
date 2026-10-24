@@ -119,12 +119,19 @@ async def newpage(b, keys=True, pre=None):
     errs=[]
     pg.on('pageerror',lambda e: errs.append('pageerror: '+str(e)))
     pg.on('console',lambda m: errs.append(m.type+': '+m.text) if m.type=='error' else None)
-    pg.on('dialog',lambda d: asyncio.ensure_future(d.accept()))
+    pg.on('dialog',lambda d: (SC.setdefault('dialogs',[]).append(d.message), asyncio.ensure_future(d.dismiss() if SC.get('dismiss') else d.accept())))
     await ctx.route('**/*',other_route)
     await ctx.route('https://api.x.ai/**',xai_route)
     await ctx.route(re.compile(r'https://(fal\.run|rest\.alpha\.fal\.ai|upload\.mock|v3b\.fal\.media)/.*'),fal_route)
     await ctx.route('https://api.elevenlabs.io/**',el_route)
     await ctx.route('https://api.openai.com/**',oai_route)
+    async def bal_route(route):
+        if 'user_balance' in route.request.url:
+            b=SC.get('falbal','27.0106725'); return await route.fulfill(status=200 if b is not None else 403,headers={'access-control-allow-origin':'*'},body=str(b) if b is not None else '{}')
+        d=SC.get('elsub'); 
+        if d is None: return await route.fulfill(status=401,headers={'access-control-allow-origin':'*'},content_type='application/json',body=json.dumps({'detail':{'message':'missing the permission user_read'}}))
+        return await route.fulfill(status=200,headers={'access-control-allow-origin':'*'},content_type='application/json',body=json.dumps(d))
+    await ctx.route(re.compile(r'https://(rest\.alpha\.fal\.ai/billing/user_balance|api\.elevenlabs\.io/v1/user/subscription).*'),bal_route)
     if pre: await ctx.add_init_script(pre)
     if keys:
         await ctx.add_init_script("sessionStorage.setItem('cfa_xai_key','xai-test');sessionStorage.setItem('cfa_fal_key','fal-test');sessionStorage.setItem('cfa_el_key','el-test');localStorage.setItem('cfa_onboarded','1');")
@@ -569,6 +576,23 @@ async def main():
             gl=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
             qa=await J(pg,"()=>sceneData[0].styleQA")
             check('identity: strict model-sheet check catches an off-model face the combined check passed', len(gl)==2 and 'larger eyes' in gl[1]['prompt'] and qa['identityMatch'] is True and cnt.get('idcheck',0)-i0>=2, (len(gl),qa))
+            # ── API budget trackers ──
+            await J(pg,"()=>{localStorage.removeItem('cfa_budget_cfg');localStorage.removeItem('cfa_budget_spent');budgetCfg={};budgetSpent={xai:0,fal:0,eleven:0,openai:0};budgetLive={};}")
+            SC['elsub']=None; SC['falbal']='27.0106725'
+            r=await J(pg,"async()=>{await refreshLiveBalances(); const f=budgetStatus('fal'),e=budgetStatus('eleven'),x=budgetStatus('xai'); return [f.mode,f.remaining,e.mode,budgetLive.eleven.err||'',x.mode,x.remaining, document.querySelector('#bg-row-fal .bg-mode').textContent, document.querySelector('#bg-row-xai .bg-rem').textContent]}")
+            check('budget: fal live balance read from API; ElevenLabs w/o user_read and xAI are not invented', r[0]=='live' and abs(r[1]-27.0106725)<1e-6 and r[2]=='unknown' and 'user_read' in r[3] and r[4]=='unknown' and r[5] is None and r[6]=='LIVE' and r[7]=='not set', r)
+            SC['elsub']={'character_count':9000,'character_limit':10000}
+            r=await J(pg,"async()=>{await refreshLiveBalances(); const e=budgetStatus('eleven'); return [e.mode,e.remaining,e.threshold,e.low, document.getElementById('budget-badge').style.display]}")
+            check('budget: ElevenLabs live quota (chars) with 10% default alert -> low + header badge', r[:4]==['live',1000,1000,True] and r[4]=='', r)
+            r=await J(pg,"()=>{document.getElementById('bg-loaded-xai').value='10';document.getElementById('bg-th-xai').value='2';budgetSave('xai'); trackTextSpend(8.5); const x=budgetStatus('xai'); return [x.mode,+x.remaining.toFixed(2),x.low, JSON.parse(localStorage.getItem('cfa_budget_cfg')).xai.loaded, document.getElementById('budget-banner').style.display, document.querySelector('#bg-row-xai .bg-mode').textContent]}")
+            check('budget: manual xAI balance tracks tool spend, persists, labelled MANUAL, banner when low', r==['manual',1.5,True,10,'','MANUAL'], r)
+            r=await J(pg,"()=>{trackSpend(0.06,'openai'); trackSpend(0.04); return [budgetSpent.openai,budgetSpent.fal]}")
+            check('budget: GPT text spend goes to OpenAI, image spend to fal', r==[0.06,0.04], r)
+            r,d=await J(pg,"()=>{const oc=window.confirm, D=[]; window.confirm=m=>{D.push(m);return false}; const r=[budgetPreflight('xai',3,'the Grok final edit'), budgetPreflight('fal',1,'x'), budgetPreflight('openai',99,'y')]; window.confirm=oc; return [r,D]}")
+            check('budget: pre-flight warns (with reload link) when estimate exceeds what is left; silent when fine or unknown', r==[False,True,True] and len(d)==1 and 'too low' in d[0] and 'console.x.ai' in d[0], (r,d))
+            d=await J(pg,"async()=>{const oc=window.confirm, D=[]; window.confirm=m=>{D.push(m);return false}; if(!finalScript) finalScript='x'.repeat(1200); await generateVO(); window.confirm=oc; return D}")
+            check('budget: voiceover pre-flight uses the live ElevenLabs character quota', any('ElevenLabs' in x and 'chars' in x for x in d), d)
+            await J(pg,"()=>{localStorage.removeItem('cfa_budget_cfg');budgetCfg={};budgetLive={};renderBudgetUI();}")
             await J(pg,"()=>{sceneData[0].resultURL='';}")
             SC['falLog']=[]; SC['vision']=[dict(off),dict(off),dict(off)]
             await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)

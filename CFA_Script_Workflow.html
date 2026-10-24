@@ -1018,6 +1018,7 @@ select option{background:var(--surface2)}
 </style>
 </head>
 <body>
+<div id="budget-banner" style="display:none;position:sticky;top:0;z-index:999;background:#e5484d;color:#fff;padding:7px 14px;font-size:12.5px;display:none"><span class="bb-txt"></span> <a href="javascript:openSettings()" style="color:#fff;text-decoration:underline">Budgets</a> <button onclick="sessionStorage.setItem('cfa_budget_banner_off','1');this.parentElement.style.display='none'" style="float:right;background:none;border:0;color:#fff;cursor:pointer">&#x2715;</button></div>
 
 <div class="topbar">
   <div class="logo">CFA</div>
@@ -1031,6 +1032,7 @@ select option{background:var(--surface2)}
       <span class="topbar-cost-chip-dot"></span>
       <span id="topbar-cost-chip-text">$0.00 left</span>
     </span>
+    <span id="budget-badge" class="topbar-cost-chip" onclick="openSettings();setTimeout(()=>document.getElementById('budget-panel')?.scrollIntoView(),50)" style="display:none;background:#e5484d22;border-color:#e5484d;color:#e5484d"></span>
     <button class="settings-btn" id="settings-btn" onclick="openSettings()">
       <span class="settings-btn-dot miss" id="settings-key-dot"></span>
       &#9881; Settings
@@ -2092,6 +2094,30 @@ select option{background:var(--surface2)}
         <div class="settings-ok" id="sm-render-ok">&#x2713; Render service saved for this session</div>
       </div>
 
+      <!-- API budget trackers -->
+      <div class="settings-section" id="budget-panel" style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px">
+        <div class="settings-section-label">&#x1F4CA; API budgets — when to reload</div>
+        <div class="settings-section-desc"><b>LIVE</b> = read from the provider with your key. <b>MANUAL</b> = the balance you entered, minus what this tool has spent since (estimates). Nothing is guessed.</div>
+        <div class="bg-row" id="bg-row-xai" style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between"><strong>xAI / Grok</strong><span class="bg-mode">—</span><span class="bg-rem" style="font-family:ui-monospace,monospace">not set</span><a href="https://console.x.ai/" target="_blank" rel="noopener" style="color:var(--accent);font-size:11px">Reload &#x2197;</a></div>
+          <div class="bg-sub" style="font-size:10.5px;color:var(--muted);margin:3px 0"></div>
+          <div class="settings-row"><input class="inp" id="bg-loaded-xai" type="number" min="0" step="0.01" placeholder="loaded balance $" style="max-width:130px"/><input class="inp" id="bg-th-xai" type="number" min="0" step="0.01" placeholder="alert at" style="max-width:100px"/><button class="settings-save" onclick="budgetSave('xai')">Save</button></div>
+        </div><div class="bg-row" id="bg-row-fal" style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between"><strong>fal.ai</strong><span class="bg-mode">—</span><span class="bg-rem" style="font-family:ui-monospace,monospace">not set</span><a href="https://fal.ai/dashboard/billing" target="_blank" rel="noopener" style="color:var(--accent);font-size:11px">Reload &#x2197;</a></div>
+          <div class="bg-sub" style="font-size:10.5px;color:var(--muted);margin:3px 0"></div>
+          <div class="settings-row"><input class="inp" id="bg-loaded-fal" type="number" min="0" step="0.01" placeholder="loaded balance $" style="max-width:130px"/><input class="inp" id="bg-th-fal" type="number" min="0" step="0.01" placeholder="alert at" style="max-width:100px"/><button class="settings-save" onclick="budgetSave('fal')">Save</button></div>
+        </div><div class="bg-row" id="bg-row-eleven" style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between"><strong>ElevenLabs</strong><span class="bg-mode">—</span><span class="bg-rem" style="font-family:ui-monospace,monospace">not set</span><a href="https://elevenlabs.io/app/subscription" target="_blank" rel="noopener" style="color:var(--accent);font-size:11px">Reload &#x2197;</a></div>
+          <div class="bg-sub" style="font-size:10.5px;color:var(--muted);margin:3px 0"></div>
+          <div class="settings-row"><input class="inp" id="bg-loaded-eleven" type="number" min="0" step="0.01" placeholder="loaded balance $" style="max-width:130px"/><input class="inp" id="bg-th-eleven" type="number" min="0" step="0.01" placeholder="alert at" style="max-width:100px"/><button class="settings-save" onclick="budgetSave('eleven')">Save</button></div>
+        </div><div class="bg-row" id="bg-row-openai" style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between"><strong>OpenAI</strong><span class="bg-mode">—</span><span class="bg-rem" style="font-family:ui-monospace,monospace">not set</span><a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noopener" style="color:var(--accent);font-size:11px">Reload &#x2197;</a></div>
+          <div class="bg-sub" style="font-size:10.5px;color:var(--muted);margin:3px 0"></div>
+          <div class="settings-row"><input class="inp" id="bg-loaded-openai" type="number" min="0" step="0.01" placeholder="loaded balance $" style="max-width:130px"/><input class="inp" id="bg-th-openai" type="number" min="0" step="0.01" placeholder="alert at" style="max-width:100px"/><button class="settings-save" onclick="budgetSave('openai')">Save</button></div>
+        </div>
+        <button class="settings-save" style="margin-top:8px" onclick="refreshLiveBalances()">&#x21bb; Refresh live balances</button>
+      </div>
+
       <!-- fal.ai Credit Budget -->
       <div class="settings-section" style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px">
         <div class="settings-section-label" style="gap:0">&#x1F4B0; fal.ai Credit Budget</div>
@@ -2546,6 +2572,7 @@ async function llmComplete({role, system, user, maxTokens, onDelta, signal, effo
 
 // ═══ SETTINGS MODAL ═══
 function openSettings(){
+  try{ renderBudgetUI(); refreshLiveBalances(); }catch(e){}
   document.getElementById('settings-modal').classList.add('open');
   document.body.style.overflow='hidden';
   // Populate fields + saved states from session
@@ -3370,6 +3397,7 @@ async function generateVO(){
   const similarity = parseFloat(document.getElementById('el-similarity').value);
   const styleVal   = parseFloat(document.getElementById('el-style').value);
   const pace       = VO_PACES[document.getElementById('el-pace')?.value] ? document.getElementById('el-pace').value : 'expressive';
+  { const chars=String(finalScript).length, m=EL_MODELS[model]||EL_MODELS.eleven_multilingual_v2; if(!budgetPreflight('eleven',{usd:chars*m.perChar,chars},'this voiceover ('+chars+' characters)')) return; }
 
   document.getElementById('btn-vo').disabled=true;
   document.getElementById('s5-generating').style.display='';
@@ -3565,10 +3593,87 @@ function getEstimatedCost(){
   return MODEL_COSTS.image[selectedImageModel] || 0.04;
 }
 
+// ── API budget trackers (per provider) ─────────────────────────────────────────
+// LIVE = balance read from the provider's API with the user's key. MANUAL = the user typed the balance they loaded;
+// remaining = that figure minus what this tool has spent since (its per-call estimates). Never invented.
+const BUDGET_PROVIDERS={
+  xai:{label:'xAI / Grok', billing:'https://console.x.ai/', live:false, note:'xAI does not expose a balance to API keys — enter your loaded credit.'},
+  fal:{label:'fal.ai', billing:'https://fal.ai/dashboard/billing', live:true},
+  eleven:{label:'ElevenLabs', billing:'https://elevenlabs.io/app/subscription', live:true, unit:'chars'},
+  openai:{label:'OpenAI', billing:'https://platform.openai.com/settings/organization/billing/overview', live:false, note:'OpenAI only shows balances in its dashboard — enter your loaded credit.'}
+};
+const BUDGET_DEFAULT_THRESHOLD=5; // dollars; ElevenLabs live quota uses 10% of the plan's characters
+function budgetLoad(k,d){ try{ return JSON.parse(safeGetItem(k)||'null')||d; }catch(e){ return d; } }
+let budgetSpent=budgetLoad('cfa_budget_spent',{xai:0,fal:0,eleven:0,openai:0});
+let budgetCfg=budgetLoad('cfa_budget_cfg',{});   // {p:{loaded,spentAt,threshold}}
+let budgetLive={};                               // {p:{remaining,unit,limit,at,spentAt,err}} (memory only)
+function budgetAdd(p,cost){ if(!(cost>0)||!BUDGET_PROVIDERS[p]) return; budgetSpent[p]=Math.round(((budgetSpent[p]||0)+cost)*1e5)/1e5; safeSetItem('cfa_budget_spent',JSON.stringify(budgetSpent)); try{ renderBudgetUI(); }catch(e){} }
+// Returns {mode:'live'|'manual'|'unknown', remaining (in $ or chars), unit, threshold, low}
+function budgetStatus(p){
+  const c=budgetCfg[p]||{}, L=budgetLive[p], since=x=>Math.max(0,(budgetSpent[p]||0)-(x||0));
+  let st;
+  if(L && L.remaining!=null){
+    if(L.unit==='chars'){ const perChar=0.08/1000; st={mode:'live',unit:'chars',remaining:Math.max(0,L.remaining-Math.round(since(L.spentAt)/perChar)),limit:L.limit}; st.threshold=c.thresholdChars!=null?c.thresholdChars:Math.round((L.limit||0)*0.1); }
+    else { st={mode:'live',unit:'$',remaining:Math.max(0,L.remaining-since(L.spentAt))}; st.threshold=c.threshold!=null?c.threshold:BUDGET_DEFAULT_THRESHOLD; }
+  } else if(c.loaded!=null){ st={mode:'manual',unit:'$',remaining:Math.max(0,c.loaded-since(c.spentAt)),threshold:c.threshold!=null?c.threshold:BUDGET_DEFAULT_THRESHOLD}; }
+  else st={mode:'unknown',unit:'$',remaining:null,threshold:c.threshold!=null?c.threshold:BUDGET_DEFAULT_THRESHOLD};
+  st.low=st.remaining!=null && st.remaining<=st.threshold;
+  return st;
+}
+function fmtBudget(st){ return st.remaining==null?'not set':st.unit==='chars'?Math.round(st.remaining).toLocaleString()+' chars':'$'+st.remaining.toFixed(2); }
+async function refreshLiveBalances(){
+  const fk=sessionStorage.getItem('cfa_fal_key'), ek=sessionStorage.getItem('cfa_el_key');
+  const jobs=[];
+  if(fk) jobs.push(fetch('https://rest.alpha.fal.ai/billing/user_balance',{headers:{Authorization:'Key '+fk}}).then(async r=>{
+    if(!r.ok) throw new Error('HTTP '+r.status); const v=parseFloat(await r.text()); if(!Number.isFinite(v)) throw new Error('unexpected reply');
+    budgetLive.fal={remaining:v,unit:'$',at:Date.now(),spentAt:budgetSpent.fal||0}; }).catch(e=>{ budgetLive.fal={remaining:null,err:e.message}; }));
+  if(ek) jobs.push(fetch('https://api.elevenlabs.io/v1/user/subscription',{headers:{'xi-api-key':ek}}).then(async r=>{
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(/user_read/.test(JSON.stringify(d))?'key lacks the "user_read" permission — enable it on the key for a live quota, or enter a balance':'HTTP '+r.status);
+    if(!(d.character_limit>0)) throw new Error('unexpected reply');
+    budgetLive.eleven={remaining:d.character_limit-(d.character_count||0),limit:d.character_limit,unit:'chars',at:Date.now(),spentAt:budgetSpent.eleven||0}; }).catch(e=>{ budgetLive.eleven={remaining:null,err:e.message}; }));
+  await Promise.all(jobs); renderBudgetUI();
+}
+function budgetSave(p){
+  const lv=document.getElementById('bg-loaded-'+p), th=document.getElementById('bg-th-'+p);
+  const c=budgetCfg[p]=budgetCfg[p]||{};
+  const l=parseFloat(lv&&lv.value), t=parseFloat(th&&th.value);
+  if(lv && lv.value!==''){ if(Number.isFinite(l)&&l>=0){ c.loaded=l; c.spentAt=budgetSpent[p]||0; } }
+  if(th && th.value!==''){ if(Number.isFinite(t)&&t>=0){ if(budgetLive[p]&&budgetLive[p].unit==='chars') c.thresholdChars=t; else c.threshold=t; } }
+  if(lv) lv.value=''; safeSetItem('cfa_budget_cfg',JSON.stringify(budgetCfg)); renderBudgetUI();
+}
+function renderBudgetUI(){
+  const lows=[];
+  for(const p in BUDGET_PROVIDERS){
+    const st=budgetStatus(p), P=BUDGET_PROVIDERS[p]; if(st.low) lows.push(P.label+' '+fmtBudget(st));
+    const row=document.getElementById('bg-row-'+p); if(!row) continue;
+    const L=budgetLive[p];
+    row.querySelector('.bg-mode').textContent=st.mode==='live'?'LIVE':st.mode==='manual'?'MANUAL':'—';
+    row.querySelector('.bg-mode').className='bg-mode bg-'+st.mode;
+    row.querySelector('.bg-rem').textContent=fmtBudget(st)+(st.low?' — reload soon':'');
+    row.querySelector('.bg-rem').style.color=st.low?'var(--red,#e5484d)':'';
+    row.querySelector('.bg-sub').textContent=(st.mode==='live'?'from the '+P.label+' API, minus this tool’s spend since':st.mode==='manual'?'your entered balance minus this tool’s tracked spend':(L&&L.err?'live balance unavailable: '+L.err+'. ':'')+(P.note||'Enter your loaded balance.'))+' · tool spend $'+(budgetSpent[p]||0).toFixed(2)+' · alert at '+(st.unit==='chars'?Math.round(st.threshold).toLocaleString()+' chars':'$'+st.threshold.toFixed(2));
+  }
+  const b=document.getElementById('budget-badge'), bn=document.getElementById('budget-banner');
+  if(b){ b.style.display=lows.length?'':'none'; b.textContent='⚠ Reload: '+lows.length; b.title=lows.join(' · '); }
+  if(bn){ bn.style.display=lows.length&&!sessionStorage.getItem('cfa_budget_banner_off')?'':'none'; const t=bn.querySelector('.bb-txt'); if(t) t.textContent='Low API balance — time to reload: '+lows.join(' · '); }
+}
+// Pre-flight before an expensive step. est in $ (or chars for ElevenLabs live). Only warns when a balance is known.
+function budgetPreflight(p, est, what){
+  const st=budgetStatus(p); if(st.remaining==null) return true;
+  let e=est; if(st.unit==='chars' && p==='eleven') e=est.chars!=null?est.chars:est/(0.08/1000); if(typeof e==='object') e=e.usd||0;
+  const after=st.remaining-e, P=BUDGET_PROVIDERS[p], f=v=>st.unit==='chars'?Math.round(v).toLocaleString()+' chars':'$'+v.toFixed(2);
+  if(e>st.remaining) return confirm('⚠ '+P.label+' balance too low for '+what+'.\nEstimated cost: '+f(e)+' · left ('+st.mode+'): '+f(st.remaining)+'\n\nReload at '+P.billing+'\n\nOK = try anyway, Cancel = stop.');
+  if(after<=st.threshold) return confirm('⚠ '+P.label+' will be below your reload alert after '+what+'.\nEstimated cost: '+f(e)+' · left ('+st.mode+'): '+f(st.remaining)+' → '+f(Math.max(0,after))+'\n\nReload at '+P.billing+'\n\nOK = continue, Cancel = stop.');
+  return true;
+}
+setInterval(()=>{ if(sessionStorage.getItem('cfa_fal_key')||sessionStorage.getItem('cfa_el_key')) refreshLiveBalances(); }, 5*60*1000);
+window.addEventListener('load',()=>{ try{ renderBudgetUI(); }catch(e){} });
+
 // Grok text spend — tracked separately from the fal.ai credit budget
 let textSpend = storedNumber('cfa_xai_spend', 0);
 function trackTextSpend(cost){
-  textSpend = Math.round((textSpend + cost) * 1e5) / 1e5;
+  textSpend = Math.round((textSpend + cost) * 1e5) / 1e5; budgetAdd('xai',cost);
   safeSetItem('cfa_xai_spend', textSpend.toFixed(5));
   updateSettingsSpendDisplay();
 }
@@ -3582,11 +3687,12 @@ const EL_MODELS={
 };
 let voiceSpend = storedNumber('cfa_voice_spend', 0);
 function trackVoiceSpend(cost){
-  voiceSpend = Math.round((voiceSpend + cost) * 1e4) / 1e4;
+  voiceSpend = Math.round((voiceSpend + cost) * 1e4) / 1e4; budgetAdd('eleven',cost);
   safeSetItem('cfa_voice_spend', voiceSpend.toFixed(4));
   updateSettingsSpendDisplay();
 }
-function trackSpend(cost){
+function trackSpend(cost, provider){
+  budgetAdd(provider||'fal',cost);
   sessionSpend = Math.round((sessionSpend + cost) * 1000) / 1000;
   sessionGens++;
   safeSetItem('cfa_session_spend', sessionSpend.toFixed(3));
@@ -4285,6 +4391,7 @@ async function sendToGrokRender(){
   const say=m=>{ if(st){ st.style.display=m?'':'none'; st.textContent=m; } };
   if(!renderServiceReady()){ say('Add the Grok Bot render service URL and access token in ⚙ Settings first (or use 🎬 Export for final edit and send the .zip in chat).'); openSettings(); return; }
   const btn=document.getElementById('btn-send-grok'), up=document.getElementById('rs-upload'), bar=document.getElementById('rs-upload-bar'), txt=document.getElementById('rs-upload-txt');
+  if(!budgetPreflight('xai',0.05,'the Grok final edit')) return;
   btn.disabled=true;
   try{
     try{ await fetch(renderBase()+'/health',{cache:'no-store'}); }catch(e){ throw new Error('Could not reach the render service at '+renderBase()+'. Is Grok Bot’s computer running? You can still use 🎬 Export for final edit.'); }
@@ -5493,7 +5600,7 @@ async function gptTextFixUrl(sourceURL, words, sceneHint){
   if(!resp.ok) throw new Error('Could not download image — HTTP '+resp.status);
   const pngBlob=await blobToPng(await resp.blob());
   const dataUrl=await gptTextEditDataUrl(pngBlob, openAIKey, words, sceneHint);
-  trackSpend(GPT_TEXT_COST);
+  trackSpend(GPT_TEXT_COST,'openai');
   const bytes=Uint8Array.from(atob(dataUrl.split(',')[1]), c=>c.charCodeAt(0));
   return uploadToFal(new File([bytes],'gpt_text.png',{type:'image/png'}));
 }
@@ -5531,7 +5638,7 @@ async function enhanceWithGPT(){
     const pngBlob = await blobToPng(imageBlob);
 
     _gptEnhancedB64 = await gptTextEditDataUrl(pngBlob, openAIKey, [], sceneData[_gptEnhanceSceneIdx]?.prompt||'');
-    trackSpend(GPT_TEXT_COST);
+    trackSpend(GPT_TEXT_COST,'openai');
 
     // Populate and show the comparison panel — only if Chris is still viewing
     // the scene this enhancement was started from
@@ -5690,7 +5797,7 @@ async function visionIdentityCheck(url, sheetUrl, name){
     {role:'user',content:[{type:'text',text:'Character: '+name+'. Image 1: model sheet. Image 2: candidate.'},{type:'image_url',image_url:{url:sheetUrl}},{type:'image_url',image_url:{url}}]}]};
   const resp=await fetch(GROK.url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify(body)});
   if(!resp.ok) throw new Error('identity check: '+await apiErrorMessage(resp));
-  const d=await resp.json(); trackSpend(0.003);
+  const d=await resp.json(); trackTextSpend(0.003);
   const txt=(d.choices?.[0]?.message?.content||'').replace(/^```(json)?|```$/g,'').trim();
   const o=JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}')+1));
   return {name, visible:o.visible!==false && o.verdict!=='absent', score:Number(o.score)||0, problems:(Array.isArray(o.differences)?o.differences.join('; '):String(o.differences||'')).slice(0,240), verdict:String(o.verdict||'')};
@@ -5706,7 +5813,7 @@ async function visionStyleCheck(url, people){
     {role:'user',content:[{type:'text',text:intro},{type:'image_url',image_url:{url:m}},{type:'image_url',image_url:{url:j}},...sheets.map(u=>({type:'image_url',image_url:{url:u}})),{type:'image_url',image_url:{url}}]}]};
   const resp=await fetch(GROK.url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify(body)});
   if(!resp.ok) throw new Error('style check: '+await apiErrorMessage(resp));
-  const d=await resp.json(); trackSpend(0.003);
+  const d=await resp.json(); trackTextSpend(0.003);
   const txt=(d.choices?.[0]?.message?.content||'').replace(/^```(json)?|```$/g,'').trim();
   const o=JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}')+1));
   o.style_score=Number(o.style_score)||0; o.style_match=!!o.style_match && o.style_score>=7;
@@ -5880,6 +5987,7 @@ async function generateAllImages(){
   const targets=batchTargets();
   if(!targets.length){ updateBatchButton(); return; }
   const est=targets.reduce((sum,{s})=>sum+MODEL_COSTS.image[userImageModel==='imagen4'?'kling-o1':userImageModel],0);
+  if(!budgetPreflight('fal',est,'this batch of '+targets.length+' images')) return;
   if(!confirm('Generate '+targets.length+' image scenes in parallel ('+BATCH_CONCURRENCY+' at a time)?\nEstimated cost: ~$'+est.toFixed(2)+'\n\nEvery scene uses the Marcus/Jordan art as a style anchor (Kling o1 for concept scenes)'+(styleCheckOn()&&llmKey()?', is checked for style drift (up to '+STYLE_RETRY_CAP+' redos)':'')+(autoGptTextOn()&&sessionStorage.getItem('cfa_openai_key')?' and gets a GPT text cleanup when it has writing':'')+'. Review each result afterwards.')) return;
   const run=batchRun={cancel:false,total:targets.length,done:0,failed:0,errors:[]};
   const data=sceneData;
@@ -5943,6 +6051,7 @@ async function generateScene(){
   const falKey=sessionStorage.getItem('cfa_fal_key');
 
   if(!falKey){showErr('e6','fal.ai API key not set — open ⚙ Settings.');return;}
+  if(isVideo && !budgetPreflight('fal',getEstimatedCost(),'this video clip')) return;
 
   const prompt=document.getElementById('s6-prompt').value.trim();
   if(!prompt){showErr('e6','Prompt is empty — add a scene description.');return;}
