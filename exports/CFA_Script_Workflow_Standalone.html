@@ -1927,7 +1927,10 @@ select option{background:var(--surface2)}
     <div class="complete-actions">
       <button class="btn bprim" onclick="downloadAllScenes()" id="btn-dl-all" style="font-size:13px;padding:11px 22px">&#x2B07; Download All</button>
       <button class="btn bsec" onclick="exportManifest()" style="font-size:12px;padding:11px 20px">&#x1F4C4; Export Manifest (.txt)</button>
+      <button class="btn bprim" onclick="exportFinalEditBundle()" id="btn-final-edit" style="font-size:13px;padding:11px 22px" title="One .zip with script, segments, every scene's media, voiceover, beat timings and SRT — send it to Grok Bot to render the finished MP4">&#x1F3AC; Export for final edit</button>
     </div>
+    <div id="fe-vo-pick" style="display:none;font-size:12px;margin:6px 0">Voiceover MP3: <input type="file" id="fe-vo-file" accept="audio/*"></div>
+    <div id="fe-status" style="display:none;font-size:12px;color:var(--muted);margin:6px 0 14px"></div>
 
     <!-- Per-scene list with download links -->
     <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">All Scenes</div>
@@ -4044,6 +4047,102 @@ function exportManifest(){
   a.download = 'CFA_Scene_Manifest_' + new Date().toISOString().slice(0,10) + '.txt';
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 15000);
+}
+
+// ═══ EXPORT FOR FINAL EDIT (bundle for tools/render/render.py) ═════════════
+// Builds one .zip (stored, no compression — media is already compressed) with
+// bundle.json + script + segments + per-scene media + voiceover + SRT.
+// fal URLs are fetched as blobs now so the bundle never depends on expiring links.
+const CRC_TABLE=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function crc32(u8){let c=0xFFFFFFFF;for(let i=0;i<u8.length;i++)c=CRC_TABLE[(c^u8[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+function buildZip(files){ // files: [{name, data:Uint8Array}]
+  const enc=new TextEncoder(), parts=[], central=[]; let off=0;
+  const d=new Date(), dosT=(d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1), dosD=((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate();
+  for(const f of files){
+    const nm=enc.encode(f.name), crc=crc32(f.data), sz=f.data.length;
+    const h=new DataView(new ArrayBuffer(30));
+    h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint16(8,0,true);
+    h.setUint16(10,dosT,true);h.setUint16(12,dosD,true);h.setUint32(14,crc,true);h.setUint32(18,sz,true);h.setUint32(22,sz,true);
+    h.setUint16(26,nm.length,true);h.setUint16(28,0,true);
+    parts.push(new Uint8Array(h.buffer),nm,f.data);
+    const c=new DataView(new ArrayBuffer(46));
+    c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint16(10,0,true);
+    c.setUint16(12,dosT,true);c.setUint16(14,dosD,true);c.setUint32(16,crc,true);c.setUint32(20,sz,true);c.setUint32(24,sz,true);
+    c.setUint16(28,nm.length,true);c.setUint32(42,off,true);
+    central.push(new Uint8Array(c.buffer),nm);
+    off+=30+nm.length+sz;
+  }
+  const cdSize=central.reduce((a,b)=>a+b.length,0);
+  const e=new DataView(new ArrayBuffer(22));
+  e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cdSize,true);e.setUint32(16,off,true);
+  return new Blob([...parts,...central,new Uint8Array(e.buffer)],{type:'application/zip'});
+}
+function extFromBlob(blob,url,kind){ // kind wins over a wrong Content-Type
+  const t=(blob&&blob.type)||'', u=String(url||'').split('?')[0].split('.').pop().toLowerCase();
+  if(kind==='video'){
+    if(/webm/.test(t))return 'webm'; if(/quicktime/.test(t))return 'mov'; if(/mp4/.test(t))return 'mp4';
+    return /^(mp4|webm|mov)$/.test(u)?u:'mp4';
+  }
+  if(/png/.test(t))return 'png'; if(/jpe?g/.test(t))return 'jpg'; if(/webp/.test(t))return 'webp';
+  return /^(png|jpe?g|webp)$/.test(u)?u.replace('jpeg','jpg'):'png';
+}
+async function exportFinalEditBundle(){
+  const btn=document.getElementById('btn-final-edit'), st=document.getElementById('fe-status');
+  const say=m=>{ if(st){ st.style.display=m?'':'none'; st.textContent=m; } };
+  if(!sceneData.length){ say('No scenes yet.'); return; }
+  // Voiceover: in-memory blob from step 5, or a file the user picks (resumed sessions lose the blob).
+  let voBlob=null;
+  if(voAudioURL){ try{ voBlob=await (await fetch(voAudioURL)).blob(); }catch(e){ voBlob=null; } }
+  const pick=document.getElementById('fe-vo-file');
+  if(!voBlob && pick && pick.files && pick.files[0]) voBlob=pick.files[0];
+  if(!voBlob){
+    say('The voiceover audio isn\u2019t in memory (page was reloaded). Choose the voiceover MP3 you downloaded in Step 5, then click Export again.');
+    const w=document.getElementById('fe-vo-pick'); if(w) w.style.display='';
+    return;
+  }
+  if(btn){ btn.disabled=true; }
+  try{
+    const enc=new TextEncoder(), files=[], segs=[], missing=[];
+    const lines=sceneData.map(x=>x.line);
+    const times=voWords.length?computeBeatTimes(lines,voWords):[];
+    for(let i=0;i<sceneData.length;i++){
+      const s=sceneData[i], n=String(i+1).padStart(3,'0');
+      say('Fetching scene '+(i+1)+' of '+sceneData.length+'…');
+      let media=null, kind='';
+      if(s.resultURL){
+        try{
+          const r=await fetch(s.resultURL); if(!r.ok) throw new Error('HTTP '+r.status);
+          const b=await r.blob(); kind=s.resultType==='video'?'video':'image';
+          media='media/scene_'+n+'.'+extFromBlob(b,s.resultURL,kind);
+          files.push({name:media,data:new Uint8Array(await b.arrayBuffer())});
+        }catch(e){ missing.push(i+1); media=null; }
+      } else missing.push(i+1);
+      const t=times[i]||(beatLen(s)?{start:s.tStart,end:s.tEnd}:null);
+      segs.push({index:i+1,text:String(s.line||'').replace(/^\s*\d+\.\s*/,''),tag:s.tag,characters:s.characters||'',
+        media, mediaType:media?kind:'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'',
+        start:t?t.start:null, end:t?t.end:null});
+    }
+    say('Packing bundle…');
+    const voName='voiceover.'+(/wav/.test(voBlob.type)?'wav':'mp3');
+    files.push({name:voName,data:new Uint8Array(await voBlob.arrayBuffer())});
+    const srt=[]; let k=1;
+    segs.forEach(g=>{ if(g.start==null) return; srt.push(String(k++),fmtSrtTime(g.start)+' --> '+fmtSrtTime(g.end),g.text,''); });
+    const title=selId&&V[selId]?V[selId].title:'CFA Episode';
+    const episode=selId?(parseInt(String(selId).replace(/\D/g,''),10)||null):null;
+    const bundle={format:'cfa-final-edit-bundle',version:1,createdAt:new Date().toISOString(),title,episode,videoId:selId||'',
+      script:finalScript||'',segmentedScript:segScript||'',voiceover:voName,srt:'beats.srt',
+      duration:voWords.length?voWords[voWords.length-1][2]:null,words:voWords,segments:segs};
+    files.unshift({name:'bundle.json',data:enc.encode(JSON.stringify(bundle,null,1))});
+    files.push({name:'script.txt',data:enc.encode(finalScript||'')});
+    files.push({name:'segments.txt',data:enc.encode(segs.map(g=>g.index+'. '+g.text).join('\n'))});
+    files.push({name:'beats.srt',data:enc.encode(srt.join('\n'))});
+    const zip=buildZip(files);
+    const url=URL.createObjectURL(zip), a=document.createElement('a');
+    a.href=url; a.download='CFA_FinalEdit_'+(episode?'EP'+String(episode).padStart(2,'0')+'_':'')+title.replace(/[^a-z0-9]+/gi,'_').slice(0,50)+'.zip';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);
+    say('✓ Bundle downloaded ('+(zip.size/1048576).toFixed(1)+' MB)'+(missing.length?' — scenes without media: '+missing.join(', ')+' (renderer will hold the previous shot)':'')+(voWords.length?'':' — no beat timings (re-run voiceover for exact sync)')+'. Send this .zip in chat to render the finished MP4.');
+  }catch(e){ say('Export failed: '+(e&&e.message||e)); }
+  finally{ if(btn) btn.disabled=false; }
 }
 
 // ═══ DURATION OPTIONS (Veo vs Kling differ) ════════════════════════════════
