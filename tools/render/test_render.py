@@ -193,6 +193,17 @@ def main():
         ff("-ss", "0.3", "-i", os.path.join(out3, "final.mp4"), "-frames:v", "1", "-vf", "scale=64:36", os.path.join(bd, "first.png"))
         so = subprocess.run(["ffmpeg", "-v", "info", "-i", os.path.join(bd, "first.png"), "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"], capture_output=True, text=True).stderr
         check(float((re.findall(r"YAVG=([\d.]+)", so) or ["0"])[-1]) > 40, "missing opening scene borrows the next visual instead of a blank frame")
+    # vertical reframing follows the subject (hint path, no network)
+    sys.path.insert(0, HERE); import render as R
+    R.SUBJECT_KEY = None
+    lp = os.path.join(d, "subj.png")
+    ff("-f", "lavfi", "-i", "color=c=black:s=640x360", "-vf", "drawbox=x=40:y=120:w=100:h=120:c=white:t=fill", "-frames:v", "1", lp)
+    vo = os.path.join(d, "subj.mp4")
+    R.render_shot(lp, "image", {"motion": "zoom_in", "intensity": 0.03, "subject": {"cx": 0.14, "cy": 0.5}}, 180, 320, vo, 6)
+    ff("-i", vo, "-frames:v", "1", "-vf", "crop=60:100:60:110,scale=8:8", os.path.join(d, "subj_c.png"))
+    so = subprocess.run(["ffmpeg", "-v", "info", "-i", os.path.join(d, "subj_c.png"), "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"], capture_output=True, text=True).stderr
+    check(float((re.findall(r"YAVG=([\d.]+)", so) or ["0"])[-1]) > 150, "vertical crop centres on the located subject (off-centre subject stays in frame)")
+    check(R.subject_center("/nonexistent.png", "image") == (0.5, 0.45), "no key -> centre fallback")
     print("\n%d failure(s)" % len(fails))
     sys.exit(1 if fails else 0)
 

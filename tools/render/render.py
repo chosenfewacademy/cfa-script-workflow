@@ -57,6 +57,13 @@ def probe(path):
     return json.loads(r.stdout)
 
 
+def probe_wh(path):
+    for st in probe(path).get("streams", []):
+        if st.get("codec_type") == "video":
+            return int(st.get("width") or 0), int(st.get("height") or 0)
+    return 0, 0
+
+
 def media_duration(path):
     try:
         return float(probe(path)["format"]["duration"])
@@ -594,6 +601,44 @@ def sfx_events(shots, arc_times):
 
 # ── rendering ────────────────────────────────────────────────────────────────
 _BARS = {}
+_SUBJ = {}
+SUBJECT_KEY = None  # xAI key for subject location (vertical reframing); None -> centre
+
+
+def subject_center(src, kind, seg_hint=None):
+    """Normalised (cx, cy) of the main subject (character's face/upper body, else the key prop).
+    Order: a box the tool sent in bundle.json -> one Grok vision call per source (cached) -> centre."""
+    if seg_hint and isinstance(seg_hint, dict) and "cx" in seg_hint:
+        return (clamp(seg_hint.get("cx"), 0, 1, 0.5), clamp(seg_hint.get("cy", 0.45), 0, 1, 0.45))
+    if src in _SUBJ:
+        return _SUBJ[src]
+    c = (0.5, 0.45)
+    if SUBJECT_KEY:
+        try:
+            jpg = src + ".subj.jpg"
+            run(["ffmpeg", "-y", "-v", "error"] + (["-ss", "0.3"] if kind == "video" else []) + ["-i", src, "-frames:v", "1", "-vf", "scale=640:-2", jpg])
+            import base64
+            url = "data:image/jpeg;base64," + base64.b64encode(open(jpg, "rb").read()).decode()
+            body = json.dumps({"model": "grok-4.3", "response_format": {"type": "json_object"}, "max_tokens": 200, "messages": [
+                {"role": "system", "content": "You locate the main subject of a cartoon frame for reframing to a vertical 9:16 crop. The subject is the main character's face and upper body; if no person, the key prop the shot is about. Return JSON only: {\"cx\":0-1,\"cy\":0-1,\"w\":0-1,\"h\":0-1,\"what\":\"short\"} — box centre and size as fractions of image width/height."},
+                {"role": "user", "content": [{"type": "text", "text": "Locate the subject."}, {"type": "image_url", "image_url": {"url": url}}]}]}).encode()
+            req = urllib.request.Request(XAI_URL, data=body, headers={"Authorization": "Bearer " + SUBJECT_KEY, "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                txt = json.load(r)["choices"][0]["message"]["content"]
+            o = json.loads(re.sub(r"^```(?:json)?|```$", "", txt.strip()).strip())
+            c = (clamp(o.get("cx"), 0, 1, 0.5), clamp(o.get("cy"), 0, 1, 0.45))
+            log("subject", os.path.basename(src), "->", "%.2f,%.2f" % c, str(o.get("what", ""))[:40])
+        except Exception as e:
+            log("subject locate failed (centre crop):", str(e)[:80])
+    _SUBJ[src] = c
+    return c
+
+
+def subject_crop(W, H, c):
+    """scale-to-cover then crop W x H with the subject centred (clamped to the frame)."""
+    cx, cy = c
+    return ("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d:'min(max(0,iw*%.3f-%d),iw-%d)':'min(max(0,ih*%.3f-%d),ih-%d)'"
+            % (W, H, W, H, cx, W // 2, W, cy, H // 2, H))
 
 
 def detect_bars(src, kind):
@@ -628,6 +673,19 @@ def render_shot(src, kind, shot, W, H, out, frames):
     """Render one shot to an intermediate (video only) of exactly `frames` frames."""
     dur = frames / FPS
     box = detect_bars(src, kind) if src else None
+    reframe = None
+    if src is not None and H > W:
+        try:
+            iw, ih = probe_wh(src)
+            if iw and ih and iw / ih > (W / H) * 1.15:  # landscape art on a vertical canvas: follow the subject
+                reframe = subject_center(src, kind, shot.get("subject"))
+        except Exception:
+            reframe = None
+    def cover(w, h):
+        pre = ("crop=%d:%d:%d:%d," % box) if box else ""
+        if reframe:
+            return pre + subject_crop(w, h, reframe) + ",setsar=1"
+        return fill_graph(box, w, h) if box else "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1" % (w, h, w, h)
     enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-pix_fmt", "yuv420p", "-r", str(FPS), "-an"]
     if src is None:
         vf = "color=c=0x101418:s=%dx%d:r=%d" % (W, H, FPS)
@@ -640,7 +698,7 @@ def render_shot(src, kind, shot, W, H, out, frames):
         k = shot.get("intensity", 0.04) if shot.get("motion") == "push_in" else 0.0
         push = (",zoompan=z='1+%.3f*on/%d':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d"
                 % (min(k, 0.06), max(1, frames - 1), W, H, FPS)) if k else ""
-        fit = fill_graph(box, W, H) if box else "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d" % (W, H, W, H)
+        fit = cover(W, H)
         vf = ("setpts=PTS/%.4f,fps=%d,%s,"
               "tpad=stop_mode=clone:stop_duration=%.2f,setsar=1%s" % (speed, FPS, fit, dur + 1, push))
         run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
@@ -668,7 +726,9 @@ def render_shot(src, kind, shot, W, H, out, frames):
         x, y = "(iw-iw/zoom)*%.2f" % fx, "(ih-ih/zoom)*%.2f" % fy
     else:
         z, x, y = "1", "0", "0"
-    fit = fill_graph(box, W2, H2) if box else "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1" % (W2, H2, W2, H2)
+    if reframe and m in ("pan_left", "pan_right"):  # a sideways pan on a reframed vertical would slide off the subject
+        z, x, y = "1+%.3f*%s" % (k, ease), "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+    fit = cover(W2, H2)
     vf = (fit + ","
           "zoompan=z='%s':x='%s':y='%s':d=%d:s=%dx%d:fps=%d" % (z, x, y, frames, W, H, FPS))
     run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
@@ -918,6 +978,8 @@ def main():
         for line in open(a.keys_env):
             if line.startswith("XAI_API_KEY="):
                 key = line.split("=", 1)[1].strip().strip('"')
+    global SUBJECT_KEY
+    SUBJECT_KEY = key if (key and not a.no_grok) else None
     source, problems, usage = "fallback", [], {}
     edl = None
     if key and not a.no_grok:
