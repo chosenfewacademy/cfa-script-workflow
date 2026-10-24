@@ -1778,11 +1778,18 @@ select option{background:var(--surface2)}
         <div id="s6-vid-models" style="display:none">
           <div class="model-section-label">Choose Video Model</div>
           <div class="model-grid">
-            <div class="model-opt sel" id="mopt-kling-v16" onclick="setVideoModel('kling-v16')">
+            <div class="model-opt sel" id="mopt-kling-o1v" onclick="setVideoModel('kling-o1v')">
+              <div class="model-opt-dot"></div>
+              <div class="model-opt-body">
+                <div class="model-opt-name">Kling O1 <span style="font-size:9px;font-weight:400;color:var(--muted)">fal.ai</span></div>
+                <div class="model-opt-desc">&#x2B50; Recommended &middot; start + end frame locked to the on-model still &middot; 3&ndash;10 s ~$0.11/s &middot; every clip frame-checked</div>
+              </div>
+            </div>
+            <div class="model-opt" id="mopt-kling-v16" onclick="setVideoModel('kling-v16')">
               <div class="model-opt-dot"></div>
               <div class="model-opt-body">
                 <div class="model-opt-name">Kling v1.6 Pro <span style="font-size:9px;font-weight:400;color:var(--muted)">fal.ai</span></div>
-                <div class="model-opt-desc">&#x2B50; Recommended &middot; Start Frame required &middot; 5 s ~$0.40 &middot; 10 s ~$0.80</div>
+                <div class="model-opt-desc">Start Frame required &middot; 5 s ~$0.40 &middot; 10 s ~$0.80</div>
               </div>
             </div>
             <div class="model-opt" id="mopt-veo31" onclick="setVideoModel('veo31')">
@@ -3556,13 +3563,14 @@ let sceneDuration = 5;
 let sceneRefs = {};
 let lastGeneratedURL = '';
 let selectedImageModel = 'kling-o1'; // 'kling-o1' | 'gemini-3pro' | 'imagen4'
-let selectedVideoModel = 'kling-v16'; // 'kling-v16' | 'veo31'
+let selectedVideoModel = 'kling-o1v'; // 'kling-o1v' | 'kling-v16' | 'veo31'
 
 // ── Cost tracking ──────────────────────────────────────────────────────────
 // Approximate fal.ai prices — verify at fal.ai dashboard. Costs in USD.
 const MODEL_COSTS = {
   image: { 'kling-o1': 0.04, 'gemini-3pro': 0.05, 'imagen4': 0.039 }, // 'imagen4' id kept for saved-state compat; now fal-ai/nano-banana
   video: {
+    'kling-o1v': 0.112, // per second
     'kling-v16': { 5: 0.40, 10: 0.80 },
     'veo31':     { '4s': 0.45, '6s': 0.65, '8s': 0.85 }
   }
@@ -3589,6 +3597,7 @@ function getEstimatedCost(){
   const s = sceneData[currentScene];
   if(!s) return 0.04;
   if(s.tag === 'VIDEO'){
+    if(selectedVideoModel === 'kling-o1v') return +(MODEL_COSTS.video['kling-o1v']*Math.max(3,Math.min(10,Math.round(sceneDuration)))).toFixed(2);
     if(selectedVideoModel === 'veo31'){
       return MODEL_COSTS.video.veo31[veoDurationStr(sceneDuration)] || 0.65;
     } else {
@@ -3844,6 +3853,7 @@ function autoVideoDuration(x){
   const d=beatLen(x);
   if(!d) return 0;
   if(selectedVideoModel==='veo31') return d<=4.2?4:d<=6.2?6:8;
+  if(selectedVideoModel==='kling-o1v') return Math.max(3,Math.min(10,Math.ceil(d-0.2)));
   return d<=5.2?5:10;
 }
 function fmtSrtTime(t){
@@ -3954,7 +3964,7 @@ function getSavedWorkflowState(){
     if(state.userImageModel===undefined && state.selectedImageModel==='imagen4' && state.imagenAutoSelected===undefined){
       state.userImageModel='kling-o1'; state.imagenAutoSelected=true;
     }
-    if(!['kling-v16','veo31'].includes(state.selectedVideoModel)) state.selectedVideoModel='kling-v16';
+    if(!['kling-o1v','kling-v16','veo31'].includes(state.selectedVideoModel)) state.selectedVideoModel='kling-o1v';
     if(![4,5,6,8,10].includes(state.sceneDuration)) state.sceneDuration=5;
     if(typeof state.savedAt!=='number') state.savedAt=Date.now();
     return state;
@@ -3993,7 +4003,7 @@ function resumeSavedSession(){
     sceneData          = state.sceneData;
     currentScene       = Math.min(state.currentScene || 0, sceneData.length - 1);
     selectedImageModel = state.selectedImageModel || 'kling-o1';
-    selectedVideoModel = state.selectedVideoModel || 'kling-v16';
+    selectedVideoModel = state.selectedVideoModel || 'kling-o1v';
     sceneDuration      = state.sceneDuration || 5;
 
     // Hide banner
@@ -4362,7 +4372,7 @@ let renderJob=null, renderPoll=null, renderTick=null, renderT0=0, renderLast=nul
 function renderServiceReady(){ return !!(sessionStorage.getItem('cfa_render_url')&&sessionStorage.getItem('cfa_render_token')); }
 function renderBase(){ return String(sessionStorage.getItem('cfa_render_url')||'').trim().replace(/\/+$/,''); }
 async function renderFetch(path, opts){
-  opts=opts||{}; opts.headers=Object.assign({'Authorization':'Bearer '+sessionStorage.getItem('cfa_render_token')}, opts.headers||{});
+  opts=opts||{}; opts.headers=Object.assign({'Authorization':'Bearer '+sessionStorage.getItem('cfa_render_token'),'ngrok-skip-browser-warning':'1'}, opts.headers||{});
   const r=await fetch(renderBase()+path, opts);
   if(r.status===401) throw new Error('The render service rejected the access token — check it in ⚙ Settings.');
   if(!r.ok){ let m='HTTP '+r.status; try{ m=(await r.json()).error||m; }catch(e){} throw new Error(m); }
@@ -4500,6 +4510,10 @@ function refreshDurationOptions(){
       '<button class="dur-btn '+(sceneDuration===4?'active':'')+'" onclick="setDuration(4)">4 seconds</button>' +
       '<button class="dur-btn '+(sceneDuration===6?'active':'')+'" onclick="setDuration(6)">6 seconds</button>' +
       '<button class="dur-btn '+(sceneDuration===8?'active':'')+'" onclick="setDuration(8)">8 seconds</button>';
+  } else if(selectedVideoModel === 'kling-o1v'){
+    // Kling O1 — 3 to 10 s; short clips morph less
+    if(!(sceneDuration>=3&&sceneDuration<=10)) sceneDuration=5;
+    wrap.innerHTML=[3,4,5,6,8,10].map(d=>'<button class="dur-btn '+(sceneDuration===d?'active':'')+'" id="dur-'+d+'" onclick="setDuration('+d+')">'+d+' s</button>').join('');
   } else {
     // Kling — only 5 or 10
     if(![5,10].includes(sceneDuration)){
@@ -5532,7 +5546,7 @@ function setImageModel(model, auto){
 
 function setVideoModel(model){
   selectedVideoModel=model;
-  ['kling-v16','veo31'].forEach(m=>{
+  ['kling-o1v','kling-v16','veo31'].forEach(m=>{
     const el=document.getElementById('mopt-'+m);
     if(el)el.classList.toggle('sel',m===model);
   });
@@ -5739,7 +5753,7 @@ function updateGenLabel(){
   const btnEl=document.getElementById('btn-generate-scene');
   if(!labelEl) return;
   if(isVideo){
-    const modelName=selectedVideoModel==='veo31'?'Veo 3.1':'Kling v1.6 Pro';
+    const modelName=selectedVideoModel==='veo31'?'Veo 3.1':selectedVideoModel==='kling-o1v'?'Kling O1':'Kling v1.6 Pro';
     labelEl.textContent='Generate Video ('+modelName+') — takes ~60–90 seconds';
     if(btnEl)btnEl.textContent='Generate Video Clip';
   } else {
@@ -5763,12 +5777,31 @@ function secondaryGuardText(s){
   return ` [Reference image is ONLY for ${mainChar}. The ${secondaryLabel(secondary)} in this scene is a completely different person — distinct appearance, different skin tone and build, gender-appropriate to the script, does not resemble ${mainChar} in any way.]`;
 }
 // Full prompt sent to fal: prompt + Setting + Style + camera preset (video) + secondary-character guard
+// ═══ SCENE LOGIC — props that belong in each recurring place (series bible) ═══
+const SETTING_PROPS=[
+  {name:'Spoke & Chain bike repair shop', re:/spoke\s*&?\s*chain|bike (repair )?shop|bicycle shop|workbench|okafor|back-office/i,
+   props:'bicycles on repair stands, bicycle wheels with thin bike tyres and spokes, inner tubes, bike chains, cassettes and sprockets, spoke wrenches, a pegboard of small hand tools, a wooden workbench, a back-office desk with a laptop',
+   never:'car tyres, car wheels, rims or hubcaps, engines, car parts, motor-oil cans, automotive lifts, motorbikes'},
+  {name:"Marcus's apartment", re:/marcus'?s apartment|label maker|fireproof box/i,
+   props:'a small living room, bookshelf, the label maker, the grey fireproof box on a shelf, a sofa, a small desk with a laptop',
+   never:'office cubicles, shop tools, vehicles, outdoor objects indoors'},
+  {name:'building package room', re:/package room|lockers?\b/i, props:'a wall of numbered metal parcel lockers, cardboard parcels, a tiled floor, a bulletin board', never:'furniture from a home, food, vehicles'},
+  {name:'24-hour laundromat', re:/laundromat|wash cycle|washing machine/i, props:'rows of front-loading washers and dryers, folding tables, laundry baskets, a change machine, plastic chairs', never:'kitchen appliances, beds, shop tools, vehicles'},
+  {name:'bus stop on Delancey', re:/bus stop|delancey/i, props:'a bus shelter with a bench, a kerb and street, a city bus in the distance, a lamp post', never:'indoor furniture, appliances, tools on the pavement'},
+  {name:'public library quiet room', re:/library/i, props:'long wooden tables, bookshelves, table lamps, public computers, chairs', never:'food, vehicles, shop tools, beds'}];
+function settingFor(s, prompt){ const t=[s?.line,s?.sceneDesc,prompt].map(x=>String(x||'')).join(' ').split(/ ART STYLE/)[0]; return SETTING_PROPS.find(x=>x.re.test(t))||null; }
+const SCENE_LOGIC_RULE=' SCENE LOGIC: every object belongs in this place and in this moment of the story, at realistic size, resting where it would really be (nothing floating, oversized, duplicated or random). Show only props the line is about, plus ordinary background for this place.';
+function sceneLogicText(s, prompt){ const st=settingFor(s,prompt); return (st?' SETTING: '+st.name+' — props that belong here: '+st.props+'. NEVER SHOW: '+st.never+'.':'')+SCENE_LOGIC_RULE; }
+// What the vision check needs to judge whether the frame makes sense
+function sceneLogicCtx(idx, prompt){ const s=sceneData[idx]; if(!s) return null; const st=settingFor(s,prompt);
+  const nb=[sceneData[idx-1],sceneData[idx+1]].filter(Boolean).map(x=>{ const t=settingFor(x,x.prompt); return t?t.name:''; }).filter(Boolean);
+  return {line:String(s.line||'').replace(/^\s*\d+\.\s*/,''), setting:st?st.name:'', props:st?st.props:'', never:st?st.never:'', neighbours:[...new Set(nb)].join(', ')}; }
 function composeScenePrompt(s, prompt, {sceneText, styleText, camera}={}){
   let p=(prompt||'').trim();
   if(sceneText) p+=' Setting: '+sceneText+'.';
   if(styleText) p+=' Style: '+styleText+'.';
   if(camera && CAMERA_PRESETS[camera]) p+=' '+CAMERA_PRESETS[camera];
-  return p+secondaryGuardText(s)+castLookText(s)+' '+STYLE_SPEC+' '+(beatNeedsText(s)?TEXT_ALLOWED_RULE:NO_TEXT_RULE);
+  return p+sceneLogicText(s,p)+secondaryGuardText(s)+castLookText(s)+' '+STYLE_SPEC+' '+(beatNeedsText(s)?TEXT_ALLOWED_RULE:NO_TEXT_RULE);
 }
 // ═══ NO WRITING unless the script needs it ═══
 // Image models invent garbled words on every page, screen and sign. Default: forbid all writing.
@@ -5797,7 +5830,7 @@ function sceneIdentityRefs(s){
   return out;
 }
 async function styleRefUrls(){ return [await getCharacterUrl('Marcus',MARCUS_B64), await getCharacterUrl('Jordan',JORDAN_B64)]; }
-const STYLE_QA_SYS='You are a strict art-direction QA checker for a cartoon series. Images 1 and 2 are the LOCKED style references (the show\'s character art). The LAST image is a candidate frame for the same show.\nJudge ONLY rendering style, not content: it must be the same flat 2D cartoon illustration — bold clean dark outlines, flat cel colour with at most one simple shadow tone, simplified cartoon faces/anatomy, no painterly or photographic texture, no realistic lighting/depth-of-field, no 3D render look. Every person in the candidate (including new characters and extras) must be drawn in that same cartoon style.\nAlso list every piece of legible-looking writing (letters, words, numbers, labels — not abstract lines or shapes) in the candidate, and say whether any of it is garbled or misspelled.\nIDENTITY: after the two style references come the reference sheets of the characters who must appear (named in the user message). For EACH named character, find them in the candidate and score identity 0-10 against THEIR sheet: same face shape and features, skin tone, hair style/colour/length, facial hair, glasses, apparent age, body build and outfit colours. A different-looking person of the same gender is a 2-4, not a pass. visible=false if they are not in the frame.\nReturn JSON only: {"style_score":0-10,"style_match":bool (true only if score>=7),"problems":"short","has_text":bool,"text":["..."],"text_garbled":bool,"identity":[{"name":"...","visible":bool,"score":0-10,"problems":"short"}]}';
+const STYLE_QA_SYS='You are a strict art-direction QA checker for a cartoon series. Images 1 and 2 are the LOCKED style references (the show\'s character art). The LAST image is a candidate frame for the same show.\nJudge ONLY rendering style, not content: it must be the same flat 2D cartoon illustration — bold clean dark outlines, flat cel colour with at most one simple shadow tone, simplified cartoon faces/anatomy, no painterly or photographic texture, no realistic lighting/depth-of-field, no 3D render look. Every person in the candidate (including new characters and extras) must be drawn in that same cartoon style.\nAlso list every piece of legible-looking writing (letters, words, numbers, labels — not abstract lines or shapes) in the candidate, and say whether any of it is garbled or misspelled.\nIDENTITY: after the two style references come the reference sheets of the characters who must appear (named in the user message). For EACH named character, find them in the candidate and score identity 0-10 against THEIR sheet: same face shape and features, skin tone, hair style/colour/length, facial hair, glasses, apparent age, body build and outfit colours. A different-looking person of the same gender is a 2-4, not a pass. visible=false if they are not in the frame.\nSCENE LOGIC (judge content here): the user message gives the narration line, the setting, the props that belong there and things that must never appear. Fail scene logic (logic_ok=false) if ANY object does not belong in that setting (e.g. car tyres in a bicycle repair shop — bike shops have thin bicycle wheels, never car tyres), is at an impossible scale or placement (floating, giant, on the wrong surface), is random or nonsensical for the moment, contradicts the narration line, or if the place does not look like the named setting. The listed props are typical, not exhaustive: ordinary items for the moment (papers, notebooks, a laptop, a mug, a phone) are fine — fail only for things that clearly do not belong. Name each problem concretely ("car tyre on the workbench — should be a bicycle wheel").\nReturn JSON only: {"style_score":0-10,"style_match":bool (true only if score>=7),"problems":"short","has_text":bool,"text":["..."],"text_garbled":bool,"identity":[{"name":"...","visible":bool,"score":0-10,"problems":"short"}],"logic_ok":bool,"logic_problems":["..."]}';
 const IDENTITY_MIN=7;
 // Dedicated one-character continuity check (model sheet vs candidate). The combined style call is lenient on faces,
 // so each named character also gets this focused comparison; the lower of the two scores counts.
@@ -5813,12 +5846,12 @@ async function visionIdentityCheck(url, sheetUrl, name){
   const o=JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}')+1));
   return {name, visible:o.visible!==false && o.verdict!=='absent', score:Number(o.score)||0, problems:(Array.isArray(o.differences)?o.differences.join('; '):String(o.differences||'')).slice(0,240), verdict:String(o.verdict||'')};
 }
-async function visionStyleCheck(url, people){
+async function visionStyleCheck(url, people, ctx){
   const key=llmKey(); if(!key || !styleCheckOn()) return null;
   const [m,j]=await styleRefUrls();
   people=(people||[]).slice(0,3);
   const sheets=[]; for(const p of people) sheets.push(await getCharacterUrl(p.name==='Marcus'||p.name==='Jordan'?p.name:'cast_'+p.name, p.b64));
-  const intro='Image 1 and 2: style references (Marcus, Jordan). '+(people.length?people.map((p,k)=>'Image '+(k+3)+': '+p.name+"'s reference sheet.").join(' ')+' Characters that must appear: '+people.map(p=>p.name).join(', ')+'.':'No named characters in this scene (identity: []).')+' LAST image: the candidate.';
+  const intro='Image 1 and 2: style references (Marcus, Jordan). '+(people.length?people.map((p,k)=>'Image '+(k+3)+': '+p.name+"'s reference sheet.").join(' ')+' Characters that must appear: '+people.map(p=>p.name).join(', ')+'.':'No named characters in this scene (identity: []).')+' LAST image: the candidate.'+(ctx?' SCENE LOGIC CONTEXT — narration line: "'+ctx.line+'". Setting: '+(ctx.setting||'not named (judge from the line)')+(ctx.props?'. Props that belong: '+ctx.props:'')+(ctx.never?'. Must never appear: '+ctx.never:'')+(ctx.neighbours?'. Neighbouring shots are set in: '+ctx.neighbours+' (keep the same place and props unless the line moves the story)':'')+'.':'');
   const body={model:VISION_MODEL,max_tokens:700,response_format:{type:'json_object'},messages:[
     {role:'system',content:STYLE_QA_SYS},
     {role:'user',content:[{type:'text',text:intro},{type:'image_url',image_url:{url:m}},{type:'image_url',image_url:{url:j}},...sheets.map(u=>({type:'image_url',image_url:{url:u}})),{type:'image_url',image_url:{url}}]}]};
@@ -5829,6 +5862,7 @@ async function visionStyleCheck(url, people){
   const o=JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}')+1));
   o.style_score=Number(o.style_score)||0; o.style_match=!!o.style_match && o.style_score>=7;
   o.text=Array.isArray(o.text)?o.text.filter(Boolean):[]; o.has_text=!!o.has_text || o.text.length>0;
+  o.logic_problems=(Array.isArray(o.logic_problems)?o.logic_problems:[o.logic_problems]).filter(Boolean).map(String); o.logic_ok=o.logic_ok!==false && !(o.logic_ok==null && o.logic_problems.length);
   o.identity=(Array.isArray(o.identity)?o.identity:[]).map(x=>({name:String(x.name||''),visible:x.visible!==false,score:Number(x.score)||0,problems:String(x.problems||'')}));
   if(people.length){
     const strict=await Promise.all(people.map((p,k)=>visionIdentityCheck(url, sheets[k], p.name).catch(()=>null)));
@@ -5868,11 +5902,12 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(styleOnly.length) styleNote=' '+styleOnly.map(n=>'@Image'+n).join(' and ')+(styleOnly.length>1?' are':' is')+' an ART-STYLE reference only: copy the drawing style exactly but do NOT draw '+(styleOnly.length>1?'those people':'that person')+' unless the scene names them.';
   }catch(e){}
   let r=null, check=null, attempts=0, cost=0, checkErr='', best=null;
-  const rank=c=>!c?-1:(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
-  const people=sceneIdentityRefs(s), needsText=beatNeedsText(s);
+  const rank=c=>!c?-1:(c.logic_ok!==false?3:0)+(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
+  const people=sceneIdentityRefs(s), needsText=beatNeedsText(s), lctx=sceneLogicCtx(idx, prompt);
   const fixNote=c=>{ if(!c) return ''; const n=[];
     if(!c.style_match) n.push('the art style drifted'+(c.problems?' ('+c.problems+')':'')+' — match the reference art style exactly: flat 2D cartoon, bold outlines, flat colour, no realism');
     if(c.identity_match===false) n.push('wrong look for '+c.identity_misses.join(', ')+' ('+c.identity.filter(x=>x.problems).map(x=>x.name+': '+x.problems).join('; ')+') — copy face, hair, age, build and outfit exactly from their reference sheet');
+    if(c.logic_ok===false) n.push('the picture did not make sense: '+(c.logic_problems.join('; ')||'objects that do not belong')+' — show only objects that belong in this place, at realistic size and placement');
     if(c.stray_text) n.push('it contained writing — remove ALL text, letters and numbers');
     return n.length?' STRICT, previous attempt failed: '+n.join('; ')+'.':''; };
   for(let a=0;a<=STYLE_RETRY_CAP;a++){
@@ -5882,10 +5917,10 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     r=await falImageRequest(model, p, refs);
     cost+=MODEL_COSTS.image[model]; trackSpend(MODEL_COSTS.image[model]);
     status&&status('Checking art style and character identity against the reference sheets…');
-    try{ check=await visionStyleCheck(r.url, people); }catch(e){ check=null; checkErr=e.message; }
+    try{ check=await visionStyleCheck(r.url, people, lctx); }catch(e){ check=null; checkErr=e.message; }
     if(check) check.stray_text=!needsText && check.has_text;
     if(!best || rank(check)>rank(best.check)) best={r,check};
-    if(!check || (check.style_match && check.identity_match!==false && !check.stray_text)) break;
+    if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text)) break;
   }
   if(best && best.r!==r){ r=best.r; check=best.check; } // every retry failed: keep the closest-to-model attempt
   let url=r.url, label=r.label, gptText=false, gptErr='';
@@ -5895,7 +5930,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
   const near=(x,y)=>{ if(Math.abs(x.length-y.length)>2) return false; const d=[...Array(y.length+1).keys()]; for(let i=1;i<=x.length;i++){ let p=d[0]; d[0]=i; for(let j=1;j<=y.length;j++){ const t=d[j]; d[j]=Math.min(d[j]+1,d[j-1]+1,p+(x[i-1]===y[j-1]?0:1)); p=t; } } return d[y.length]<=(y.length>5?2:1); };
   const isScriptText=t=>{ const w=String(t).toLowerCase().match(/[a-z0-9']+/g)||[]; return w.length>0 && w.every(x=>lineWords.some(y=>x===y||near(x,y))); };
   const strayOf=c=>needsText? (c.text||[]).some(t=>!isScriptText(t)) : !!c.has_text;
-  const recheck=async()=>{ try{ const c=await visionStyleCheck(url, people); if(c){ c.stray_text=strayOf(c); check=c; } }catch(e){ checkErr=e.message; } };
+  const recheck=async()=>{ try{ const c=await visionStyleCheck(url, people, lctx); if(c){ c.stray_text=strayOf(c); check=c; } }catch(e){ checkErr=e.message; } };
   if(check) check.stray_text=strayOf(check);
   const hint=needsText? 'ONLY words from this script line may appear, spelled correctly: "'+String(s?.line||'').replace(/^\s*\d+\.\s*/,'').slice(0,160)+'". Erase every other word, label, number or pseudo-text and paint it over with blank surface. '+prompt : prompt;
   if(check && gptOk() && check.style_match && check.identity_match!==false && (check.stray_text || (needsText && check.has_text))){
@@ -5909,7 +5944,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(gptText) label+=(needsText?' + GPT':' + GPT clean')+(check.stray_text?' (text remains)':'');
     if(check) check.textRemoved=gptText && !check.stray_text;
   }
-  if(sceneData[idx]===s) s.styleQA={score:check?check.style_score:null, match:check?check.style_match:null, identity:check?check.identity:[], identityMatch:check?check.identity_match:null, strayText:check?!!check.stray_text:null, attempts, text:check?check.text:[], gptText, gptErr, checkErr};
+  if(sceneData[idx]===s) s.styleQA={score:check?check.style_score:null, match:check?check.style_match:null, identity:check?check.identity:[], identityMatch:check?check.identity_match:null, strayText:check?!!check.stray_text:null, logicOk:check?check.logic_ok!==false:null, logicProblems:check?check.logic_problems||[]:[], attempts, text:check?check.text:[], gptText, gptErr, checkErr};
   return {url, label, model, refs, check, attempts, gptText, cost};
 }
 // ═══ RECURRING CAST — keep series regulars (Dee, Mr. Okafor) looking the same ═══
@@ -5993,7 +6028,7 @@ function bestStartFrameFor(j){
   const imgs=[];
   for(let k=j-1;k>=0;k--){ const x=sceneData[k]; if(x.tag==='IMAGE'&&x.resultURL&&x.resultType!=='video') imgs.push(x); }
   // never animate an off-model still: a clip inherits its start frame's style and faces
-  const ok=imgs.filter(x=>!x.styleQA || (x.styleQA.match!==false && x.styleQA.identityMatch!==false));
+  const ok=imgs.filter(x=>!x.styleQA || (x.styleQA.match!==false && x.styleQA.identityMatch!==false && x.styleQA.logicOk!==false));
   if(ok.length) imgs.splice(0,imgs.length,...ok);
   if(!imgs.length) return '';
   if(!want.length) return imgs[0].resultURL;
@@ -6080,6 +6115,51 @@ async function generateAllImages(){
   (run.failed?showErr:showNote)('e6',msg);
 }
 
+// ═══ CLIP CHECK — every clip is checked frame by frame, not just its start still ═══
+const VIDEO_RETRY_CAP=1;
+const CLIP_IDENTITY_GUARD=' IDENTITY LOCK: every character keeps exactly the same face, hairstyle, skin tone, age, build and outfit as in the start frame for the whole clip — no morphing, no face or clothing changes, no new people. Small, simple motion only; keep the flat 2D cartoon art style of the start frame. No writing appears.';
+async function clipFrames(url, fr){
+  fr=fr||[0.08,0.5,0.95];
+  const v=document.createElement('video'); v.crossOrigin='anonymous'; v.muted=true; v.preload='auto'; v.src=url;
+  await new Promise((ok,no)=>{ v.onloadedmetadata=ok; v.onerror=()=>no(new Error('clip frames: could not load the clip')); setTimeout(()=>no(new Error('clip frames: timeout')),30000); });
+  const out=[];
+  for(const p of fr){
+    await new Promise((ok,no)=>{ v.onseeked=ok; v.onerror=no; v.currentTime=Math.max(0,Math.min(v.duration-0.05,v.duration*p)); setTimeout(ok,8000); });
+    const k=Math.min(1,768/Math.max(v.videoWidth||768,v.videoHeight||432)); const c=document.createElement('canvas');
+    c.width=Math.round((v.videoWidth||768)*k); c.height=Math.round((v.videoHeight||432)*k);
+    c.getContext('2d').drawImage(v,0,0,c.width,c.height); out.push({at:p,url:c.toDataURL('image/jpeg',0.85)});
+  }
+  v.removeAttribute('src'); v.load();
+  return out;
+}
+// Strict style + identity check on start/middle/end frames vs the reference sheets AND the clip's own start still.
+async function visionClipCheck(url, people, stillUrl, ctx){
+  if(!llmKey() || !styleCheckOn()) return null;
+  const frames=await clipFrames(url);
+  const per=[];
+  for(const f of frames){
+    const c=await visionStyleCheck(f.url, people, ctx); if(!c) return null;
+    if(stillUrl && people.length){
+      const st=await Promise.all(people.map(p=>visionIdentityCheck(f.url, stillUrl, p.name).catch(()=>null)));
+      st.forEach(x=>{ if(!x) return; const y=c.identity.find(z=>z.name.toLowerCase().includes(x.name.toLowerCase()));
+        if(y && x.visible && x.score<y.score){ y.score=x.score; y.problems='vs start still: '+(x.problems||y.problems); } });
+      c.identity_match=people.every(p=>{ const y=c.identity.find(z=>z.name.toLowerCase().includes(p.name.toLowerCase())); return y && y.visible && y.score>=IDENTITY_MIN; });
+    }
+    per.push({at:f.at, style:c.style_score, styleMatch:c.style_match, identity:c.identity.map(x=>({name:x.name,visible:x.visible,score:x.score,problems:x.problems})), identityMatch:c.identity_match, logicOk:c.logic_ok!==false, logicProblems:c.logic_problems||[], text:c.has_text?c.text:[]});
+  }
+  const ids={}; per.forEach(f=>f.identity.forEach(x=>{ if(!ids[x.name]||x.score<ids[x.name].score||!x.visible) ids[x.name]={name:x.name,score:x.visible?x.score:0,visible:x.visible,problems:x.problems,at:f.at}; }));
+  const identity=Object.values(ids);
+  return {frames:per, score:Math.min(...per.map(f=>f.style)), match:per.every(f=>f.styleMatch), identity,
+    identityMatch:people.length?per.every(f=>f.identityMatch!==false):null,
+    identityScore:identity.length?Math.min(...identity.map(x=>x.score)):null, logicOk:per.every(f=>f.logicOk), logicProblems:[...new Set(per.flatMap(f=>f.logicProblems))], strayText:per.some(f=>f.text.length), text:[...new Set(per.flatMap(f=>f.text))]};
+}
+const clipRank=q=>!q?-1:(q.logicOk!==false?3:0)+(q.match?4:0)+(q.identityMatch!==false?4:0)+(q.strayText?0:1)+(Number(q.score)||0)/10+(q.identityScore==null?1:q.identityScore/10);
+function clipFixNote(q){ const n=[];
+  if(!q.match) n.push('the art style drifted away from the flat 2D cartoon start frame');
+  (q.identity||[]).filter(x=>!x.visible||x.score<IDENTITY_MIN).forEach(x=>n.push(x.name+(x.visible?' morphed mid-clip ('+(x.problems||'off-model')+')':' left the frame')+' — keep him identical to the start frame and on screen'));
+  if(q.logicOk===false) n.push('objects that make no sense here: '+(q.logicProblems.join('; ')||'out-of-place items')+' — only things that belong in this place');
+  if(q.strayText) n.push('writing appeared — no text at all');
+  return n.length?' STRICT, previous clip failed: '+n.join('; ')+'. Even less motion this time.':''; }
 async function generateScene(){
   // Pin the scene NOW — the user can navigate (arrows / dots) during a 60-90s generation,
   // and the result must land on the scene that was requested, not the one on screen.
@@ -6172,9 +6252,20 @@ async function generateScene(){
         sceneRefs['startframe']={url:sf.url};
       }
 
-      if(selectedVideoModel==='kling-v16'){
+      const vp0=finalPrompt+(s.characters!=='NONE'?CLIP_IDENTITY_GUARD:'');
+      const callVideo=async(vp)=>{
+      let resultURL='', modelLabel='';
+      if(selectedVideoModel==='kling-o1v' && startFrameURL){
+        // ── Kling O1 image-to-video: start AND end pinned to the on-model still (keeps faces/outfits) ──
+        const body={prompt:vp,start_image_url:startFrameURL,duration:String(Math.max(3,Math.min(10,Math.round(sceneDuration))))};
+        if(s.characters!=='NONE') body.end_image_url=startFrameURL;
+        document.getElementById('s6-gen-label').textContent='Generating video with Kling O1 (start + end frame locked)… (~60-90 seconds)';
+        const data=await falPost('fal-ai/kling-video/o1/image-to-video', body);
+        resultURL=data.video?.url||data.url||'';
+        modelLabel='Kling O1';
+      }else if(selectedVideoModel==='kling-v16' || selectedVideoModel==='kling-o1v'){
         // ── Kling v1.6 Pro ───────────────────────────────────────────────────
-        const body={prompt:finalPrompt,duration:sceneDuration,aspect_ratio:'16:9'};
+        const body={prompt:vp,duration:sceneDuration,aspect_ratio:'16:9'};
         if(startFrameURL) body.image_url=startFrameURL;
         if(body.image_url&&sceneRefs['subject']?.url?.startsWith('https://'))
           body.subject_reference_image_url=sceneRefs['subject'].url;
@@ -6194,15 +6285,33 @@ async function generateScene(){
           showErr('e6','⚠ Veo 3.1 requires a Start Frame image. Generate the previous image scene or upload one here, then try again.');
           s6ShowPanel('startframe');
           genBtn.disabled=false;
-          return;
+          return null;
         }
         const veoDur=veoDurationStr(sceneDuration);
-        const body={prompt:finalPrompt,image_url:startFrameURL,duration:veoDur,aspect_ratio:'16:9',generate_audio:false};
+        const body={prompt:vp,image_url:startFrameURL,duration:veoDur,aspect_ratio:'16:9',generate_audio:false};
         document.getElementById('s6-gen-label').textContent='Generating video with Veo 3.1… (~60-90 seconds)';
         const data=await falPost('fal-ai/veo3.1/image-to-video', body);
         resultURL=data.video?.url||'';
         modelLabel='Veo 3.1';
       }
+      return {url:resultURL,label:modelLabel};
+      };
+      const people=sceneIdentityRefs(s);
+      let best=null, attempts=0, clipErr='';
+      for(let a=0;a<=VIDEO_RETRY_CAP;a++){
+        attempts=a+1;
+        if(a){ if(!budgetPreflight('fal',getEstimatedCost(),'a clip redo')) break; trackSpend(getEstimatedCost()); }
+        const r=await callVideo(vp0+(a&&best?.qa?clipFixNote(best.qa):''));
+        if(!r) return;
+        if(!r.url) throw new Error('No result returned — try again.');
+        document.getElementById('s6-gen-label').textContent='Checking clip frames (start / middle / end) against the character sheets and the start still…';
+        let qa=null; try{ qa=await visionClipCheck(r.url, people, startFrameURL, sceneLogicCtx(idx, finalPrompt)); }catch(e){ clipErr=e.message; }
+        if(!best || clipRank(qa)>clipRank(best.qa)) best={r,qa};
+        if(!qa || (qa.match && qa.identityMatch!==false && qa.logicOk!==false)) break;
+        if(sceneData[idx]!==s) break;
+      }
+      resultURL=best.r.url; modelLabel=best.r.label+(best.qa?' · clip check '+(best.qa.match&&best.qa.identityMatch!==false&&best.qa.logicOk!==false?'✓':'✗')+(best.qa.identityScore!=null?' id '+best.qa.identityScore+'/10':'')+(attempts>1?' ('+attempts+' tries)':''):'');
+      s.clipQA=best.qa?Object.assign({attempts, checkErr:clipErr}, best.qa):{attempts, checkErr:clipErr||'check off'};
       resultType='video';
     }
 
@@ -6402,11 +6511,11 @@ function restart(){
   lastGeneratedURL='';
   // Reset model selectors back to defaults
   selectedImageModel='kling-o1';
-  selectedVideoModel='kling-v16';
+  selectedVideoModel='kling-o1v';
   userImageModel='kling-o1';
   imagenAutoSelected=false;
   sceneEpoch++;
-  ['kling-o1','gemini-3pro','imagen4','kling-v16','veo31'].forEach(m=>{const el=document.getElementById('mopt-'+m);if(el)el.classList.toggle('sel',m==='kling-o1'||m==='kling-v16');});
+  ['kling-o1','gemini-3pro','imagen4','kling-o1v','kling-v16','veo31'].forEach(m=>{const el=document.getElementById('mopt-'+m);if(el)el.classList.toggle('sel',m==='kling-o1'||m==='kling-o1v');});
   const gptPanel=document.getElementById('gpt-enhance-panel'); if(gptPanel) gptPanel.style.display='none';
   _gptEnhancedB64=''; _gptEnhanceSceneIdx=-1;
   // Clear saved workflow state — user wants a fresh start

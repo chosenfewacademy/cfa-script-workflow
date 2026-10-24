@@ -6,6 +6,7 @@ import asyncio, json, re, base64, sys
 from playwright.async_api import async_playwright
 import os
 URL='file://'+os.path.abspath(os.path.join(os.path.dirname(__file__),'..','CFA_Script_Workflow.html'))
+CLIP=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'fixtures_clip.mp4'),'rb').read()
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
 SC={'xai':'ok','fal':'ok','el':'ok','delay':0,'script':None,'cls':None,'falDelay':0}
 cnt={'xai':0,'falgen':0,'upload':0}
@@ -40,6 +41,7 @@ async def xai_route(route):
         cnt['vision']=cnt.get('vision',0)+1
         q=SC.get('vision') or []
         intro=user[0]['text'] if isinstance(user,list) else ''
+        SC['lastVisionIntro']=intro
         mm=re.search(r'must appear: ([^.]*)\.',intro); names=[x.strip() for x in mm.group(1).split(',')] if mm else []
         v=q.pop(0) if q else {'style_score':9,'style_match':True,'problems':'','has_text':False,'text':[],'text_garbled':False}
         if 'identity' not in v: v=dict(v,identity=[{'name':n,'visible':True,'score':9} for n in names])
@@ -84,6 +86,7 @@ async def fal_route(route):
         if SC['fal']=='uploadfail': return await route.fulfill(status=500,content_type='application/json',body='{}')
         return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'upload_url':'https://upload.mock/put/'+str(cnt['upload']),'file_url':'https://v3b.fal.media/files/up_'+str(cnt['upload'])+'.jpg'}))
     if 'upload.mock' in u: return await route.fulfill(status=200,body='')
+    if 'fal.media' in u and u.split('?')[0].endswith('.mp4'): return await route.fulfill(status=200,content_type='video/mp4',headers={'Access-Control-Allow-Origin':'*'},body=CLIP)
     if 'fal.media' in u: return await route.fulfill(status=200,content_type='image/png',body=PNG)
     cnt['falgen']+=1
     SC.setdefault('falLog',[]).append((u,route.request.post_data or ''))
@@ -398,7 +401,7 @@ async def main():
             await J(pg,"()=>{sceneData[1].tStart=0;sceneData[1].tEnd=7.3;startSceneGeneration();}"); await pg.wait_for_timeout(300)
             await J(pg,"()=>jumpToScene(1)"); await pg.wait_for_timeout(200)
             d=await J(pg,"()=>({d:sceneDuration,hint:document.getElementById('dur-hint').textContent})")
-            check('timing: auto 10s for 7.3s beat (Kling)', d['d']==10 and 'auto 10s' in d['hint'], d)
+            check('timing: Kling O1 (default) picks the shortest clip that covers a 7.3s beat (8s, less morphing than 10s)', d['d']==8 and 'auto 8s' in d['hint'], d)
             await J(pg,"()=>setVideoModel('veo31')"); await J(pg,"()=>jumpToScene(0)"); await J(pg,"()=>jumpToScene(1)")
             check('timing: Veo picks 8s', await J(pg,'()=>sceneDuration')==8)
             await J(pg,"()=>setDuration(4)"); await J(pg,"()=>jumpToScene(0)"); await J(pg,"()=>jumpToScene(1)")
@@ -646,6 +649,31 @@ async def main():
             ok=len(log)==2 and 'kling-image/o1' in log[0][0] and log[0][1].get('image_urls') and 'image-to-video' in log[1][0]
             check('continuity: Marcus clip with no Marcus still gets a reference start frame, then image-to-video', ok, [u[-40:] for u,_ in log])
             check('continuity: video result stored', await J(pg,"()=>!!sceneData[2].resultURL && sceneData[2].autoStartFrame"))
+            # ── clip check: every clip frame-checked, Kling O1 with start+end locked, redo on drift ──
+            await J(pg,"()=>{setVideoModel('kling-o1v'); sceneData[2].resultURL=''; sceneData[2].done=false; currentScene=2; loadScene(2);}"); await pg.wait_for_timeout(800)
+            SC['falLog']=[]; v0=cnt.get('vision',0)
+            drift={'style_score':9,'style_match':True,'has_text':False,'text':[],'identity':[{'name':'Marcus','visible':True,'score':3,'problems':'face turned into a different man'}]}
+            SC['vision']=[dict(drift)]
+            await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(4000)
+            log=[(u,json.loads(b or '{}')) for u,b in SC['falLog'] if 'upload' not in u]
+            q=await J(pg,"()=>sceneData[2].clipQA")
+            vids=[b for u,b in log if 'o1/image-to-video' in u]
+            check('clip: Kling O1 image-to-video is the default, with start AND end frame locked to the still and an identity-lock guard', len(vids)>=1 and vids[0].get('start_image_url') and vids[0].get('end_image_url')==vids[0].get('start_image_url') and 'IDENTITY LOCK' in vids[0]['prompt'], [u[-40:] for u,_ in log])
+            check('clip: start, middle and end frames are each style/identity/logic checked (not just the start still)', q and len(q.get('frames',[]))==3 and cnt.get('vision',0)-v0>=6, q)
+            check('clip: identity drift mid-clip triggers one redo naming the problem; the passing clip is kept', len(vids)==2 and 'morphed mid-clip' in vids[1]['prompt'] and q['attempts']==2 and q['identityMatch'] is True, (len(vids), q and q.get('attempts')))
+            # ── scene logic ──
+            r=await J(pg,"()=>composeScenePrompt({line:'Jordan trues a wheel at the Spoke & Chain workbench.',characters:'JORDAN'},'Jordan at the workbench')")
+            check('logic: bike-shop prompts carry the bible prop list and ban car tyres', 'bicycle wheels' in r and 'NEVER SHOW: car tyres' in r and 'SCENE LOGIC' in r, r[:300])
+            await J(pg,"()=>{window.__sd2=sceneData; sceneData=[{line:'1. Jordan trues a wheel at the Spoke & Chain workbench.',tag:'IMAGE',characters:'NONE',prompt:'workbench close-up',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''}];}")
+            SC['falLog']=[]
+            SC['vision']=[{'style_score':9,'style_match':True,'has_text':False,'text':[],'logic_ok':False,'logic_problems':['car tyre on the workbench — should be a bicycle wheel']}]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(400)
+            gl=[json.loads(b)['prompt'] for u,b in SC['falLog'] if 'upload' not in u]
+            qa=await J(pg,"()=>sceneData[0].styleQA")
+            check('logic: a still with car tyres in the bike shop is regenerated with the problem named, then passes', len(gl)==2 and 'car tyre on the workbench' in gl[1] and qa['logicOk'] is True, (len(gl), qa))
+            body=SC.get('lastVisionIntro','')
+            check('logic: the vision check is told the line, setting and banned props', 'Spoke & Chain' in body and 'car tyres' in body, body[:300])
+            await J(pg,"()=>{sceneData=window.__sd2;}")
             r=await J(pg,"""async()=>{finalScript='Jordan sat in the bike shop. Marcus brought a printout.';selId='v02';
               sceneData=[{line:'1. Jordan sat in the bike shop.',tag:'IMAGE',characters:'JORDAN',prompt:'',sceneDesc:'bike shop workbench'},{line:'2. A chart.',tag:'IMAGE',characters:'NONE',prompt:'',sceneDesc:''},{line:'3. Dee laughs.',tag:'IMAGE',characters:'NONE',prompt:'',sceneDesc:''}];
               const n=sceneContextNote(1); const keep=llmComplete; let sent='';

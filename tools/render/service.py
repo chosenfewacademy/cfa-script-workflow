@@ -210,7 +210,7 @@ class H(BaseHTTPRequestHandler):
         if o in ORIGINS:
             self.cors()
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, ngrok-skip-browser-warning")
             self.send_header("Access-Control-Max-Age", "600")
             if self.headers.get("Access-Control-Request-Private-Network") == "true":
                 self.send_header("Access-Control-Allow-Private-Network", "true")   # Chrome: https page -> local service
