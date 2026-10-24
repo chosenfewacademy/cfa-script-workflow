@@ -429,7 +429,11 @@ async def main():
             st=await J(pg,"()=>({done:sceneData.filter(s=>s.resultURL).length,sf:sceneData[3].savedStartFrameURL===sceneData[2].resultURL,vid:!!sceneData[3].resultURL,noprompt:!!sceneData[6].resultURL,models:sceneData.map(s=>s.resultModel),spend:sessionSpend,btn:document.getElementById('btn-gen-all').textContent})")
             check('batch: all prompted images done, video/no-prompt skipped, start frame set', st['done']==5 and st['sf'] and not st['vid'] and not st['noprompt'], st)
             check('batch: concept scenes no longer text-only — every still is Kling o1 with the style anchor', st['models'][2].startswith('Kling o1') and st['models'][0].startswith('Kling o1'), st['models'])
-            SC['fal']='500'; await J(pg,"()=>{sceneData[0].resultURL='';sceneData[1].resultURL='';renderSceneDots();generateAllImages();}"); await pg.wait_for_timeout(800)
+            SC['fal']='500'; g0=cnt['falgen']; await J(pg,"()=>{sceneData[0].resultURL='';sceneData[1].resultURL='';renderSceneDots();generateAllImages();}")
+            for _ in range(40):
+                await pg.wait_for_timeout(250)
+                if not await J(pg,"()=>!!batchRun"): break
+            check('batch: each failed scene is retried once automatically', cnt['falgen']-g0>=4, cnt['falgen']-g0)
             check('batch: failures reported', '2 failed' in await J(pg,"()=>document.getElementById('e6').textContent"), await J(pg,"()=>document.getElementById('e6').textContent"))
             SC['fal']='ok'; SC['delay']=0
             check('batch: no page errors', not [e for e in errs if 'pageerror' in e], errs)
@@ -576,6 +580,25 @@ async def main():
             gl=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
             qa=await J(pg,"()=>sceneData[0].styleQA")
             check('identity: strict model-sheet check catches an off-model face the combined check passed', len(gl)==2 and 'larger eyes' in gl[1]['prompt'] and qa['identityMatch'] is True and cnt.get('idcheck',0)-i0>=2, (len(gl),qa))
+            # ── audit fixes ──
+            await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sessionStorage.setItem('cfa_openai_key','sk-test');}")
+            SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
+            good={'style_score':9,'style_match':True,'has_text':True,'text':['Dromaasra'],'identity':[{'name':'Jordan','visible':True,'score':9}]}
+            bad={'style_score':2,'style_match':False,'has_text':True,'text':['x'],'identity':[{'name':'Jordan','visible':False,'score':0,'problems':'photoreal'}]}
+            SC['vision']=[dict(good),dict(bad),dict(bad),dict(bad)]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            gl=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
+            r=await J(pg,"()=>[sceneData[0].styleQA, sceneData[0].resultModel]")
+            check('audit: when every retry fails, the closest-to-model attempt is kept (not the last)', len(gl)>=2 and r[0]['match'] is True and r[0]['identityMatch'] is True, (len(gl),r[0]))
+            check('audit: stray writing left on a no-text beat is removed with GPT (remove prompt)', cnt.get('oai',0)-o0==1 and b'REMOVE ALL WRITING' in SC.get('oaiBody',b'') and r[0]['strayText'] is False and 'GPT clean' in (r[1] or ''), (cnt.get('oai',0)-o0, r))
+            r=await J(pg,"()=>deRealize('A dimly lit, cinematic room at night, laptop glowing')")
+            check('audit: realism/darkness words are neutralised in still prompts', 'cinematic' not in r and 'dimly' not in r and 'night' not in r and 'glow' not in r, r)
+            r=await J(pg,"()=>{const keep=currentScene; sceneData[keep].prompt=sceneData[keep].prompt||'A test prompt'; document.getElementById('s6-prompt').value=''; jumpToScene(keep); return document.getElementById('s6-prompt').value}")
+            check('audit: jumping to the scene already on screen still fills its prompt (empty-prompt clip bug)', len(r.strip())>0, r)
+            r=await J(pg,"()=>{const oc=window.confirm,D=[];window.confirm=m=>{D.push(m);return false}; sessionStorage.setItem('cfa_render_url','http://127.0.0.1:9');sessionStorage.setItem('cfa_render_token','t'); const u=sceneData[0].resultURL; sceneData[0].resultURL=''; sendToGrokRender(); sceneData[0].resultURL=u; window.confirm=oc; sessionStorage.removeItem('cfa_render_url'); return D}")
+            check('audit: sending with scenes missing asks first', len(r)==1 and 'no image or clip' in r[0], r)
+            r=await J(pg,"()=>{const save=JSON.stringify(sceneData); sceneData=[{tag:'IMAGE',characters:'JORDAN',resultURL:'u_good',styleQA:{match:true,identityMatch:true}},{tag:'IMAGE',characters:'JORDAN',resultURL:'u_bad',styleQA:{match:false,identityMatch:false}},{tag:'VIDEO',characters:'JORDAN'}]; const v=bestStartFrameFor(2); sceneData=JSON.parse(save); return v}")
+            check('audit: a clip never starts from an off-model still', r=='u_good', r)
             # ── API budget trackers ──
             await J(pg,"()=>{localStorage.removeItem('cfa_budget_cfg');localStorage.removeItem('cfa_budget_spent');budgetCfg={};budgetSpent={xai:0,fal:0,eleven:0,openai:0};budgetLive={};}")
             SC['elsub']=None; SC['falbal']='27.0106725'
