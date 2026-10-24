@@ -721,6 +721,8 @@ async def main():
             check('export: filename', d.suggested_filename.startswith('CFA_FinalEdit_EP07_'), d.suggested_filename)
             check('export: status reports missing media', 'scenes without media: 3' in await J(pg,"()=>document.getElementById('fe-status').textContent"))
             check('export: no page errors', not [e for e in errs if 'pageerror' in e], errs)
+            n=await J(pg,"""()=>{sceneData[1].resultURL='https://v3b.fal.media/files/b.png'; sceneData[1].resultType='image'; let asked=''; const oc=window.confirm; window.confirm=m=>{asked=m; return false;}; exportFinalEditBundle(); window.confirm=oc; currentScene=1; renderResultMedia(sceneData[1].resultURL,'image'); return [clipBeatsHoldingStills(), asked, !!document.querySelector('.clip-still-warn')]}""")
+            check('clip beat holding a still is flagged (list, confirm, warning)', n[0]==[2] and 'holds a still' in n[1] and n[2], n)
             await ctx.close()
 
         await b.close()
