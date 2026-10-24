@@ -248,25 +248,59 @@ def cut_points(segs, total):
     return cuts
 
 
+def media_value(seg):
+    """How much a beat's picture matters to the story if it is dropped by a merge."""
+    if not seg.get("media"):
+        return 0.0
+    chars = (seg.get("characters") or "NONE") != "NONE"
+    if seg.get("mediaType") == "video":
+        return 3.5 if chars else 2.5
+    return 3.0 if chars else 1.0
+
+
+def pick_media(segs, g):
+    media = [segs[i] for i in g if segs[i].get("media")]
+    if not media:
+        return None
+    # character pictures carry the story; then motion; earliest wins ties
+    return max(media, key=lambda s: (media_value(s), -g.index(segs.index(s))))
+
+
 def group_shots(segs, cuts, min_hold=MIN_HOLD):
-    """Merge consecutive beats onto one shot until it holds >= min_hold seconds.
-    The shot uses the group's video clip if it has one (paid-for motion), else its first still."""
-    groups, cur = [], []
-    for i in range(len(segs)):
-        cur.append(i)
-        if cuts[cur[-1] + 1] - cuts[cur[0]] >= min_hold:
-            groups.append(cur)
-            cur = []
-    if cur:
-        if groups and cuts[cur[-1] + 1] - cuts[cur[0]] < min_hold:
-            groups[-1] += cur
-        else:
-            groups.append(cur)
+    """Partition consecutive beats into shots that each hold >= min_hold seconds.
+    Among valid partitions, choose the one that drops the least story value
+    (character stills and clips are expensive to lose, concept stills cheap),
+    then the one with more shots. Each shot shows its most valuable picture."""
+    n = len(segs)
+    INF = float("inf")
+    best = [(INF, 0, None)] * (n + 1)   # (dropped value, -shots, prev index)
+    best[0] = (0.0, 0, None)
+    for j in range(1, n + 1):
+        for i in range(j - 1, -1, -1):
+            if best[i][0] == INF:
+                continue
+            dur = cuts[j] - cuts[i]
+            if dur < min_hold and not (i == 0 and j == n):
+                continue
+            g = list(range(i, j))
+            pick = pick_media(segs, g)
+            dropped = sum(media_value(segs[k]) for k in g) - (media_value(pick) if pick else 0)
+            cand = (best[i][0] + dropped, best[i][1] - 1, i)
+            if (cand[0], cand[1]) < (best[j][0], best[j][1]):
+                best[j] = cand
+    if best[n][0] == INF:          # cannot satisfy the hold anywhere: one shot
+        bounds = [0, n]
+    else:
+        bounds, j = [n], n
+        while j:
+            j = best[j][2]
+            bounds.append(j)
+        bounds.reverse()
     shots = []
-    for n, g in enumerate(groups):
-        media = [segs[i] for i in g if segs[i].get("media")]
-        pick = next((s for s in media if s.get("mediaType") == "video"), media[0] if media else None)
-        shots.append({"index": n + 1, "beats": [segs[i]["index"] for i in g],
+    for k in range(len(bounds) - 1):
+        g = list(range(bounds[k], bounds[k + 1]))
+        pick = pick_media(segs, g)
+        shots.append({"index": k + 1, "beats": [segs[i]["index"] for i in g],
                       "start": cuts[g[0]], "end": cuts[g[-1] + 1],
                       "media": pick.get("media") if pick else None,
                       "mediaType": (pick.get("mediaType") or "image") if pick else "",

@@ -119,6 +119,15 @@ def main():
                       ("Cryptocurrencies are new.", "Digital assets are new."),
                       ("I like crypto.", "I like digital assets.")]:
         check(render.screen_text(src) == want, "swap: %r -> %r (got %r)" % (src, want, render.screen_text(src)))
+    # story-aware grouping: a short Jordan still next to a concept clip keeps its own shot when possible
+    g_segs = [{"index": 1, "text": "Jordan sits.", "characters": "JORDAN", "media": "a.png", "mediaType": "image"},
+              {"index": 2, "text": "A chart.", "characters": "NONE", "media": "b.png", "mediaType": "image"},
+              {"index": 3, "text": "Hands move.", "characters": "NONE", "media": "c.mp4", "mediaType": "video"},
+              {"index": 4, "text": "Jordan writes.", "characters": "JORDAN", "media": "d.png", "mediaType": "image"}]
+    g = render.group_shots(g_segs, [0, 3.0, 4.0, 8.0, 12.0], 3.75)
+    check([x["beats"] for x in g] == [[1, 2], [3], [4]] and g[0]["media"] == "a.png" and g[1]["mediaType"] == "video",
+          "grouping keeps character stills and clips, drops the concept still (%r)" % [(x["beats"], x["media"]) for x in g])
+    check(all(x["end"] - x["start"] >= 3.75 for x in g), "grouping still honours the minimum hold")
     # validator: garbage Grok output must fall back, partial output coerced onto real timings
     b = json.load(zipfile.ZipFile(z).open("bundle.json"))
     segs = b["segments"]
