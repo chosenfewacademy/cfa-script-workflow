@@ -118,7 +118,7 @@ async def el_route(route):
     m=SC['el']
     if m in('401','429'): return await route.fulfill(status=int(m),content_type='application/json',body=json.dumps({'detail':{'message':'nope'}}))
     if m=='empty': return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'audio_base64':'','alignment':None}))
-    body=json.loads(route.request.post_data or '{}'); text=body.get('text',''); SC['elBody']=body
+    body=json.loads(route.request.post_data or '{}'); text=body.get('text',''); SC['elBody']=body; SC['elURL']=route.request.url
     assert route.request.url.endswith('/with-timestamps'), route.request.url
     chars=list(text); st=[round(i*0.06,3) for i in range(len(chars))]; en=[round(x+0.06,3) for x in st]
     return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'audio_base64':base64.b64encode(b'ID3fakeaudio').decode(),'alignment':{'characters':chars,'character_start_times_seconds':st,'character_end_times_seconds':en}}))
@@ -506,15 +506,15 @@ async def main():
         if want('pace'):
             for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,SC[k]) if k in('xai','fal','el') else SC[k]
             ctx,pg,errs=await newpage(b)
-            check('pace: Calm + expressive is the default', await J(pg,"()=>document.getElementById('el-pace').value")=='expressive')
+            check('pace: Slow is the default', await J(pg,"()=>document.getElementById('el-pace').value")=='slow')
             await J(pg,"()=>{finalScript='Hello there. Calm now.';selId='v01';goVO();generateVO();}"); await pg.wait_for_timeout(900)
+            vs=(SC.get('elBody') or {}).get('voice_settings',{})
+            check('pace: slow sends speed 0.9 and stability 0.5', vs.get('speed')==0.9 and abs(vs.get('stability',0)-0.5)<1e-9, vs)
+            check('pace: recorded with the timestamps', await J(pg,"()=>voPace")=='slow' and await J(pg,"()=>voWords.length")>0)
+            await J(pg,"()=>{document.getElementById('el-pace').value='expressive';generateVO();}"); await pg.wait_for_timeout(900)
             vs=(SC.get('elBody') or {}).get('voice_settings',{})
             check('pace: expressive = unhurried 0.93, looser stability, more style', vs.get('speed')==0.93 and abs(vs.get('stability',0)-0.38)<1e-9 and abs(vs.get('style',0)-0.55)<1e-9, vs)
             check('pace: expressive recorded', await J(pg,"()=>voPace")=='expressive')
-            await J(pg,"()=>{document.getElementById('el-pace').value='slow';generateVO();}"); await pg.wait_for_timeout(900)
-            vs=(SC.get('elBody') or {}).get('voice_settings',{})
-            check('pace: slow sends speed 0.9 and +0.1 stability', vs.get('speed')==0.9 and abs(vs.get('stability',0)-0.6)<1e-9, vs)
-            check('pace: recorded with the timestamps', await J(pg,"()=>voPace")=='slow' and await J(pg,"()=>voWords.length")>0)
             await J(pg,"()=>{document.getElementById('el-pace').value='normal';generateVO();}"); await pg.wait_for_timeout(900)
             vs=(SC.get('elBody') or {}).get('voice_settings',{})
             check('pace: normal sends speed 1.0', vs.get('speed')==1.0 and abs(vs.get('stability',0)-0.5)<1e-9, vs)
@@ -641,6 +641,19 @@ async def main():
             check('lint: leaked planning labels are flagged', await J(pg2,"()=>scriptLint('Jordan hit his trigger moment. The decision point came. '.repeat(3)).issues.some(x=>/labels leaked/.test(x))"))
             check('stress: no page errors', not [e for e in errs2 if 'pageerror' in e], errs2[:3])
             await ctx2.close()
+            # ── voice defaults: Bill + eleven_v4, Slow pace ──
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
+            ctx3,pg3,errs3=await newpage(b)
+            await J(pg3,"()=>{finalScript='Card declined. The bank was closed.';selId='v01';goVO();generateVO();}"); await pg3.wait_for_timeout(1500)
+            eb=SC.get('elBody') or {}; vs=eb.get('voice_settings',{})
+            check('voice: default narrator is Bill', 'pqHfZKP75CvOlQylNhV4' in (SC.get('elURL') or ''), SC.get('elURL'))
+            check('voice: default model eleven_v4 via with-timestamps', eb.get('model_id')=='eleven_v4' and (SC.get('elURL') or '').endswith('/with-timestamps'), eb.get('model_id'))
+            check('voice: Slow pace speed 0.9, stability 0.5, similarity 0.75', vs.get('speed')==0.9 and abs(vs.get('stability',0)-0.5)<1e-9 and vs.get('similarity_boost')==0.75, vs)
+            check('voice: summary shows Bill', 'Bill' in await J(pg3,"()=>document.getElementById('vs-summary').textContent"))
+            await J(pg3,"()=>{document.getElementById('el-voice').value='jamal';updateVSSummary();goVO();generateVO();}"); await pg3.wait_for_timeout(1500)
+            check('voice: Young Jamal still selectable', '6OzrBCQf8cjERkYgzSg8' in (SC.get('elURL') or ''), SC.get('elURL'))
+            check('voice: no page errors', not [e for e in errs3 if 'pageerror' in e], errs3[:3])
+            await ctx3.close()
             # ── audit fixes ──
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sessionStorage.setItem('cfa_openai_key','sk-test');}")
             SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
