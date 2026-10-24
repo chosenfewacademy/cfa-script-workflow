@@ -8,7 +8,7 @@
   POST /feedback           JSON {step, kind: episode|tool, rating 1-5, comment, ref, reviewer, episode} -> item
   GET  /feedback           -> {items: [...], memory: [...]}   (?since=<epoch> for changes only)
   GET  /feedback/<id>      -> item          GET /feedback/memory -> {memory: [...]}
-  POST /feedback/<id>/status JSON {status: in_progress|ready|declined, resolution, accept} -> item
+  POST /feedback/<id>/status JSON {status: in_progress|ready|declined|reverted, resolution, accept} -> item
   GET  /health             -> {"ok": true, "queue": n}   (no auth)
 
 Auth: "Authorization: Bearer <token>"; the token lives in CFA_RENDER_TOKEN_FILE (never in the repo).
@@ -171,7 +171,7 @@ def load_jobs():
 
 
 FB_STEPS = ("research", "script", "voices", "registry", "shotlist", "stills", "clips", "lipsync", "music", "edit", "final")
-FB_STATUS = ("submitted", "in_progress", "ready", "declined")
+FB_STATUS = ("submitted", "in_progress", "ready", "declined", "reverted")
 fb_lock = threading.Lock()
 
 
@@ -237,7 +237,7 @@ def fb_new(body):
 def fb_status(fid, body):
     st = body.get("status")
     if st not in FB_STATUS[1:]:
-        raise ValueError("status must be in_progress, ready or declined")
+        raise ValueError("status must be in_progress, ready, declined or reverted")
     with fb_lock:
         path = fb_dir("items", fid + ".json")
         it = json.load(open(path))

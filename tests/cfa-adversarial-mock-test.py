@@ -206,11 +206,15 @@ async def main():
             check('story: research brief fed into plan+draft', 'RESEARCH BRIEF' in SC.get('lastDraftUser',''))
             check('story: read-aloud critic ran once', cnt.get('readaloud',0)==1, cnt.get('readaloud'))
             check('story: read-aloud scores shown', 'flow 9/10' in await J(pg,"()=>document.getElementById('research-panel').textContent"))
-            check('happy: text spend tracked (fast planner/critic/hook + draft + revise + length-fit)', abs(await J(pg,'()=>textSpend')-0.0165)<1e-6, await J(pg,'()=>textSpend'))
+            check('happy: text spend tracked (fast planner/critic/hook + draft + revise + length-fit)', abs(await J(pg,'()=>textSpend')-0.017)<1e-6, await J(pg,'()=>textSpend'))
             await go_seg(pg); check('happy: segments', await J(pg,"()=>(segScript.match(/^\\d+\\./gm)||[]).length")>=3)
             await go_scenes(pg)
             st=await J(pg,"()=>({n:sceneData.length,consec:sceneData.some((s,i)=>i&&s.tag==='VIDEO'&&sceneData[i-1].tag==='VIDEO'),prompts:sceneData.every(s=>s.prompt)})")
-            check('happy: classified+prompts', st['n']>=3 and st['prompts'] and not st['consec'], st)
+            st2=await J(pg,"()=>({full:motionMode()==='full'&&sceneData.every(s=>s.tag==='VIDEO'||s.tag==='TALK'),ui:document.getElementById('s6-motion').value,opts:[...document.getElementById('s6-motion').options].map(o=>o.textContent)})")
+            check('happy: classified+prompts (fully animated default: every non-talking beat is a clip)', st['n']>=3 and st['prompts'] and st2['full'] and st2['ui']=='full', [st,st2])
+            check('motion selector shows both modes with a per-episode cost', '$' in st2['opts'][0] and st2['opts'][0].startswith('Fully animated (recommended)') and st2['opts'][1].startswith('Mixed (cheaper)'), st2['opts'])
+            st3=await J(pg,"()=>{setMotionMode('mixed');const r={consec:sceneData.some((s,i)=>i&&s.tag==='VIDEO'&&sceneData[i-1].tag==='VIDEO'&&!s.resultURL)};setMotionMode('full');return r}")
+            check('mixed mode: never two consecutive generated clips', not st3['consec'], st3)
             await J(pg,"()=>startSceneGeneration()")
             await pg.wait_for_timeout(500)
             await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(800)
@@ -290,7 +294,7 @@ async def main():
             SC['cls']='I cannot do that.'
             await J(pg,"()=>{document.getElementById('sgo').value='1. Marcus waits.\\n2. Jordan sends.\\n3. A chart.';onSegEd();}")
             await go_scenes(pg)
-            check('garbage classification: all IMAGE', await J(pg,"()=>sceneData.every(s=>s.tag==='IMAGE')"))
+            check('garbage classification: all IMAGE (animated in full mode)', await J(pg,"()=>sceneData.every(s=>s.origTag==='IMAGE' && s.tag===(motionMode()==='full'?'VIDEO':'IMAGE'))"))
             SC['cls']=None
             check('inputs: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
@@ -864,6 +868,41 @@ async def main():
             good="\n".join(["MARCUS: The payment says sent, but Dee has nothing yet.","JORDAN: Wait, so where is it right now?"]+[("JORDAN: " if i%2 else "MARCUS: ")+"word "*13 for i in range(50)]+["NARRATOR: Later that night, the shop was quiet again."])
             li=await J(pg,"(t)=>dialogueLint(t)",good)
             check('dialogue lint: clean tagged script passes', li==[], li)
+            u=await J(pg,"""()=>{
+              const L=t=>parseDialogue(t);
+              const narr=voiceLint(L('NARRATOR: I remember when Jordan lost it.\\nJORDAN: Wait. Gone?'));
+              const bleed=voiceLint(L('JORDAN: check the network fee first.\\nMARCUS: Always check the network fee first, okay?'));
+              const hints=voiceHints(L('JORDAN: So I went to the shop and the card got declined again and again today.\\nJORDAN: Then I tried my other card and it also failed at the register.\\nJORDAN: And I still have no idea what is going on with this.\\nMARCUS: Okay.\\nMARCUS: Fine.\\nMARCUS: Sure.\\nPRIYA: Fees add up.\\nPRIYA: Watch them.'));
+              const pr=primerFor('v11');
+              const acc=parseAccuracy('{"issues":[{"kind":"stiff","line":"As you know","problem":"both know","fix":"cut"},{"kind":"style","line":"x","problem":"y","fix":"z"}]}');
+              return {narr:narr.some(x=>/first person/.test(x)), bleed:bleed.some(x=>/both say/.test(x)), hints:hints.length, hl:hints.join('|'), pr:pr.length>200&&/declined|logic/i.test(pr),
+                acc:acc&&acc.length===1&&acc[0].kind==='stiff', wc:wordCount('JORDAN: [sighs] Wait. [short pause] Gone?'),
+                tw:stripTagWords([['Wait',0,1],['[sighs]',1,2],['[short',2,3],['pause]',3,4],['ok',4,5]]).map(w=>w[0]).join(' '),
+                rules:/SOUNDS LIKE REAL PEOPLE/.test(DIALOGUE_RULES)&&/stiff/.test(SYS_ACCURACY)&&/ALWAYS MOVING/.test(SYS_DIRECTOR)&&/LISTENER REACTION/.test(SYS_DIRECTOR)};
+            }""")
+            check('voice lint: narrator first person flagged', u['narr'], u)
+            check('voice lint: the same phrase in two characters\' mouths flagged', u['bleed'], u)
+            check('voice hints: long Jordan, Marcus never asks back, Priya without numbers', u['hints']>=3, u['hl'])
+            check('primer: v11 gets its verified facts + story-logic section', u['pr'], u)
+            check('accuracy critic: parses fact/logic/narrator/voice/stiff issues, drops unknown kinds', u['acc'], u)
+            check('v4 audio tags: not counted as words, never reach captions', u['wc']==2 and u['tw']=='Wait ok', u)
+            check('prompts: natural-dialogue rules, stiff-line critic, always-moving + listener-reaction director rules', u['rules'], u)
+            m=await J(pg,"""()=>{
+              const keep=sceneData; selId=selId||'v02';
+              sceneData=[{line:'1. NARRATOR: The shop was quiet.',tag:'IMAGE',origTag:'IMAGE',sceneDesc:'corner shop'},{line:'2. JORDAN: Wait—',tag:'TALK',sceneDesc:'corner shop'},{line:'3. NARRATOR: Rain hit the window.',tag:'VIDEO',origTag:'VIDEO',sceneDesc:'Corner shop!'},{line:'4. NARRATOR: Later.',tag:'IMAGE',origTag:'IMAGE',sceneDesc:'street'}];
+              localStorage.removeItem(motionKey());
+              const def=motionMode(); applyMotionMode(); const fullTags=sceneData.map(x=>x.tag).join(',');
+              const f=motionCostEstimate('full').usd, mx=motionCostEstimate('mixed').usd;
+              safeSetItem(motionKey(),'mixed'); applyMotionMode(); const mixTags=sceneData.map(x=>x.tag).join(',');
+              const other=(()=>{ const s=selId; selId='v99'; const r=motionMode(); selId=s; return r; })();
+              const sp=samePlace(sceneData[0],sceneData[2]) && !samePlace(sceneData[0],sceneData[3]);
+              localStorage.removeItem(motionKey()); sceneData=keep;
+              return {def,fullTags,mixTags,f,mx,other,sp};
+            }""")
+            check('motion: fully animated is the default and every non-talking beat becomes a clip', m['def']=='full' and m['fullTags']=='VIDEO,TALK,VIDEO,VIDEO', m)
+            check('motion: mixed restores the classifier mix', m['mixTags']=='IMAGE,TALK,VIDEO,IMAGE', m)
+            check('motion: per-episode choice, full costs more than mixed', m['other']=='full' and m['f']>m['mx']>0, m)
+            check('motion: same-place continuity match ignores case/punctuation', m['sp'], m)
             bad="Jordan looked at the screen for a long while and wondered what had gone wrong with it.\nBOB: Hi there.\nNARRATOR: "+("calm "*400)+"\nMARCUS: "+("long "*45)+"\nMARCUS: one\nMARCUS: two"
             li=await J(pg,"(t)=>dialogueLint(t).join(' | ')",bad)
             for frag in ['without a speaker tag','Unknown speaker','Too much narration','monologue','Cold open','3 lines in a row','Spoken length']:
@@ -973,15 +1012,34 @@ async def main():
                 srv=json.load(open(os.path.join(fbd,'data','feedback','items',[json.loads(l) for l in open(os.path.join(fbd,'data','feedback','inbox.jsonl'))][1]['id']+'.json')))
                 check('feedback: episode note goes into that step\'s prompts only', st['note'] and not st['img'], st)
                 check('feedback: episode item is processed (server status moved past submitted)', srv['status'] in ('in_progress','ready') and len(srv['history'])>=2, srv['history'])
+                # live "apply now": timer, before/after toggle, revert puts the old script back in place
+                lv=await J(pg,"()=>({shown:document.getElementById('fb-live').style.display,act:document.getElementById('fb-live-actions').style.display,timer:document.getElementById('fb-live-timer').textContent,after:document.getElementById('txed').value,view:document.getElementById('fb-live-view').textContent})")
+                check('feedback live: progress panel with timer, result shown in place with before/after + accept/revert', lv['shown']=='block' and lv['act']=='flex' and ':' in lv['timer'] and 'AFTER' in lv['view'] and lv['after']!='Jordan waits. Marcus helps.', lv)
+                await J(pg,"()=>fbLiveToggle()")
+                check('feedback live: "Show before" swaps the old version back in place', await J(pg,"()=>document.getElementById('txed').value")=='Jordan waits. Marcus helps.' and 'BEFORE' in await J(pg,"()=>document.getElementById('fb-live-view').textContent"))
+                await J(pg,"()=>fbLiveToggle()")
+                await J(pg,"()=>fbLiveDecide(false)")
+                await pg.wait_for_timeout(400)
+                st=await J(pg,"()=>({ed:document.getElementById('txed').value,g:genScript,status:fbItems().slice(-1)[0].status,note:fbBlock(['script']).includes('Make Jordan more anxious')})")
+                check('feedback live: Revert restores the previous script, marks the item reverted and drops the note', st=={'ed':'Jordan waits. Marcus helps.','g':'Jordan waits. Marcus helps.','status':'reverted','note':False}, st)
+                lab=await J(pg,"()=>[...document.getElementById('fb-kind').options].map(o=>o.textContent)")
+                check('feedback: the two kinds are clearly labelled', lab[0].startswith('Apply to this episode now') and lab[1].startswith('Suggest a tool improvement'), lab)
+                cs=await J(pg,"()=>{document.getElementById('fb-kind').value='episode';document.getElementById('fb-step').value='script';fbKindUI();return [document.getElementById('fb-cost').textContent,document.getElementById('fb-submit').textContent]}")
+                check('feedback: apply-now shows its cost estimate before running', 'estimated cost' in cs[0] and cs[1]=='Apply to this episode now', cs)
+                bp=await J(pg,"()=>{let asked=0;const o=window.budgetPreflight;window.budgetPreflight=()=>{asked++;return false};document.getElementById('fb-step').value='script';document.getElementById('fb-comment').value='shorter';const n=fbItems().length;return fbSubmit().then(()=>{window.budgetPreflight=o;return [asked,fbItems().length-n]})}")
+                check('feedback: apply-now runs the budget pre-check and stops when declined', bp==[1,0], bp)
                 # episode feedback when the step has no output yet: kept for the next generation
                 await J(pg,"()=>{document.getElementById('fb-step').value='music';document.getElementById('fb-kind').value='episode';document.getElementById('fb-comment').value='Softer score';return fbSubmit()}")
                 await pg.wait_for_timeout(500)
                 check('feedback: no output yet -> in progress, note kept for next run', await J(pg,"()=>fbItems().slice(-1)[0].status")=='in_progress' and 'next time' in await J(pg,"()=>fbItems().slice(-1)[0].resolution"))
                 # wrong key
                 await J(pg,"()=>{sessionStorage.setItem('cfa_render_token','nope');document.getElementById('fb-kind').value='tool';document.getElementById('fb-comment').value='x';return fbSubmit()}")
-                check('feedback: wrong access key shows an error, nothing saved locally', 'access token' in await J(pg,"()=>document.getElementById('fb-err').textContent") and await J(pg,"()=>fbItems().length")==3)
+                check('feedback: wrong access key shows an error, nothing saved locally', 'access token' in await J(pg,"()=>document.getElementById('fb-err').textContent") and await J(pg,"()=>fbItems().length")==3, await J(pg,"()=>fbItems().length"))
                 await J(pg,"()=>{sessionStorage.removeItem('cfa_render_url');document.getElementById('fb-comment').value='x';return fbSubmit()}")
                 check('feedback: no render service -> asks to connect it', 'Settings' in await J(pg,"()=>document.getElementById('fb-err').textContent"))
+                SC['script']=None
+                ol=await J(pg,"()=>{genScript='Jordan waits.';document.getElementById('txed').value=genScript;document.getElementById('fb-err').textContent='';document.getElementById('fb-step').value='script';document.getElementById('fb-kind').value='episode';document.getElementById('fb-comment').value='Add a reaction';return fbSubmit().then(()=>new Promise(r=>setTimeout(r,2500))).then(()=>({err:document.getElementById('fb-err').textContent,local:!!fbItems().slice(-1)[0].local,act:document.getElementById('fb-live-actions').style.display}))}")
+                check('feedback: apply-now works in the browser without the render service', ol['err']=='' and ol['local'] and ol['act']=='flex', ol)
                 check('feedback: no page errors', not [e for e in errs if 'pageerror' in e], errs[:5])
                 await ctx.close()
             finally:

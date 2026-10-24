@@ -204,6 +204,23 @@ def main():
     so = subprocess.run(["ffmpeg", "-v", "info", "-i", os.path.join(d, "subj_c.png"), "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"], capture_output=True, text=True).stderr
     check(float((re.findall(r"YAVG=([\d.]+)", so) or ["0"])[-1]) > 150, "vertical crop centres on the located subject (off-centre subject stays in frame)")
     check(R.subject_center("/nonexistent.png", "image") == (0.5, 0.45), "no key -> centre fallback")
+    # narrator vs character caption style
+    words = [(w, i * 0.5, i * 0.5 + 0.4) for i, w in enumerate("Bill watched the market fall. Wait what happened".split())]
+    segs = [{"index": 0, "speaker": "NARRATOR", "start": 0.0, "end": 2.45}, {"index": 1, "speaker": "JORDAN", "start": 2.5, "end": 4.5}]
+    edl = {"caption_style": {"preset": "bold_pop", "position": "lower_third", "highlight_color": "#FFD400", "words_per_caption": 4}, "shots": [{"start": 0, "end": 5, "emphasis": [], "beats": [0, 1], "duration": 5}], "title_card": {"enabled": False}, "end_card": {"enabled": False}}
+    ap = os.path.join(d, "narr.ass")
+    cues = R.build_ass(words, segs, edl, 1080, 1920, 5.0, ap)
+    ass = open(ap).read()
+    check("Style: Narr," in ass and ",Narr,," in ass and ",Cap,," in ass, "narrator lines use the Narr caption style, characters use Cap")
+    check(any(c.get("speaker") == "NARRATOR" for c in cues) and any(c.get("speaker") == "JORDAN" for c in cues), "cues carry speaker")
+    # motion QA: a frozen still shot then a moving shot with a hard colour jump
+    mv = os.path.join(d, "mqa.mp4")
+    ff("-f", "lavfi", "-i", "color=c=black:s=160x90:d=2:r=24", "-f", "lavfi", "-i", "testsrc=s=160x90:d=2:r=24",
+       "-filter_complex", "[1:v]scroll=h=0.03[m];[0:v][m]concat=n=2:v=1:a=0[v]", "-map", "[v]", "-pix_fmt", "yuv420p", mv)
+    q = R.motion_qa(mv, [{"index": 0, "start": 0.0, "duration": 2.0, "mediaType": "image"}, {"index": 1, "start": 2.0, "duration": 2.0, "mediaType": "video"}])
+    check([f["shot"] for f in q["frozen"]] == [0], "motion QA flags only the frozen shot %s" % q.get("motion"))
+    check(len(q["jarring_cuts"]) == 1 and q["jarring_cuts"][0]["after_shot"] == 0, "motion QA flags the black-to-colour-bars cut %s" % q["jarring_cuts"])
+    check([w[0] for w in R.strip_tag_words([["Wait", 0, 1], ["[sighs]", 1, 2], ["[short", 2, 3], ["pause]", 3, 4], ["okay.", 4, 5]])] == ["Wait", "okay."], "v4 audio tags never reach captions")
     print("\n%d failure(s)" % len(fails))
     sys.exit(1 if fails else 0)
 
