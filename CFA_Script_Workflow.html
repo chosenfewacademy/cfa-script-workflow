@@ -6031,6 +6031,7 @@ async function falPost(endpoint, body){
   return resp.json();
 }
 async function falImageRequest(model, prompt, refImages){
+  prompt=fitClipPrompt(prompt); // fal image endpoints share the 2500-char prompt limit
   let data;
   if(model==='kling-o1'){
     data=await falPost('fal-ai/kling-image/o1',{prompt,aspect_ratio:frameAR(),num_images:1,image_urls:refImages});
