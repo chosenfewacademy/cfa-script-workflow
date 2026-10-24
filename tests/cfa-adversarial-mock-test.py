@@ -178,7 +178,7 @@ async def main():
             await go_review(pg); check('happy: review reached', await J(pg,'()=>curScreen')==3)
             check('story: research brief ran and is shown in review', cnt.get('research',0)>=1 and 'white paper' in await J(pg,"()=>document.getElementById('research-panel').textContent") )
             check('story: research brief fed into plan+draft', 'RESEARCH BRIEF' in SC.get('lastDraftUser',''))
-            check('story: read-aloud critic ran once when scores are high', cnt.get('readaloud',0)==1, cnt.get('readaloud'))
+            check('story: read-aloud critic ran once', cnt.get('readaloud',0)==1, cnt.get('readaloud'))
             check('story: read-aloud scores shown', 'flow 9/10' in await J(pg,"()=>document.getElementById('research-panel').textContent"))
             check('happy: text spend tracked (plan 0.0005 + draft + revise + length-fit 0.005 each)', abs(await J(pg,'()=>textSpend')-0.0155)<1e-6, await J(pg,'()=>textSpend'))
             await go_seg(pg); check('happy: segments', await J(pg,"()=>(segScript.match(/^\\d+\\./gm)||[]).length")>=3)
@@ -633,7 +633,7 @@ async def main():
             check('stress: read-aloud rewrite with "crypto" is rejected', 'crypto' not in (await J(pg2,"()=>document.getElementById('txed').value")).lower())
             SC['raq']=[{'scores':{'flow':6,'cohesion':6,'logic':9,'human':9,'story_pull':9,'accuracy':9},'problems':['jumpy'],'script':good},{'scores':{'flow':9,'cohesion':9,'logic':9,'human':9,'story_pull':9,'accuracy':9},'problems':[],'script':good}]
             cnt['readaloud']=0; await J(pg2,"()=>goTo(1,'left')"); await go_review(pg2)
-            check('stress: low read-aloud scores trigger a second round', cnt.get('readaloud')==2, cnt.get('readaloud'))
+            check('stress: read-aloud capped at one round (cost cap)', cnt.get('readaloud')==1, cnt.get('readaloud'))
             check('stress: accepted rewrite lands in the editor', (await J(pg2,"()=>document.getElementById('txed').value")).startswith('"Hang on,"'))
             SC['researchFail']=True; cnt['research']=0; await J(pg2,"()=>goTo(1,'left')"); await go_review(pg2)
             check('stress: web research failure falls back and still reaches review', await J(pg2,'()=>curScreen')==3)
