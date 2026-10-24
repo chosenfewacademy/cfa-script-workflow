@@ -31,6 +31,11 @@ async def xai_route(route):
         return await route.fulfill(status=st,content_type='application/json',body=json.dumps(payload))
     if mode=='html500': return await route.fulfill(status=502,content_type='text/html',body='<html>Bad gateway</html>')
     sysmsg=body['messages'][0]['content']; user=body['messages'][1]['content']
+    if 'art-direction QA' in sysmsg:
+        cnt['vision']=cnt.get('vision',0)+1
+        q=SC.get('vision') or []
+        v=q.pop(0) if q else {'style_score':9,'style_match':True,'problems':'','has_text':False,'text':[],'text_garbled':False}
+        return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'choices':[{'message':{'content':json.dumps(v)},'finish_reason':'stop'}],'usage':{}}))
     if 'story editor' in sysmsg and 'senior' not in sysmsg:
         cnt['plan']=cnt.get('plan',0)+1
         text='PREMISE: Jordan at the bus stop\nDETAILS: $212.40, 4 minutes'
@@ -91,6 +96,10 @@ async def el_route(route):
     assert route.request.url.endswith('/with-timestamps'), route.request.url
     chars=list(text); st=[round(i*0.06,3) for i in range(len(chars))]; en=[round(x+0.06,3) for x in st]
     return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'audio_base64':base64.b64encode(b'ID3fakeaudio').decode(),'alignment':{'characters':chars,'character_start_times_seconds':st,'character_end_times_seconds':en}}))
+async def oai_route(route):
+    cnt['oai']=cnt.get('oai',0)+1
+    SC['oaiBody']=route.request.post_data_buffer or b''
+    return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'data':[{'b64_json':base64.b64encode(PNG).decode()}]}))
 async def other_route(route):
     u=route.request.url
     if u.startswith(('file:','data:','blob:')): return await route.continue_()
@@ -107,6 +116,7 @@ async def newpage(b, keys=True, pre=None):
     await ctx.route('https://api.x.ai/**',xai_route)
     await ctx.route(re.compile(r'https://(fal\.run|rest\.alpha\.fal\.ai|upload\.mock|v3b\.fal\.media)/.*'),fal_route)
     await ctx.route('https://api.elevenlabs.io/**',el_route)
+    await ctx.route('https://api.openai.com/**',oai_route)
     if pre: await ctx.add_init_script(pre)
     if keys:
         await ctx.add_init_script("sessionStorage.setItem('cfa_xai_key','xai-test');sessionStorage.setItem('cfa_fal_key','fal-test');sessionStorage.setItem('cfa_el_key','el-test');localStorage.setItem('cfa_onboarded','1');")
@@ -266,7 +276,7 @@ async def main():
             # Generate scene 0, switch away mid-flight
             SC['delay']=0.8
             await J(pg,"()=>{currentScene=0;loadScene(0);}"); await pg.wait_for_timeout(400)
-            await J(pg,"()=>{generateScene(); setTimeout(()=>jumpToScene(2),200);}"); await pg.wait_for_timeout(1500)
+            await J(pg,"()=>{generateScene(); setTimeout(()=>jumpToScene(2),200);}"); await pg.wait_for_timeout(3500)
             st=await J(pg,"()=>({r0:!!sceneData[0].resultURL,r2:!!sceneData[2].resultURL,sf1:sceneData[1].savedStartFrameURL===sceneData[0].resultURL,shown:!!document.querySelector('#s6-result-content img')})")
             check('switch mid-gen: result on scene 1 only + start frame for scene 2', st['r0'] and not st['r2'] and st['sf1'] and not st['shown'], st)
             SC['delay']=0
@@ -403,7 +413,7 @@ async def main():
             await J(pg,"()=>generateAllImages()"); await pg.wait_for_timeout(1500)
             st=await J(pg,"()=>({done:sceneData.filter(s=>s.resultURL).length,sf:sceneData[3].savedStartFrameURL===sceneData[2].resultURL,vid:!!sceneData[3].resultURL,noprompt:!!sceneData[6].resultURL,models:sceneData.map(s=>s.resultModel),spend:sessionSpend,btn:document.getElementById('btn-gen-all').textContent})")
             check('batch: all prompted images done, video/no-prompt skipped, start frame set', st['done']==5 and st['sf'] and not st['vid'] and not st['noprompt'], st)
-            check('batch: NONE→Nano Banana, chars→Kling o1', st['models'][2]=='Nano Banana' and st['models'][0]=='Kling o1', st['models'])
+            check('batch: concept scenes no longer text-only — every still is Kling o1 with the style anchor', st['models'][2].startswith('Kling o1') and st['models'][0].startswith('Kling o1'), st['models'])
             SC['fal']='500'; await J(pg,"()=>{sceneData[0].resultURL='';sceneData[1].resultURL='';renderSceneDots();generateAllImages();}"); await pg.wait_for_timeout(800)
             check('batch: failures reported', '2 failed' in await J(pg,"()=>document.getElementById('e6').textContent"), await J(pg,"()=>document.getElementById('e6').textContent"))
             SC['fal']='ok'; SC['delay']=0
@@ -486,7 +496,46 @@ async def main():
             chart=[x for x in log if x[1].get('prompt','').startswith('chart')]
             first=await J(pg,"()=>sceneData[0].resultURL")
             check('cast: Dee scenes carry her fixed look, the chart does not', len(dee)==2 and chart and 'Dee (' not in chart[0][1]['prompt'], [x[1].get('prompt','')[:40] for x in log])
-            check('cast: later Dee still uses the first Dee image as reference (Kling O1)', any('kling-image/o1' in u and first in b.get('image_urls',[]) for u,b in dee), [(u[-30:],b.get('image_urls')) for u,b in dee])
+            deeRef=await J(pg,"()=>castRefReady.Dee||''")
+            check('cast: every Dee still uses her fixed same-style reference sheet (Kling O1)', deeRef.startswith('https://') and len(dee)==2 and all('kling-image/o1' in u and deeRef in b.get('image_urls',[]) for u,b in dee), [(u[-30:],b.get('image_urls')) for u,b in dee])
+            # ── Style anchor, vision style check, GPT text cleanup ──
+            log=[(u,json.loads(b or '{}')) for u,b in SC['falLog'] if 'upload' not in u]
+            mj=await J(pg,"async()=>await styleRefUrls()")
+            check('style: concept still goes to Kling o1 with the Marcus/Jordan sheets as style refs + style spec', chart and 'kling-image/o1' in chart[0][0] and all(u in chart[0][1].get('image_urls',[]) for u in mj) and 'ART STYLE (locked' in chart[0][1]['prompt'] and 'ART-STYLE reference only' in chart[0][1]['prompt'], chart and chart[0][1])
+            check('style: no Nano Banana text-only calls', not any('nano-banana' in u for u,b in log), [u for u,b in log])
+            check('style: every still was vision-checked', cnt.get('vision',0)>=3, cnt.get('vision'))
+            bad={'style_score':3,'style_match':False,'problems':'photo-real lighting','has_text':False,'text':[]}
+            await J(pg,"()=>{window.__sd=sceneData;sceneData=[{line:'1. A crowd outside a bank.',tag:'IMAGE',characters:'NONE',prompt:'crowd outside a bank',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''}];}")
+            SC['falLog']=[]; SC['vision']=[dict(bad),dict(bad),dict(bad),dict(bad)]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            gens=[u for u,b in SC['falLog'] if 'upload' not in u]
+            qa=await J(pg,"()=>sceneData[0].styleQA")
+            check('style: off-style result regenerated, capped at 2 redos', len(gens)==3 and qa['attempts']==3 and qa['match'] is False, (len(gens),qa))
+            check('style: retry prompt asks to fix the named drift', 'photo-real lighting' in json.loads(SC['falLog'][-1][1])['prompt'], '')
+            await J(pg,"()=>{sceneData[0].resultURL='';}")
+            SC['falLog']=[]; SC['vision']=[dict(bad),{'style_score':9,'style_match':True,'problems':'','has_text':False,'text':[]}]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            check('style: stops as soon as the check passes', len([u for u,b in SC['falLog'] if 'upload' not in u])==2 and await J(pg,"()=>sceneData[0].styleQA.attempts")==2)
+            # GPT text cleanup — default on, runs when OCR finds writing
+            await J(pg,"()=>{sessionStorage.setItem('cfa_openai_key','oai-test');sceneData[0].resultURL='';}")
+            o0=cnt.get('oai',0); SC['vision']=[{'style_score':9,'style_match':True,'problems':'','has_text':True,'text':['BANK OF AMERCIA'],'text_garbled':True}]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            st=await J(pg,"()=>({m:sceneData[0].resultModel,u:sceneData[0].resultURL,g:sceneData[0].styleQA.gptText,box:document.getElementById('qa-gpt-text').checked})")
+            body=SC.get('oaiBody',b'').decode('latin1')
+            check('gpt text: auto cleanup on by default when OCR finds writing; result replaces the still', cnt.get('oai',0)==o0+1 and st['g'] and '+ GPT' in st['m'] and '/up_' in st['u'] and st['box'], st)
+            check('gpt text: edit keeps style/characters and gets the seen words', 'BANK OF AMERCIA' in body and 'flat 2D cartoon' in body and 'gpt-image' in body, body[:200])
+            await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].prompt='A newspaper headline about the bailout';}")
+            o0=cnt.get('oai',0); SC['vision']=[]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            check('gpt text: also runs when the prompt implies text', cnt.get('oai',0)==o0+1)
+            await J(pg,"()=>{setQaToggle('cfa_gpt_text',false);sceneData[0].resultURL='';}")
+            o0=cnt.get('oai',0); SC['vision']=[{'style_score':9,'style_match':True,'has_text':True,'text':['X']}]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            check('gpt text: toggle off skips it', cnt.get('oai',0)==o0)
+            await J(pg,"()=>{setQaToggle('cfa_gpt_text',true);sessionStorage.removeItem('cfa_openai_key');}")
+            r=await J(pg,"()=>[Object.keys(RECURRING_CAST).join(','),!!RECURRING_CAST.Priya.b64,castInScene({line:'Priya hands over the package.'}).join(',')]")
+            check('cast: Priya is a regular with a same-style reference sheet', r==['Dee,Okafor,Priya',True,'Priya'], r)
+            await J(pg,"()=>{sceneData=window.__sd;}")
             SC['falLog']=[]
             await J(pg,"()=>{currentScene=2;loadScene(2);}"); await pg.wait_for_timeout(1500)
             await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(1500)
