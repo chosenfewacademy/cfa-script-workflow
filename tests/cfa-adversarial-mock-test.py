@@ -664,6 +664,16 @@ async def main():
             check('clip: Kling O1 image-to-video is the default, with start AND end frame locked to the still and an identity-lock guard', len(vids)>=1 and vids[0].get('start_image_url') and vids[0].get('end_image_url')==vids[0].get('start_image_url') and 'IDENTITY LOCK' in vids[0]['prompt'], [u[-40:] for u,_ in log])
             check('clip: start, middle and end frames are each style/identity/logic checked (not just the start still)', q and len(q.get('frames',[]))==3 and cnt.get('vision',0)-v0>=6, q)
             check('clip: identity drift mid-clip triggers one redo naming the problem; the passing clip is kept', len(vids)==2 and 'morphed mid-clip' in vids[1]['prompt'] and q['attempts']==2 and q['identityMatch'] is True, (len(vids), q and q.get('attempts')))
+            # stray writing in a clip: start still cleaned with GPT, then one redo from the cleaned still
+            await J(pg,"()=>{sessionStorage.setItem('cfa_openai_key','sk-test'); sceneData[2].resultURL=''; sceneData[2].done=false; currentScene=2; loadScene(2);}"); await pg.wait_for_timeout(800)
+            SC['falLog']=[]; o1=cnt.get('oai',0)
+            SC['vision']=[{'style_score':9,'style_match':True,'has_text':True,'text':['OPEN 24H'],'identity':[{'name':'Marcus','visible':True,'score':9}]}]
+            await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(5000)
+            vids=[json.loads(b) for u,b in SC['falLog'] if 'o1/image-to-video' in u]
+            q=await J(pg,"()=>sceneData[2].clipQA")
+            check('clip: stray writing -> start still GPT-cleaned, clip regenerated from it, clean clip kept', len(vids)==2 and vids[1]['start_image_url']!=vids[0]['start_image_url'] and 'no text at all' in vids[1]['prompt'] and cnt.get('oai',0)>o1 and q['strayText'] is False and q['cleanedStart'] is True, (len(vids), q and {k:q.get(k) for k in ('strayText','cleanedStart','attempts','checkErr')}))
+            lg=await J(pg,"""()=>{ const p=[{logicOk:false,logicProblems:['x']},{logicOk:true},{logicOk:true}]; return [p.filter(f=>!f.logicOk).length<2, STYLE_QA_SYS.includes('tread alone never makes a car tyre')]; }""")
+            check('logic: bicycle-tyre guidance in the QA prompt; one odd frame does not fail a clip', lg==[True,True], lg)
             await J(pg,"()=>{sceneData[2].characters='NONE'; sceneData[2].resultURL=''; sceneData[2].savedStartFrameURL=''; sceneData[2].autoStartFrame=false; sceneData.forEach((x,k)=>{ if(k<2){ x._r=x.resultURL; x.resultURL=''; } }); currentScene=2; loadScene(2); sceneRefs['startframe']=null; setDuration(4);}"); await pg.wait_for_timeout(800)
             SC['falLog']=[]; SC['vision']=[]
             await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(4000)
