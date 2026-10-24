@@ -3722,6 +3722,7 @@ function saveWorkflowState(){
       })),
       voWords: voWords,
       voPace: voPace,
+      selId: selId || '',
       currentScene: currentScene || 0,
       currentScreen: typeof curScreen !== 'undefined' ? curScreen : 6,
       selectedImageModel: selectedImageModel,
@@ -3824,6 +3825,12 @@ function resumeSavedSession(){
     segOriginal        = state.segOriginal || segScript;
     voWords            = state.voWords || [];
     voPace             = VO_PACES[state.voPace] ? state.voPace : 'slow';
+    // Episode selection: without it a resumed session exported with no episode/title and lost continuity.
+    if(state.selId && V[state.selId]){
+      selId=state.selId;
+      const el=document.querySelector('.vo[onclick*="\''+selId+'\'"]');
+      document.querySelectorAll('.vo').forEach(o=>o.classList.remove('sel')); if(el) el.classList.add('sel');
+    }
     // Sync model card visual state (preserve whether Imagen was auto-selected)
     setImageModel(state.userImageModel || state.selectedImageModel || 'kling-o1');
     if(state.imagenAutoSelected) setImageModel('imagen4', true);
