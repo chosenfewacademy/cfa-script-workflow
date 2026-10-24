@@ -4674,6 +4674,7 @@ CHARACTER RULE — critical: If a Character Note is provided, follow it exactly.
 
 Then on a new line output exactly: SCENE: [4-8 word setting summary, e.g. "open-plan office, amber light, afternoon"]`;
 
+function normLine(l){ return String(l||'').replace(/^\s*\d+\.\s*/,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
 async function enterSceneGeneration(){
   const falKey=sessionStorage.getItem('cfa_fal_key');
   if(!falKey){showErr('e6','fal.ai API key not set — open ⚙ Settings and save your key before entering scene generation.');openSettings();return;}
@@ -4694,6 +4695,9 @@ async function enterSceneGeneration(){
     const {text:classText}=await llmComplete({role:'fast', system:SYS_CLASSIFY, user:lines.join('\n'), maxTokens:2000});
     if(!classText)throw new Error('API returned an empty classification — check your xAI key and try again.');
 
+    // Lock: a beat whose line is unchanged and already has media keeps its tag, cast, prompt and result
+    // (re-classifying flips IMAGE/VIDEO at random and forces paid regenerations).
+    const prevByLine=new Map((Array.isArray(sceneData)?sceneData:[]).filter(x=>x&&x.resultURL&&x.line).map(x=>[normLine(x.line),x]));
     const inferred = inferCharactersAcrossBeats(lines);
     sceneData = lines.map((line,i)=>{
       const match=classText.match(new RegExp('\\['+(i+1)+'\\]\\s*(IMAGE|VIDEO)','i'));
@@ -4707,6 +4711,7 @@ async function enterSceneGeneration(){
         sceneData[i].tag='IMAGE';
       }
     }
+    sceneData.forEach((x,i)=>{ const p=prevByLine.get(normLine(x.line)); if(p){ sceneData[i]=Object.assign({},p,{line:x.line,locked:true}); } });
     assignBeatTimes(); // VO timings (if the voiceover was generated) → per-scene start/end
     // Persist initial sceneData so a refresh during prompt generation doesn't lose classifications
     saveWorkflowState();
@@ -4781,6 +4786,7 @@ async function generateAllPrompts(){
   const data=sceneData;
   for(let i=0;i<data.length;i++){
     if(sceneData!==data)return; // restarted
+    if(data[i].locked && data[i].prompt) continue; // kept from the earlier run
     await generatePromptForScene(i);
   }
 }
