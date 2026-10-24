@@ -661,6 +661,13 @@ async def main():
             check('clip: Kling O1 image-to-video is the default, with start AND end frame locked to the still and an identity-lock guard', len(vids)>=1 and vids[0].get('start_image_url') and vids[0].get('end_image_url')==vids[0].get('start_image_url') and 'IDENTITY LOCK' in vids[0]['prompt'], [u[-40:] for u,_ in log])
             check('clip: start, middle and end frames are each style/identity/logic checked (not just the start still)', q and len(q.get('frames',[]))==3 and cnt.get('vision',0)-v0>=6, q)
             check('clip: identity drift mid-clip triggers one redo naming the problem; the passing clip is kept', len(vids)==2 and 'morphed mid-clip' in vids[1]['prompt'] and q['attempts']==2 and q['identityMatch'] is True, (len(vids), q and q.get('attempts')))
+            await J(pg,"()=>{sceneData[2].characters='NONE'; sceneData[2].resultURL=''; sceneData[2].savedStartFrameURL=''; sceneData[2].autoStartFrame=false; sceneData.forEach((x,k)=>{ if(k<2){ x._r=x.resultURL; x.resultURL=''; } }); currentScene=2; loadScene(2); sceneRefs['startframe']=null; setDuration(4);}"); await pg.wait_for_timeout(800)
+            SC['falLog']=[]; SC['vision']=[]
+            await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(4000)
+            log=[u for u,b in SC['falLog'] if 'upload' not in u]
+            e6=await J(pg,"()=>document.getElementById('e6').textContent")
+            check('clip: a concept clip with no earlier still gets a style-anchored start frame, then Kling O1 (no 5/10 s text-to-video error)', len(log)==2 and 'kling-image/o1' in log[0] and 'o1/image-to-video' in log[1] and 'Duration' not in e6, (log, e6))
+            await J(pg,"()=>{sceneData[2].characters='MARCUS'; sceneData.forEach((x,k)=>{ if(k<2) x.resultURL=x._r; });}")
             # ── scene logic ──
             r=await J(pg,"()=>composeScenePrompt({line:'Jordan trues a wheel at the Spoke & Chain workbench.',characters:'JORDAN'},'Jordan at the workbench')")
             check('logic: bike-shop prompts carry the bible prop list and ban car tyres', 'bicycle wheels' in r and 'NEVER SHOW: car tyres' in r and 'SCENE LOGIC' in r, r[:300])
