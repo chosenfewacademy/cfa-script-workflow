@@ -4454,6 +4454,23 @@ async function generateAllPrompts(){
   }
 }
 
+// Who a written prompt actually puts on screen. Possessives ("Jordan's notebook") and negations
+// ("someone not Marcus or Jordan", "no Marcus") do not count as the character appearing.
+function promptOnScreenCast(prompt){
+  const t=' '+String(prompt||'').replace(/[\u2018\u2019]/g,"'")+' ';
+  const on=n=>{
+    const re=new RegExp("\\b"+n+"\\b(?!'s)","gi"); let m;
+    while((m=re.exec(t))){
+      const before=t.slice(Math.max(0,m.index-40),m.index).toLowerCase();
+      if(/\b(not|no|nor|without|never|except|other than|instead of)\b[^.;]*$/.test(before)) continue;
+      return true;
+    }
+    return false;
+  };
+  const M=on('marcus'), J=on('jordan');
+  if(M&&J) return t.toLowerCase().indexOf('jordan')<t.toLowerCase().indexOf('marcus')?'BOTH_JM':'BOTH';
+  return M?'MARCUS':J?'JORDAN':'NONE';
+}
 // Story context for per-beat prompts. Each beat used to be prompted in isolation, so settings
 // jumped (study, server room, coffee shop) and Marcus appeared in beats he is not in. The writer
 // gets the episode, the neighbouring beats, who is on screen and the setting to keep.
@@ -4505,7 +4522,7 @@ async function generatePromptForScene(i){
     // Cast guard: a concept beat whose prompt still puts Marcus/Jordan on screen must use their
     // reference sheets, or a text-only model draws strangers under their names.
     if(s.characters==='NONE'){
-      const pc=detectCharacters(s.prompt);
+      const pc=promptOnScreenCast(s.prompt);
       if(pc!=='NONE'){ s.characters=pc; s.castFromPrompt=true; }
     }
     s.promptFailed=false;

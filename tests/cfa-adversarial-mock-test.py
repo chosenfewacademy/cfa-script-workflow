@@ -502,6 +502,8 @@ async def main():
               return {n, sent, ch:sceneData[1].characters, d:sceneContextNote(2)}}""")
             check('prompts: story context, neighbours, setting and on-screen cast sent with each beat', all(k in r['sent'] for k in ['Story: Jordan sat in the bike shop','Previous beat: 1. Jordan','Next beat: 3. Dee','no Marcus and no Jordan','bike shop workbench']), r['n'])
             check('prompts: concept beat whose prompt shows Marcus switches to his reference', r['ch']=='MARCUS', r['ch'])
+            r2=await J(pg,"""()=>[promptOnScreenCast("Dee scrolls while Jordan\u2019s single line is visible."),promptOnScreenCast("A pair of hands, belonging to someone not Marcus or Jordan, turns a page."),promptOnScreenCast("Marcus slides the card to Jordan."),promptOnScreenCast("Jordan's notebook and Marcus's printout on the table.")]""")
+            check('prompts: cast guard ignores possessives and negations', r2==['NONE','NONE','BOTH','NONE'], r2)
             check('prompts: recurring cast named in context', 'also Dee' in r['d'], r['d'][-200:])
             check('pace: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
