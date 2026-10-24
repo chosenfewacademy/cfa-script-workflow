@@ -593,9 +593,41 @@ def sfx_events(shots, arc_times):
 
 
 # ── rendering ────────────────────────────────────────────────────────────────
+_BARS = {}
+
+
+def detect_bars(src, kind):
+    """Content box (w,h,x,y) when the media has baked-in black bars (some image models pad to 16:9), else None."""
+    if src in _BARS:
+        return _BARS[src]
+    box = None
+    try:
+        args = ["ffmpeg", "-v", "info", "-hide_banner"] + (["-ss", "0.5"] if kind == "video" else ["-loop", "1"]) + \
+               ["-i", src, "-vf", "cropdetect=limit=0.09:round=2:reset=0", "-frames:v", "6", "-f", "null", "-"]
+        err = subprocess.run(args, capture_output=True, text=True, timeout=60).stderr
+        m = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", err)
+        dims = re.search(r"Stream.*Video.* (\d{2,5})x(\d{2,5})", err)
+        if m and dims:
+            w, h, x, y = map(int, m[-1]); iw, ih = int(dims.group(1)), int(dims.group(2))
+            if w >= iw * 0.3 and h >= ih * 0.3 and (w < iw * 0.93 or h < ih * 0.93):
+                box = (w, h, x, y)
+    except Exception:
+        box = None
+    _BARS[src] = box
+    return box
+
+
+def fill_graph(box, W, H):
+    """-vf prefix: crop away baked-in bars and place the art over a blurred fill of itself at the canvas size."""
+    w, h, x, y = box
+    return ("crop=%d:%d:%d:%d,split[a][b];[a]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,boxblur=20:2,eq=brightness=-0.08[bg];"
+            "[b]scale=%d:%d:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1" % (w, h, x, y, W, H, W, H, W, H))
+
+
 def render_shot(src, kind, shot, W, H, out, frames):
     """Render one shot to an intermediate (video only) of exactly `frames` frames."""
     dur = frames / FPS
+    box = detect_bars(src, kind) if src else None
     enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-pix_fmt", "yuv420p", "-r", str(FPS), "-an"]
     if src is None:
         vf = "color=c=0x101418:s=%dx%d:r=%d" % (W, H, FPS)
@@ -608,8 +640,9 @@ def render_shot(src, kind, shot, W, H, out, frames):
         k = shot.get("intensity", 0.04) if shot.get("motion") == "push_in" else 0.0
         push = (",zoompan=z='1+%.3f*on/%d':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d"
                 % (min(k, 0.06), max(1, frames - 1), W, H, FPS)) if k else ""
-        vf = ("setpts=PTS/%.4f,fps=%d,scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
-              "tpad=stop_mode=clone:stop_duration=%.2f,setsar=1%s" % (speed, FPS, W, H, W, H, dur + 1, push))
+        fit = fill_graph(box, W, H) if box else "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d" % (W, H, W, H)
+        vf = ("setpts=PTS/%.4f,fps=%d,%s,"
+              "tpad=stop_mode=clone:stop_duration=%.2f,setsar=1%s" % (speed, FPS, fit, dur + 1, push))
         run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
         return
     # still: Ken Burns on a 2x canvas for smooth sub-pixel motion
@@ -635,8 +668,9 @@ def render_shot(src, kind, shot, W, H, out, frames):
         x, y = "(iw-iw/zoom)*%.2f" % fx, "(ih-ih/zoom)*%.2f" % fy
     else:
         z, x, y = "1", "0", "0"
-    vf = ("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1,"
-          "zoompan=z='%s':x='%s':y='%s':d=%d:s=%dx%d:fps=%d" % (W2, H2, W2, H2, z, x, y, frames, W, H, FPS))
+    fit = fill_graph(box, W2, H2) if box else "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1" % (W2, H2, W2, H2)
+    vf = (fit + ","
+          "zoompan=z='%s':x='%s':y='%s':d=%d:s=%dx%d:fps=%d" % (z, x, y, frames, W, H, FPS))
     run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
 
 
@@ -924,6 +958,10 @@ def main():
             last_media = (src, kind)
         elif last_media:  # hold the previous visual rather than going black
             src, kind = last_media
+        else:  # nothing before it (missing opening scene): borrow the next available visual
+            nx = next((x for x in shots[i + 1:] if x.get("media")), None)
+            if nx:
+                src, kind = os.path.join(d, nx["media"]), nx.get("mediaType") or "image"
         out = os.path.join(work, "shot_%03d.mp4" % i)
         f0 = round(shot["start"] * FPS)
         f1 = round((shot["end"] + nxt) * FPS) if i + 1 < len(shots) else round(total * FPS) + 2
@@ -954,6 +992,9 @@ def main():
     log("stage: mixing")
     events = [] if a.no_sfx else sfx_events(edl["shots"], edl["arc_times"])
     sfx = build_sfx_track(events, total, work)
+    if a.music and not os.path.exists(a.music):
+        log("warning: music file not found (%s); rendering without a music bed" % a.music)
+        a.music = None
     build_audio(voice, a.music, total, audio, work, sfx, edl["arc_times"].get("turn"))
     final = os.path.join(a.out, "final.mp4")
     log("stage: encoding")

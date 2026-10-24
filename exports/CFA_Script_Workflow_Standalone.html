@@ -2438,7 +2438,8 @@ If any box fails, revise before outputting.
 
 TARGET LENGTH (hard requirement): 650-900 words of spoken narration — about 5 minutes of voiceover. Plan the sections to fit (hook ~60 words, segments ~150-200 each, final ~120-150). Count before you output; if outside 650-900, trim or expand the explanation until it fits.
 
-OUTPUT: Raw spoken words only. One continuous block of plain paragraphs. No section labels, headers, timestamps, metadata, dopamine levels, visual directions, or BINGE elements in the output. No preamble. No commentary. Write the first word of the script immediately.`;
+OUTPUT: Raw spoken words only. One continuous block of plain paragraphs. No section labels, headers, timestamps, metadata, dopamine levels, visual directions, or BINGE elements in the output. No preamble. No commentary. Write the first word of the script immediately.
+NO STOCK FILLER (hard rule): never write "Jordan looked at the closed box/screen/notebook", "the question stayed on the desk", "the question is the one that matters now", "and it was the right one", or any line from LINES ALREADY USED IN OTHER EPISODES. Each episode has its own opening image and its own closing image and line.`;
 
 const SYS_SEG=`You are a script segmentation tool. Your only job is to split a spoken script into numbered lines — one natural spoken beat per line, each 4-6 seconds when read aloud.
 
@@ -2908,6 +2909,8 @@ function buildContinuity(id){
   lines.push(`WHAT IS NEW THIS EPISODE: ${V[id].cq}`);
   const used=keys.slice(0,i).map(k=>recaps[k]&&recaps[k].setting).filter(Boolean);
   if(used.length) lines.push('SETTINGS / MOMENTS ALREADY USED (do not reuse): '+used.slice(-12).join(' | '));
+  const said=keys.filter(k=>k!==id).map(k=>recaps[k]&&recaps[k].lines).filter(Array.isArray).flat().slice(-24);
+  if(said.length) lines.push('LINES ALREADY USED IN OTHER EPISODES (never reuse these, near-copies, or the same closing image/structure): '+said.join(' | '));
   return lines.join('\n');
 }
 // After a script is accepted, store a compact recap so the next episode continues from what was actually produced.
@@ -2919,7 +2922,9 @@ async function saveEpisodeRecap(id, script){
       user:script});
     const recap=(text.match(/RECAP:\s*(.+)/i)||[])[1]||'', setting=(text.match(/SETTING:\s*(.+)/i)||[])[1]||'';
     if(!recap) return;
-    const all=getRecaps(); all[id]={recap:recap.trim().slice(0,600),setting:setting.trim().slice(0,120),at:Date.now()};
+    const sents=String(script).replace(/\s+/g,' ').trim().split(/(?<=[.!?”"])\s+/).filter(x=>x.split(' ').length>=4);
+    const lines=[sents[0],...sents.slice(-3)].filter(Boolean).map(x=>x.slice(0,160));
+    const all=getRecaps(); all[id]={recap:recap.trim().slice(0,600),setting:setting.trim().slice(0,120),lines,at:Date.now()};
     safeSetItem(RECAPS_KEY, JSON.stringify(all));
   }catch(e){ console.warn('Episode recap failed (continuity will use the planned lesson):', e.message); }
 }
@@ -2956,7 +2961,7 @@ Critique (silently) and fix, in priority order:
 ACCURACY ESSENTIALS (state these correctly whenever they come up): a wallet holds keys, not coins; the balances live on the blockchain. A private key is a secret number. The public key is derived from the private key with a one-way function (on Bitcoin and Ethereum, elliptic-curve multiplication on the secp256k1 curve). The address is NOT produced by that curve; it is derived from the public key by hashing (Bitcoin: SHA-256 then RIPEMD-160, then encoding; Ethereum: the last 20 bytes of the Keccak-256 hash of the public key). Signing proves control without revealing the private key. A seed phrase (usually 12 or 24 words) can regenerate the private keys. Confirmed blockchain transactions cannot be reversed by the network. Network fees: on Bitcoin they go to miners; on Ethereum the base fee is burned (destroyed) and only the priority tip goes to validators, so say "network fee" without claiming where all of it goes unless you name the chain correctly (an exchange may add its own fee on top). Never state a fact you are not sure of.
 2. Education first: is the topic's core concept explained clearly with real mechanics and plain definitions of real terms, so a beginner could explain it afterwards? Is a common misconception corrected? Is the practical takeaway real and safe? Strengthen the explanation where it is thin.
 3. Relevance: every scene must serve the topic. Cut or replace melodrama, sob-story backstories and off-topic detours with on-topic story.
-3a. Genericness audit: flag and replace stock scenarios (coffee shop chats, "a friend told him", vague group chats, late-night kitchen-table screen staring), interchangeable lines that could fit any topic, cliché arcs, and anything repeating earlier episodes (see SETTINGS ALREADY USED). The episode must have a distinctive setting/situation from the series world and one memorable, specific moment tied to this topic and Jordan's journey.
+3a. Genericness audit: flag and replace stock scenarios (coffee shop chats, "a friend told him", vague group chats, late-night kitchen-table screen staring), interchangeable lines that could fit any topic, cliché arcs, and anything repeating earlier episodes (see SETTINGS ALREADY USED and LINES ALREADY USED). Stock filler beats are banned: "Jordan looked at the closed box/screen/notebook", "the question stayed on the desk", "the question is the one that matters now", "and it was the right one". Every episode needs its own opening image and its own closing image and line. The episode must have a distinctive setting/situation from the series world and one memorable, specific moment tied to this topic and Jordan's journey.
 3c. Series continuity: a quick, specific callback to the last episode near the start; Jordan's knowledge consistent with the CONTINUITY NOTE (he never relearns something he already knows); recurring cast, places and objects used consistently with the SERIES STORY BIBLE.
 3b. Story engagement: is there a real, believable arc (situation → topic-tied goal or problem → rising tension from the concept → turning point where it clicks → satisfying payoff) with vivid on-topic scenes and natural dialogue? If the draft reads like a lecture, dramatise the explanation through what Marcus and Jordan do and say, without losing accuracy.
 4. Hook: does the opening put us in an on-topic moment and raise a real question about how it works?
@@ -4061,6 +4066,8 @@ function jumpToScene(i){
   if(i === currentScene){ // already there — make sure phase2 is visible
     document.getElementById('s6-phase2').style.display = '';
     document.getElementById('s6-complete').style.display = 'none';
+    const pe=document.getElementById('s6-prompt'); // first visit (e.g. straight after batch): the editor was never filled
+    if(pe && !(pe.value||'').trim() && (sceneData[i].prompt||'').trim()) loadScene(i);
     return;
   }
   currentScene = i;
@@ -4391,6 +4398,8 @@ async function sendToGrokRender(){
   const say=m=>{ if(st){ st.style.display=m?'':'none'; st.textContent=m; } };
   if(!renderServiceReady()){ say('Add the Grok Bot render service URL and access token in ⚙ Settings first (or use 🎬 Export for final edit and send the .zip in chat).'); openSettings(); return; }
   const btn=document.getElementById('btn-send-grok'), up=document.getElementById('rs-upload'), bar=document.getElementById('rs-upload-bar'), txt=document.getElementById('rs-upload-txt');
+  const missing=sceneData.map((x,i)=>x.resultURL?0:i+1).filter(Boolean);
+  if(missing.length && !confirm('Scene'+(missing.length>1?'s ':' ')+missing.join(', ')+(missing.length>1?' have':' has')+' no image or clip yet. Grok will hold the neighbouring shot over '+(missing.length>1?'them':'it')+'.\n\nOK = send anyway, Cancel = go back and generate '+(missing.length>1?'them':'it')+'.')) return;
   if(!budgetPreflight('xai',0.05,'the Grok final edit')) return;
   btn.disabled=true;
   try{
@@ -5573,13 +5582,15 @@ function blobToPng(blob){
 
 const GPT_TEXT_COST=0.06; // gpt-image edit, medium quality, 1536x1024 (estimate)
 const GPT_TEXT_PROMPT='TEXT AND LANGUAGE CORRECTION ONLY. This is a finished flat 2D cartoon frame from an illustrated educational series. Your ONLY task is to find and fix any text, words, letters, numbers, labels, or written language in the image that are misspelled, garbled, illegible, wrong characters, hieroglyphic-looking, or unclear. Correct them to proper readable English (or remove stray pseudo-text if no sensible word fits) while keeping the font style, size, colour, and position. DO NOT change anything else — not the characters, their faces, skin tones, hair, expressions, clothing, or positions; not the colours, composition, background, lighting, or the flat 2D cartoon art style with bold outlines and flat colour. Do not add realism, texture or new elements. Do not add new paragraphs or extra text blocks; keep wording short and clearly readable. If there is no text, output the image unchanged.';
-async function gptTextEditDataUrl(pngBlob, openAIKey, words, sceneHint){
+const GPT_TEXT_REMOVE_PROMPT='REMOVE ALL WRITING ONLY. This is a finished flat 2D cartoon frame from an illustrated educational series. Erase every word, letter, number, label, logo text and pseudo-text from the image (screens, papers, signs, books, notes, clothing) and paint over it with the surrounding blank surface, plain lines or simple shapes so nothing readable remains. DO NOT change anything else — not the characters, their faces, skin tones, hair, expressions, clothing, or positions; not the colours, composition, background, lighting, or the flat 2D cartoon art style with bold outlines and flat colour. Do not add realism, texture or new elements.';
+async function gptTextEditDataUrl(pngBlob, openAIKey, words, sceneHint, mode){
   const formData=new FormData();
   formData.append('image', pngBlob, 'scene.png');
   formData.append('model', 'gpt-image-2');
   formData.append('n', '1');
   formData.append('size', '1536x1024');
   formData.append('quality', 'medium');
+  if(mode==='remove') formData.append('prompt', GPT_TEXT_REMOVE_PROMPT); else
   formData.append('prompt', GPT_TEXT_PROMPT + (words&&words.length ? ' Text currently visible (may be garbled — fix the spelling, do not keep typos): ' + words.slice(0,12).map(w=>'"'+String(w).slice(0,60)+'"').join(', ') + '.' : '') + (sceneHint ? ' What the scene shows (use it to pick the right words): ' + String(sceneHint).split(/ Setting: | ART STYLE| \[Reference| Recurring character/)[0].slice(0,400) : ''));
   const oaiResp=await fetch('https://api.openai.com/v1/images/edits',{method:'POST',headers:{'Authorization':'Bearer '+openAIKey},body:formData});
   if(!oaiResp.ok){
@@ -5593,13 +5604,13 @@ async function gptTextEditDataUrl(pngBlob, openAIKey, words, sceneHint){
   return 'data:image/png;base64,'+b64;
 }
 // Automatic GPT text cleanup: source URL → corrected image uploaded to fal → HTTPS URL
-async function gptTextFixUrl(sourceURL, words, sceneHint){
+async function gptTextFixUrl(sourceURL, words, sceneHint, mode){
   const openAIKey=sessionStorage.getItem('cfa_openai_key');
   if(!openAIKey) throw new Error('OpenAI key not set');
   const resp=await fetch(sourceURL);
   if(!resp.ok) throw new Error('Could not download image — HTTP '+resp.status);
   const pngBlob=await blobToPng(await resp.blob());
-  const dataUrl=await gptTextEditDataUrl(pngBlob, openAIKey, words, sceneHint);
+  const dataUrl=await gptTextEditDataUrl(pngBlob, openAIKey, words, sceneHint, mode);
   trackSpend(GPT_TEXT_COST,'openai');
   const bytes=Uint8Array.from(atob(dataUrl.split(',')[1]), c=>c.charCodeAt(0));
   return uploadToFal(new File([bytes],'gpt_text.png',{type:'image/png'}));
@@ -5833,7 +5844,15 @@ async function visionStyleCheck(url, people){
   return o;
 }
 // One image request with the style anchor, vision style check (retry cap) and auto GPT text cleanup.
+// Words that push Kling toward dark, photographic frames (audit: v23/v45 concept scenes came back photoreal at night).
+function deRealize(p){
+  return String(p||'')
+    .replace(/\b(photo-?realistic|photographic|hyper-?realistic|realistic|cinematic|film still|moody|noir)\b/gi,'flat 2D cartoon')
+    .replace(/\b(dimly lit|low[- ]light|darkened|pitch[- ]black|in the dark|at night|late at night|shadowy)\b/gi,'softly lit')
+    .replace(/\bglow(s|ing)?\b/gi,'shine$1');
+}
 async function styledImageRequest(idx, model, prompt, refs, status){
+  prompt=deRealize(prompt)+' Bright, evenly lit flat 2D cartoon frame, same art style as the reference sheets — not a photo, not 3D.';
   const s=sceneData[idx]||{};
   try{ await ensureCastRefs(castInScene(s)); }catch(e){}
   const cast=withCastRefs(idx, model, refs||[]);
@@ -5848,7 +5867,8 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(!refs.length) for(const u of await styleRefUrls()){ if(refs.length<4 && !refs.includes(u)){ refs.push(u); styleOnly.push(refs.length); } }
     if(styleOnly.length) styleNote=' '+styleOnly.map(n=>'@Image'+n).join(' and ')+(styleOnly.length>1?' are':' is')+' an ART-STYLE reference only: copy the drawing style exactly but do NOT draw '+(styleOnly.length>1?'those people':'that person')+' unless the scene names them.';
   }catch(e){}
-  let r=null, check=null, attempts=0, cost=0, checkErr='';
+  let r=null, check=null, attempts=0, cost=0, checkErr='', best=null;
+  const rank=c=>!c?-1:(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
   const people=sceneIdentityRefs(s), needsText=beatNeedsText(s);
   const fixNote=c=>{ if(!c) return ''; const n=[];
     if(!c.style_match) n.push('the art style drifted'+(c.problems?' ('+c.problems+')':'')+' — match the reference art style exactly: flat 2D cartoon, bold outlines, flat colour, no realism');
@@ -5864,9 +5884,17 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     status&&status('Checking art style and character identity against the reference sheets…');
     try{ check=await visionStyleCheck(r.url, people); }catch(e){ check=null; checkErr=e.message; }
     if(check) check.stray_text=!needsText && check.has_text;
+    if(!best || rank(check)>rank(best.check)) best={r,check};
     if(!check || (check.style_match && check.identity_match!==false && !check.stray_text)) break;
   }
+  if(best && best.r!==r){ r=best.r; check=best.check; } // every retry failed: keep the closest-to-model attempt
   let url=r.url, label=r.label, gptText=false, gptErr='';
+  // B: stray writing left after the retries on a beat that should have none -> GPT removes it (style untouched)
+  if(check && check.stray_text && check.style_match && check.identity_match!==false && autoGptTextOn() && sessionStorage.getItem('cfa_openai_key')){
+    status&&status('Removing stray writing with GPT…');
+    try{ url=await gptTextFixUrl(url, check.text||[], prompt, 'remove'); label+=' + GPT clean'; gptText=true; cost+=GPT_TEXT_COST; check.stray_text=false; check.textRemoved=true; }
+    catch(e){ gptErr=e.message; }
+  }
   // GPT text cleanup only for beats whose script needs readable words
   if(autoGptTextOn() && sessionStorage.getItem('cfa_openai_key') && needsText && (!check || check.has_text)){
     status&&status('Cleaning up image text with GPT…');
@@ -5956,6 +5984,9 @@ function bestStartFrameFor(j){
   const want=sceneCharSet(sceneData[j]?.characters);
   const imgs=[];
   for(let k=j-1;k>=0;k--){ const x=sceneData[k]; if(x.tag==='IMAGE'&&x.resultURL&&x.resultType!=='video') imgs.push(x); }
+  // never animate an off-model still: a clip inherits its start frame's style and faces
+  const ok=imgs.filter(x=>!x.styleQA || (x.styleQA.match!==false && x.styleQA.identityMatch!==false));
+  if(ok.length) imgs.splice(0,imgs.length,...ok);
   if(!imgs.length) return '';
   if(!want.length) return imgs[0].resultURL;
   const key=a=>a.slice().sort().join('+');
@@ -6002,6 +6033,7 @@ async function generateAllImages(){
     if(t && !firsts.includes(t)) firsts.push(t);
   }
   let queue=firsts.slice();
+  targets.forEach(t=>{ delete t.s._batchRetried; });
   const worker=async()=>{
     while(queue.length && !run.cancel && sceneData===data){
       const {s,i}=queue.shift();
@@ -6023,7 +6055,8 @@ async function generateAllImages(){
         saveWorkflowState();
         if(currentScene===i){ loadScene(i); }
       }catch(err){
-        run.failed++; run.errors.push('Scene '+(i+1)+': '+err.message);
+        if(!s._batchRetried && !run.cancel){ s._batchRetried=true; queue.push({s,i}); }
+        else { run.failed++; run.errors.push('Scene '+(i+1)+': '+err.message); }
       }finally{
         s._generating=false;
         renderSceneDots(); updateBatchButton();

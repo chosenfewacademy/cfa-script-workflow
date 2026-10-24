@@ -168,6 +168,31 @@ def main():
     check(render.pick_emphasis("Marcus had underlined October 2008 on the printout.")[:1] == ["2008"], "emphasis picks numbers first")
     check(abs(sum(s["duration"] for s in e["shots"]) - 12.0) < 1e-6, "durations locked to voice, Grok durations ignored")
     check("crypto" not in e["title_card"]["text"].lower(), "card text rewritten to digital assets")
+    # audit fixes: baked-in bars, missing opening scene, missing music file
+    bd = tempfile.mkdtemp(prefix="cfa-bars-")
+    pb = os.path.join(bd, "pillar.png"); fl = os.path.join(bd, "full.png")
+    ff("-f", "lavfi", "-i", "testsrc2=s=848x768:d=1", "-vf", "pad=1360:768:256:0:black", "-frames:v", "1", pb)
+    ff("-f", "lavfi", "-i", "testsrc2=s=1360x768:d=1", "-frames:v", "1", fl)
+    bx = render.detect_bars(pb, "image")
+    check(bx is not None and abs(bx[0] - 848) <= 8 and render.detect_bars(fl, "image") is None, "baked-in pillarbox detected, full frame left alone (%r)" % (bx,))
+    o = os.path.join(bd, "s.mp4")
+    render.render_shot(pb, "image", {"motion": "zoom_in", "intensity": 0.05}, 640, 360, o, 10)
+    ff("-i", o, "-frames:v", "1", "-vf", "crop=20:200:0:80", os.path.join(bd, "edge.png"))
+    ylo = subprocess.run(["ffmpeg", "-v", "info", "-i", os.path.join(bd, "edge.png"), "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"], capture_output=True, text=True).stderr
+    yv = float((re.findall(r"YAVG=([\d.]+)", ylo) or ["0"])[-1])
+    check(yv > 30, "pillarbox replaced by a blurred fill, not black edges (edge luma %.0f)" % yv)
+    src2 = os.path.join(d, "src2"); shutil.copytree(os.path.join(d, "src"), src2)
+    os.remove(os.path.join(src2, "bundle.zip"))
+    bj = json.load(open(os.path.join(src2, "bundle.json"))) if os.path.exists(os.path.join(src2, "bundle.json")) else json.load(zipfile.ZipFile(z).open("bundle.json"))
+    bj["segments"][0]["media"] = None; bj["segments"][0]["mediaType"] = ""
+    json.dump(bj, open(os.path.join(src2, "bundle.json"), "w"))
+    out3 = os.path.join(d, "out_miss")
+    r3 = subprocess.run([sys.executable, os.path.join(HERE, "render.py"), src2, "-o", out3, "--no-grok", "--music", os.path.join(d, "nope.wav")], capture_output=True, text=True)
+    check(r3.returncode == 0 and "without a music bed" in (r3.stdout + r3.stderr), "missing music file: warns and renders without music")
+    if r3.returncode == 0:
+        ff("-ss", "0.3", "-i", os.path.join(out3, "final.mp4"), "-frames:v", "1", "-vf", "scale=64:36", os.path.join(bd, "first.png"))
+        so = subprocess.run(["ffmpeg", "-v", "info", "-i", os.path.join(bd, "first.png"), "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"], capture_output=True, text=True).stderr
+        check(float((re.findall(r"YAVG=([\d.]+)", so) or ["0"])[-1]) > 40, "missing opening scene borrows the next visual instead of a blank frame")
     print("\n%d failure(s)" % len(fails))
     sys.exit(1 if fails else 0)
 
