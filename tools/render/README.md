@@ -44,3 +44,21 @@ audio present, −14 LUFS ±1, every word captioned at its spoken time, no "cryp
 - Merging beats into longer shots means some generated images are not used.
 - Captions use Montserrat/Anton from the box's fonts (falls back to the system sans elsewhere).
 - Render time ≈ 1.5× real time for 1080p on 8 cores (a 6-minute episode ≈ 8–10 minutes).
+
+## Dialogue renders (lip-sync, score, Whisper QA)
+- `mediaType: "lipsync"` shots (Kling AI Avatar v2 talking shots) play at 1×, each line is its own shot, and the cut lands 0.12 s before the line (J/L cut 0.25 s into the next line).
+- Smooth transitions by default: dialogue-to-dialogue is a straight cut, a whip only into the scripted turn, everything else a 0.45 s dissolve (`--raw-transitions` keeps the EDL's).
+- Original score per episode (`--music-style cinematic|lofi|orchestral|acoustic|electronic`, `--no-score`): ElevenLabs music, falling back to fal `elevenlabs/music/v2`. The score is ducked and auto-trimmed to sit 18–22 dB under the voice; the mix is normalised to -14 LUFS.
+- Whisper QA (`--no-whisper` skips it): caption words are snapped to the real speech, every line is verified in the final mix, and lip-sync offsets are measured by cross-correlation (pass within ±45 ms). Results go into `report.json` (`whisper`, `music`, `lipsync_sync`).
+
+## Reviewer feedback (service)
+| Endpoint | |
+|---|---|
+| `POST /feedback` | `{step, kind: "episode"\|"tool", rating 0-5, comment, ref, reviewer, episode}` → item (`status: submitted`). Also appended to `feedback/inbox.jsonl`. |
+| `GET /feedback[?since=epoch]` | `{items, memory, now}` (the tool polls this every 60 s for status changes) |
+| `GET /feedback/<id>` · `GET /feedback/memory` | one item · accepted suggestions |
+| `POST /feedback/<id>/status` | `{status: in_progress\|ready\|declined, resolution, accept, rule}`; `accept` on `ready` adds `rule` (or the comment) to `feedback/memory.jsonl` |
+
+Steps: research, script, voices, registry, shotlist, stills, clips, lipsync, music, edit, final. Same Bearer token and origin rules as `/jobs`. Data lives in `CFA_RENDER_DATA/feedback/` (`items/<id>.json`, `inbox.jsonl`, `memory.jsonl`).
+
+The pickup routine uses the CLI: `python3 fb.py inbox` (open items), `python3 fb.py set <id> in_progress|ready|declined [--resolution TEXT] [--accept --rule TEXT]`.

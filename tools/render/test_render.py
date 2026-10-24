@@ -86,7 +86,7 @@ def main():
     ff("-f", "lavfi", "-i", "sine=f=440:d=5", music)
     for vertical in (False, True):
         out = os.path.join(d, "out_v" if vertical else "out_h")
-        cmd = [sys.executable, os.path.join(HERE, "render.py"), z, "-o", out, "--no-grok", "--music", music]
+        cmd = [sys.executable, os.path.join(HERE, "render.py"), z, "-o", out, "--no-grok", "--no-score", "--no-whisper", "--keys-env", "/dev/null", "--music", music]
         if vertical:
             cmd += ["--vertical", "--caption-style", "boxed"]
         subprocess.run(cmd, check=True)
@@ -187,7 +187,7 @@ def main():
     bj["segments"][0]["media"] = None; bj["segments"][0]["mediaType"] = ""
     json.dump(bj, open(os.path.join(src2, "bundle.json"), "w"))
     out3 = os.path.join(d, "out_miss")
-    r3 = subprocess.run([sys.executable, os.path.join(HERE, "render.py"), src2, "-o", out3, "--no-grok", "--music", os.path.join(d, "nope.wav")], capture_output=True, text=True)
+    r3 = subprocess.run([sys.executable, os.path.join(HERE, "render.py"), src2, "-o", out3, "--no-grok", "--no-score", "--no-whisper", "--keys-env", "/dev/null", "--music", os.path.join(d, "nope.wav")], capture_output=True, text=True)
     check(r3.returncode == 0 and "without a music bed" in (r3.stdout + r3.stderr), "missing music file: warns and renders without music")
     if r3.returncode == 0:
         ff("-ss", "0.3", "-i", os.path.join(out3, "final.mp4"), "-frames:v", "1", "-vf", "scale=64:36", os.path.join(bd, "first.png"))

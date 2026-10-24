@@ -216,10 +216,12 @@ def add_pauses(voice, words, segs, work, beat_pause=0.6, sentence_pause=0.45):
         k = min(range(len(words)), key=lambda j: abs(words[j][1] - s["start"]))
         if k:
             beat_first.add(k)
+    lips = [(s["start"], s["end"]) for s in segs if s.get("mediaType") == "lipsync" and s.get("start") is not None]
+    in_lip = lambda t: any(a - 1e-3 <= t <= b + 1e-3 for a, b in lips)
     ins = []
     for k in range(len(words) - 1):
         gap = words[k + 1][1] - words[k][2]
-        target = beat_pause if (k + 1) in beat_first else (sentence_pause if re.search(r"[.!?…][\"”’']?$", words[k][0]) else 0)
+        target = beat_pause if (k + 1) in beat_first else (0 if in_lip(words[k][2]) else (sentence_pause if re.search(r"[.!?…][\"”’']?$", words[k][0]) else 0))
         extra = round(target - max(0.0, gap), 3)
         if target and extra > 0.02:
             ins.append((words[k][2] + max(0.0, gap) / 2, extra))
@@ -256,6 +258,10 @@ def cut_points(segs, total):
     for i in range(1, len(segs)):
         prev_end, st = segs[i - 1]["end"], segs[i]["start"]
         c = st - max(0.0, st - prev_end) / 2
+        if segs[i].get("mediaType") == "lipsync":
+            c = st - min(0.12, max(0.0, st - prev_end))          # picture lands just before the speaker talks
+        elif segs[i - 1].get("mediaType") == "lipsync":
+            c = min(st + 0.25, segs[i]["end"] - 0.3) if segs[i]["end"] - st > 0.8 else c  # J/L: the line leads, picture follows
         cuts.append(max(cuts[-1] + 0.3, min(c, total - 0.3)))
     cuts.append(total)
     return cuts
@@ -266,6 +272,8 @@ def media_value(seg):
     if not seg.get("media"):
         return 0.0
     chars = (seg.get("characters") or "NONE") != "NONE"
+    if seg.get("mediaType") == "lipsync":
+        return 50.0
     if seg.get("mediaType") == "video":
         return 3.5 if chars else 2.5
     return 3.0 if chars else 1.0
@@ -293,9 +301,12 @@ def group_shots(segs, cuts, min_hold=MIN_HOLD):
             if best[i][0] == INF:
                 continue
             dur = cuts[j] - cuts[i]
-            if dur < min_hold and not (i == 0 and j == n):
-                continue
             g = list(range(i, j))
+            has_lip = any(segs[k].get("mediaType") == "lipsync" for k in g)
+            if has_lip and len(g) > 1:
+                continue  # a talking shot carries exactly its own line
+            if dur < min_hold and not (i == 0 and j == n) and not has_lip:
+                continue
             pick = pick_media(segs, g)
             dropped = sum(media_value(segs[k]) for k in g) - (media_value(pick) if pick else 0)
             cand = (best[i][0] + dropped, best[i][1] - 1, i)
@@ -424,7 +435,7 @@ def fallback_edl(bundle, shots):
     arc = detect_arc(shots)
     out, k = [], 0
     for i, s in enumerate(shots):
-        vid = s.get("mediaType") == "video"
+        vid = s.get("mediaType") in ("video", "lipsync")
         role = role_of(s["index"], arc)
         dur = s["end"] - s["start"]
         tr, td = "cut", 0.0
@@ -454,6 +465,10 @@ def clamp(v, lo, hi, d):
     except Exception:
         return d
     return d if math.isnan(v) else max(lo, min(hi, v))
+
+
+LUT_PATH = None    # shared colour grade (.cube), applied under the captions
+GROK_TITLE = False  # True = let the edit model write title/thumbnail text (old behaviour)
 
 
 def validate_edl(raw, bundle, shots_in):
@@ -494,7 +509,7 @@ def validate_edl(raw, bundle, shots_in):
             s = f
         dur = base["end"] - base["start"]
         role = role_of(base["index"], arc)
-        vid = base.get("mediaType") == "video"
+        vid = base.get("mediaType") in ("video", "lipsync")
         motion = s.get("motion") if s.get("motion") in MOTIONS and s.get("motion") not in ("static", "punch_in") else f["motion"]
         if vid:
             motion = "push_in"
@@ -542,8 +557,13 @@ def validate_edl(raw, bundle, shots_in):
     ti = int(clamp(th.get("shot_index"), 1, len(shots_in), 1))
     if not shots_in[ti - 1].get("media"):
         ti = next((s["index"] for s in shots_in if s.get("media")), 1)
+    tcard = card(raw.get("title_card"), fb["title_card"])
+    if not GROK_TITLE:
+        # overlay-only rule: on-screen words come from the bundle, never invented by the edit model
+        tcard["text"], tcard["subtitle"] = fb["title_card"]["text"][:80], fb["title_card"].get("subtitle", "")[:80]
+        th = {}
     return ({"arc": arc, "shots": shots, "caption_style": cap,
-             "title_card": card(raw.get("title_card"), fb["title_card"]),
+             "title_card": tcard,
              "end_card": card(raw.get("end_card"), fb["end_card"]),
              "thumbnail": {"shot_index": ti, "text": screen_text(str(th.get("text") or bundle.get("title") or ""))[:60]}},
             problems)
@@ -554,7 +574,7 @@ def split_punch_ins(shots, words):
     out = []
     for sh in shots:
         dur = sh["end"] - sh["start"]
-        if not sh.get("punch_in") or sh.get("mediaType") == "video" or dur <= 3.2:
+        if not sh.get("punch_in") or sh.get("mediaType") in ("video", "lipsync") or dur <= 3.2:
             out.append(dict(sh, part=""))
             continue
         mid = sh["start"] + dur / 2
@@ -612,7 +632,7 @@ def mean_luma(src, kind):
         return _LUMA[src]
     y = None
     try:
-        err = subprocess.run(["ffmpeg", "-v", "info", "-hide_banner"] + (["-ss", "0.3"] if kind == "video" else []) +
+        err = subprocess.run(["ffmpeg", "-v", "info", "-hide_banner"] + (["-ss", "0.3"] if kind in ("video", "lipsync") else []) +
                              ["-i", src, "-frames:v", "1", "-vf", "scale=96:-2,signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"],
                              capture_output=True, text=True, timeout=60).stderr
         v = re.findall(r"YAVG=([\d.]+)", err)
@@ -643,7 +663,7 @@ def subject_center(src, kind, seg_hint=None):
     if SUBJECT_KEY:
         try:
             jpg = src + ".subj.jpg"
-            run(["ffmpeg", "-y", "-v", "error"] + (["-ss", "0.3"] if kind == "video" else []) + ["-i", src, "-frames:v", "1", "-vf", "scale=640:-2", jpg])
+            run(["ffmpeg", "-y", "-v", "error"] + (["-ss", "0.3"] if kind in ("video", "lipsync") else []) + ["-i", src, "-frames:v", "1", "-vf", "scale=640:-2", jpg])
             import base64
             url = "data:image/jpeg;base64," + base64.b64encode(open(jpg, "rb").read()).decode()
             body = json.dumps({"model": "grok-4.3", "response_format": {"type": "json_object"}, "max_tokens": 200, "messages": [
@@ -674,7 +694,7 @@ def detect_bars(src, kind):
         return _BARS[src]
     box = None
     try:
-        args = ["ffmpeg", "-v", "info", "-hide_banner"] + (["-ss", "0.5"] if kind == "video" else ["-loop", "1"]) + \
+        args = ["ffmpeg", "-v", "info", "-hide_banner"] + (["-ss", "0.5"] if kind in ("video", "lipsync") else ["-loop", "1"]) + \
                ["-i", src, "-vf", "cropdetect=limit=0.09:round=2:reset=0", "-frames:v", "6", "-f", "null", "-"]
         err = subprocess.run(args, capture_output=True, text=True, timeout=60).stderr
         m = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", err)
@@ -721,7 +741,14 @@ def render_shot(src, kind, shot, W, H, out, frames):
         vf = "color=c=0x101418:s=%dx%d:r=%d" % (W, H, FPS)
         run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", vf, "-frames:v", str(frames)] + enc + [out])
         return
-    if kind == "video":
+    if kind == "lipsync":
+        off = max(0.0, float(shot.get("lip_offset") or 0.0))
+        fit = cover(W, H)
+        vf = ("fps=%d,%s,tpad=start_mode=clone:start_duration=%.3f:stop_mode=clone:stop_duration=%.2f,setsar=1"
+              % (FPS, fit, off, dur + 1))
+        run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
+        return
+    if kind in ("video", "lipsync"):
         cd = media_duration(src) or dur
         speed = min(1.0, cd / dur) if cd < dur else 1.0
         speed = max(speed, 0.67)  # slow at most to 1.5x length, then hold the last frame
@@ -799,6 +826,7 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Cap,{FONT},{size},&H00FFFFFF,&H00FFFFFF,&H00101010,{back},1,0,0,0,100,100,0,0,{border_style},{outline},2,2,{int(W*0.08)},{int(W*0.08)},{margin_v},1
 Style: Title,{FONT},{int(H*0.075)},&H00FFFFFF,&H00FFFFFF,&H00101010,&H96000000,1,0,0,0,100,100,0,0,1,{max(3,int(H*0.005))},3,5,{int(W*0.08)},{int(W*0.08)},0,1
+Style: Ovl,{FONT},{int(H*0.045)},&H00FFFFFF,&H00FFFFFF,&H00101010,&H8C1A1A1A,1,0,0,0,100,100,1,0,3,{max(8,int(H*0.012))},0,8,{int(W*0.1)},{int(W*0.1)},{int(H*0.07)},1
 Style: Sub,{FONT},{int(H*0.035)},{hl},&H00FFFFFF,&H00101010,&H96000000,1,0,0,0,100,100,2,0,1,3,2,5,{int(W*0.08)},{int(W*0.08)},0,1
 
 [Events]
@@ -840,6 +868,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         pop = "{\\fad(80,120)\\fscx92\\fscy92\\t(0,110,\\fscx100\\fscy100)}" if cap["preset"] == "bold_pop" else "{\\fad(150,150)}"
         ev.append("Dialogue: 1,%s,%s,Cap,,0,0,0,,%s%s" % (ass_time(g_start), ass_time(g_end), pop, txt))
         cues.append({"start": round(g_start, 3), "end": round(g_end, 3), "text": " ".join(disp)})
+    # overlay words planned per beat (the image itself carries no text)
+    for sg in segs:
+        ov = screen_text(str(sg.get("overlay") or "")).strip()
+        if not ov or sg.get("start") is None or sg.get("end") is None:
+            continue
+        ov = " ".join(ov.split()[:6])
+        a0, a1 = float(sg["start"]) + 0.15, max(float(sg["end"]), float(sg["start"]) + 1.5)
+        ev.append("Dialogue: 3,%s,%s,Ovl,,0,0,0,,{\\fad(200,200)}%s" % (ass_time(a0), ass_time(min(a1, total)), ass_esc(ov)))
     tc, ec = edl["title_card"], edl["end_card"]
     if tc["enabled"]:
         # cold open: the title lands right after the hook, never over it
@@ -872,6 +908,254 @@ def build_sfx_track(events, total, work):
     out = os.path.join(work, "sfx.wav")
     run(["ffmpeg", "-y", "-v", "error"] + ins + ["-filter_complex", ";".join(fc), "-map", "[o]", "-ar", "48000", "-ac", "2", out])
     return out
+
+
+
+def env_key(name, path):
+    k = os.environ.get(name)
+    if not k and path and os.path.exists(path):
+        for line in open(path):
+            if line.startswith(name + "="):
+                k = line.split("=", 1)[1].strip().strip('"')
+    return k
+
+
+MUSIC_STYLES = {
+    "cinematic": "warm cinematic score, soft piano, felt strings, light pulse",
+    "lofi": "warm lo-fi hip hop, dusty keys, soft vinyl, mellow drums",
+    "orchestral": "small chamber orchestra, strings and french horn, hopeful",
+    "acoustic": "warm acoustic guitar and soft piano, intimate, hopeful",
+    "electronic": "soft modern electronic, warm pads, gentle synth arpeggio",
+}
+
+
+def music_plan(total, arc, style):
+    """Composition plan from the story arc: tense cold open, calm under dialogue, build, swell at the turn, resolve."""
+    base = MUSIC_STYLES.get(style, MUSIC_STYLES["cinematic"])
+    hook = min(max(arc.get("hook_end") or 0.0, 3.0), total - 6) if total > 12 else total / 3
+    turn = arc.get("turn") or total * 0.68
+    turn = min(max(turn, hook + 3), total - 3)
+    cut = [(0.0, hook, "Cold open", ["tense", "curious", "sparse pulse", "suspended"]),
+           (hook, max(hook + 3, turn - 4), "Dialogue bed", ["calm", "warm", "understated", "steady"]),
+           (max(hook + 3, turn - 4), turn, "Build", ["building", "rising", "anticipation"]),
+           (turn, min(total, turn + 6), "Reveal swell", ["emotional swell", "uplifting", "full strings"]),
+           (min(total, turn + 6), total + 1.5, "Resolve", ["resolving", "warm", "gentle", "hopeful ending"])]
+    chunks, carry = [], 0.0
+    for a, b, name, mood in cut:
+        d = b - a + carry
+        if d < 3.0:
+            carry = d
+            continue
+        carry = 0.0
+        chunks.append({"text": "[%s]" % name, "duration_ms": int(round(d * 1000)),
+                       "positive_styles": [base] + mood, "negative_styles": ["vocals", "singing", "lyrics", "harsh", "aggressive drums"]})
+    if carry and chunks:
+        chunks[-1]["duration_ms"] += int(carry * 1000)
+    return chunks
+
+
+def compose_music(total, arc, style, key, work):
+    """ElevenLabs Music (music_v2_5) score for this episode. Returns (path, plan) or (None, error)."""
+    import requests
+    plan = music_plan(total, arc, style)
+    body = {"model_id": "music_v2_5", "composition_plan": {"positive_global_styles": ["instrumental", "underscore for spoken dialogue"],
+            "negative_global_styles": ["vocals", "lyrics"], "chunks": plan}}
+    for attempt in range(2):
+        try:
+            r = requests.post("https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128", json=body,
+                              headers={"xi-api-key": key}, timeout=240)
+            if r.status_code == 200 and len(r.content) > 10000:
+                out = os.path.join(work, "score.mp3")
+                open(out, "wb").write(r.content)
+                return out, plan
+            err = "HTTP %s %s" % (r.status_code, r.text[:200])
+        except Exception as e:
+            err = str(e)[:200]
+    return None, err
+
+
+def compose_music_fal(total, arc, style, key, work):
+    """Same composition plan via fal (elevenlabs/music/v2) when the ElevenLabs key lacks music permission."""
+    import requests, time as _t
+    plan = music_plan(total, arc, style)
+    h = {"Authorization": "Key " + key}
+    try:
+        r = requests.post("https://queue.fal.run/elevenlabs/music/v2", headers=h, timeout=60,
+                          json={"composition_plan": {"positive_global_styles": ["instrumental", "underscore for spoken dialogue"],
+                                                     "negative_global_styles": ["vocals", "lyrics"], "chunks": plan}})
+        r.raise_for_status()
+        j = r.json()
+        t0 = _t.time()
+        while _t.time() - t0 < 300:
+            st = requests.get(j["status_url"], headers=h, timeout=30).json()
+            if st.get("status") == "COMPLETED":
+                break
+            if st.get("status") in ("FAILED", "ERROR"):
+                return None, "fal music failed: %s" % str(st)[:160]
+            _t.sleep(3)
+        res = requests.get(j["response_url"], headers=h, timeout=60).json()
+        url = (res.get("audio") or {}).get("url") or (res.get("audio_file") or {}).get("url")
+        if not url:
+            return None, "fal music: no audio in %s" % str(res)[:160]
+        out = os.path.join(work, "score.mp3")
+        open(out, "wb").write(requests.get(url, timeout=120).content)
+        return out, plan
+    except Exception as e:
+        return None, "fal music: " + str(e)[:200]
+
+
+def lip_offsets(shots, d, voice, work):
+    """Exact lip-sync timing: cross-correlate each talking clip's own audio with the voice track where it plays."""
+    import numpy as np
+    def pcm(args):
+        raw = subprocess.run(["ffmpeg", "-v", "error"] + args + ["-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True).stdout
+        return np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+    out = []
+    for x in shots:
+        if x.get("mediaType") != "lipsync" or not x.get("media"):
+            continue
+        t = x["start"] + x.get("lip_offset", 0.0)
+        c = pcm(["-i", os.path.join(d, x["media"])])
+        if len(c) < 4000:
+            out.append({"media": x["media"], "offset_ms": None, "note": "clip has no audio track"})
+            continue
+        v = pcm(["-ss", "%.3f" % max(0, t - 0.5), "-t", "%.3f" % (len(c) / 8000 + 1.0), "-i", voice])
+        n = 1 << int(np.ceil(np.log2(len(v) + len(c))))
+        cc = np.fft.irfft(np.fft.rfft(v, n) * np.conj(np.fft.rfft(c, n)), n)[:len(v)]
+        lag = int(np.argmax(cc)) / 8000 - min(0.5, t)
+        out.append({"media": x["media"], "plays_at": round(t, 3), "offset_ms": int(round(lag * 1000)), "pass": abs(lag) <= 0.045})
+    return out
+
+
+TRANSITION_POLICY = True
+MUSIC_UNDER_DB = (18.0, 22.0, 20.0)  # music (ducked) sits this many dB under the voice: min, max, target
+
+
+def smooth_transitions(shots):
+    """Soft by default: dissolves between scenes, straight cuts inside a dialogue exchange (the J/L timing
+    does the smoothing), a whip only into the turn/reveal."""
+    for i, sh in enumerate(shots):
+        if i == 0:
+            continue
+        prev = shots[i - 1]
+        if sh.get("part") == "b":
+            continue
+        dlg = sh.get("mediaType") == "lipsync" and prev.get("mediaType") == "lipsync"
+        if dlg:
+            sh["transition_in"], sh["transition_duration"] = "cut", 0.0
+        elif sh.get("role") == "turn" and sh.get("transition_in") == "whip":
+            pass
+        elif sh.get("transition_in") in ("whip", "cut", "fadeblack") and not (sh.get("role") == "turn"):
+            sh["transition_in"], sh["transition_duration"] = "dissolve", 0.45
+    return shots
+
+
+def _tok(t):
+    t = t.lower().replace("’", "'")
+    t = re.sub(r"[^a-z0-9'%$]+", "", t)
+    if t.isdigit() and len(t) <= 3:
+        return _num_words(int(t))
+    return t
+
+
+_ONES = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
+_TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
+
+
+def _num_words(n):
+    """Spoken form joined without spaces so '12' == 'twelve', '21' == 'twentyone' (script tokens get the same join)."""
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + ("" if n % 10 == 0 else _ONES[n % 10])
+    return _ONES[n // 100] + "hundred" + ("" if n % 100 == 0 else _num_words(n % 100))
+
+
+def whisper_words(path, key, work, tag):
+    """OpenAI whisper-1 word timestamps for an audio file (mono 16k mp3 upload)."""
+    import requests
+    small = os.path.join(work, "whisper_%s.mp3" % tag)
+    run(["ffmpeg", "-y", "-v", "error", "-i", path, "-ac", "1", "-ar", "16000", "-b:a", "48k", small])
+    with open(small, "rb") as f:
+        r = requests.post("https://api.openai.com/v1/audio/transcriptions", headers={"Authorization": "Bearer " + key},
+                          files={"file": ("a.mp3", f, "audio/mpeg")},
+                          data={"model": "whisper-1", "response_format": "verbose_json", "timestamp_granularities[]": "word"}, timeout=180)
+    r.raise_for_status()
+    j = r.json()
+    return [(w["word"], float(w["start"]), float(w["end"])) for w in j.get("words", [])], j.get("text", "")
+
+
+def whisper_check(segs, words, wwords):
+    """Match the script against what Whisper heard. Per line: matched ratio, missing/extra words, timing drift."""
+    import difflib
+    script = []
+    for si, s in enumerate(segs):
+        for t in s["text"].split():
+            if _tok(t):
+                script.append((_tok(t), si))
+    heard = [(_tok(w[0]), w[1], w[2]) for w in wwords if _tok(w[0])]
+    sm = difflib.SequenceMatcher(a=[x[0] for x in script], b=[x[0] for x in heard], autojunk=False)
+    hit = {}
+    for blk in sm.get_matching_blocks():
+        for k in range(blk.size):
+            hit[blk.a + k] = blk.b + k
+    # script word -> EL timing (words list is in script order)
+    elw = [(_tok(w[0]), w[1], w[2]) for w in words if _tok(w[0])]
+    sm2 = difflib.SequenceMatcher(a=[x[0] for x in script], b=[x[0] for x in elw], autojunk=False)
+    el_of = {}
+    for blk in sm2.get_matching_blocks():
+        for k in range(blk.size):
+            el_of[blk.a + k] = blk.b + k
+    lines, drifts = [], []
+    for si, s in enumerate(segs):
+        idx = [k for k, x in enumerate(script) if x[1] == si]
+        if not idx:
+            continue
+        got = [k for k in idx if k in hit]
+        missing = [script[k][0] for k in idx if k not in hit]
+        d = [abs(heard[hit[k]][1] - elw[el_of[k]][1]) for k in got if k in el_of]
+        drifts += d
+        ratio = len(got) / len(idx)
+        lines.append({"index": s["index"], "speaker": s.get("speaker"), "words": len(idx), "matched": round(ratio, 3),
+                      "missing": missing[:8], "drift_ms": int(1000 * (sum(d) / len(d))) if d else None,
+                      "first_word_heard": round(heard[hit[idx[0]]][1], 3) if idx[0] in hit else None,
+                      "flag": ratio < 0.85})
+    mm = sorted(drifts)
+    return {"lines": lines, "flagged": [l["index"] for l in lines if l["flag"]],
+            "match_overall": round(len(hit) / max(1, len(script)), 3),
+            "median_drift_ms": int(1000 * mm[len(mm) // 2]) if mm else None,
+            "p95_drift_ms": int(1000 * mm[int(len(mm) * 0.95)]) if mm else None}, hit, heard, script
+
+
+def realign_words(words, segs, wwords, limit=0.25):
+    """Snap caption word times to Whisper where EL alignment drifted > limit (matched words only)."""
+    rep, hit, heard, script = whisper_check(segs, words, wwords)
+    import difflib
+    elt = [k for k, w in enumerate(words) if _tok(w[0])]
+    sm = difflib.SequenceMatcher(a=[x[0] for x in script], b=[_tok(words[k][0]) for k in elt], autojunk=False)
+    moved = 0
+    for blk in sm.get_matching_blocks():
+        for k in range(blk.size):
+            si, wi = blk.a + k, elt[blk.b + k]
+            if si in hit:
+                h = heard[hit[si]]
+                if abs(h[1] - words[wi][1]) > limit:
+                    words[wi] = [words[wi][0], round(h[1], 3), round(max(h[2], h[1] + 0.05), 3)]
+                    moved += 1
+    return words, moved
+
+
+def music_vs_voice(voice, music_stem, work):
+    """dB the (ducked) music sits below the voice, measured while the voice is speaking."""
+    try:
+        def lufs(p):
+            o = subprocess.run(["ffmpeg", "-hide_banner", "-i", p, "-af", "ebur128", "-f", "null", "-"], capture_output=True, text=True).stderr
+            m = re.findall(r"I:\s+(-?[\d.]+) LUFS", o)
+            return float(m[-1]) if m else None
+        lv, lm = lufs(voice), lufs(music_stem)
+        return round(lv - lm, 1) if lv is not None and lm is not None else None
+    except Exception:
+        return None
 
 
 def music_gain_expr(total, tp):
@@ -910,6 +1194,34 @@ def build_audio(voice, music, total, out, work, sfx=None, turn=None):
     af = ("loudnorm=I=-14:TP=-1:LRA=11:measured_I=%s:measured_TP=%s:measured_LRA=%s:measured_thresh=%s:"
           "offset=%s:linear=true" % (m["input_i"], m["input_tp"], m["input_lra"], m["input_thresh"], m["target_offset"]))
     run(["ffmpeg", "-y", "-v", "error", "-i", mix, "-af", af + ",aresample=48000", "-c:a", "aac", "-b:a", "192k", out])
+
+
+def sharpness_check(clips, lut, work):
+    """Edge energy (mean |Laplacian|) of mid-shot frames before vs after the LUT. The grade must not soften:
+    ratio >= 0.97 passes. Returns {"ratio", "pass", "samples"} or None when there is no LUT."""
+    if not lut or not clips:
+        return None
+    import numpy as np
+    def edge(clip, vf):
+        r = subprocess.run(["ffmpeg", "-v", "error", "-ss", "%.2f" % max(0.0, media_duration(clip) / 2), "-i", clip,
+                            "-frames:v", "1", "-vf", (vf + "," if vf else "") + "scale=960:540,format=gray",
+                            "-f", "rawvideo", "-"], capture_output=True)
+        a = np.frombuffer(r.stdout, np.uint8)
+        if a.size != 960 * 540:
+            return None
+        a = a.reshape(540, 960).astype(np.float32)
+        lap = 4 * a[1:-1, 1:-1] - a[:-2, 1:-1] - a[2:, 1:-1] - a[1:-1, :-2] - a[1:-1, 2:]
+        return float(np.abs(lap).mean())
+    picks = [clips[int(k * (len(clips) - 1) / 2)] for k in range(3)] if len(clips) >= 3 else clips
+    out = []
+    for c in dict.fromkeys(picks):
+        b0, b1 = edge(c, ""), edge(c, "lut3d=file='%s':interp=tetrahedral" % lut.replace("'", r"\'"))
+        if b0 and b1:
+            out.append(round(b1 / b0, 4))
+    if not out:
+        return None
+    ratio = min(out)
+    return {"ratio": ratio, "pass": ratio >= 0.97, "samples": out}
 
 
 def font_file(pattern):
@@ -962,6 +1274,10 @@ def main():
     ap.add_argument("bundle", help="CFA_FinalEdit_*.zip (or unpacked folder, or JSON-with-base64)")
     ap.add_argument("-o", "--out", default="render-out")
     ap.add_argument("--vertical", action="store_true", help="1080x1920 instead of 1920x1080")
+    ap.add_argument("--music-style", default=None, help="score style: " + ", ".join(MUSIC_STYLES) + ", none")
+    ap.add_argument("--no-score", action="store_true", help="do not compose an ElevenLabs score (use --music file if given)")
+    ap.add_argument("--no-whisper", action="store_true", help="skip the Whisper caption alignment / line check")
+    ap.add_argument("--raw-transitions", action="store_true", help="use the EDL transitions as-is (no smoothing policy)")
     ap.add_argument("--music", help="optional background music file (ducked under the voice)")
     ap.add_argument("--no-grok", action="store_true", help="skip Grok, use the deterministic edit")
     ap.add_argument("--model", default="grok-4.3")
@@ -971,6 +1287,9 @@ def main():
     ap.add_argument("--beat-pause", type=float, default=0.6, help="min silence between beats, padded from timestamps (0 = off)")
     ap.add_argument("--sentence-pause", type=float, default=0.45, help="min silence after a sentence inside a beat (0 = off)")
     ap.add_argument("--no-title", action="store_true")
+    ap.add_argument("--lut", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "luts", "cfa_warm.cube"), help="shared .cube grade")
+    ap.add_argument("--no-lut", action="store_true")
+    ap.add_argument("--grok-title", action="store_true", help="let Grok write the title/thumbnail text (default: bundle title only)")
     ap.add_argument("--notes", default="", help="re-edit notes passed to Grok's edit plan")
     ap.add_argument("--no-sfx", action="store_true", help="skip whooshes / riser / impact")
     ap.add_argument("--no-end-card", action="store_true")
@@ -978,6 +1297,10 @@ def main():
     a = ap.parse_args()
 
     ensure_ffmpeg()
+    global GROK_TITLE
+    GROK_TITLE = bool(a.grok_title)
+    global LUT_PATH
+    LUT_PATH = None if a.no_lut or not os.path.exists(a.lut) else os.path.abspath(a.lut)
     t0 = time.time()
     os.makedirs(a.out, exist_ok=True)
     work = tempfile.mkdtemp(prefix="cfa-render-")
@@ -1030,10 +1353,25 @@ def main():
     if a.no_end_card:
         edl["end_card"]["enabled"] = False
     edl["shots"] = split_punch_ins(edl["shots"], words)
+    by_media = {s.get("media"): s for s in segs if s.get("mediaType") == "lipsync" and s.get("media")}
+    for x in edl["shots"]:
+        if x.get("mediaType") == "lipsync" and x.get("media") in by_media:
+            x["lip_offset"] = round(max(0.0, by_media[x["media"]]["start"] - x["start"]), 3)
+    if not a.raw_transitions:
+        edl["shots"] = smooth_transitions(edl["shots"])
     tp_shot = next((x for x in edl["shots"] if x.get("role") == "turn"), None)
     hook_last = [x for x in edl["shots"] if x.get("role") == "hook"]
     edl["arc_times"] = {"hook_end": round(hook_last[-1]["end"], 3) if hook_last else 0.0,
                         "turn": round(tp_shot["start"], 3) if tp_shot else None}
+    bt = next((sg for sg in segs if sg.get("role") == "turn" and sg.get("start") is not None), None)
+    if bt:  # the script marks its own reveal: music swell and the turn role follow the writer, not the EDL guess
+        edl["arc_times"]["turn"] = round(bt["start"], 3)
+        for x in edl["shots"]:
+            if x.get("role") == "turn" and not (x["start"] - 0.3 <= bt["start"] < x["end"]):
+                x["role"] = "tension"
+            elif x["start"] - 0.3 <= bt["start"] < x["end"] and x.get("part") != "b":
+                x["role"] = "turn"
+        edl["shots"] = smooth_transitions(edl["shots"]) if not a.raw_transitions else edl["shots"]
     edl["source"] = source
     edl["pauses_added"] = round(added, 3)
     json.dump(edl, open(os.path.join(a.out, "edl.json"), "w"), indent=1)
@@ -1054,6 +1392,8 @@ def main():
             nx = next((x for x in shots[i + 1:] if x.get("media")), None)
             if nx:
                 src, kind = os.path.join(d, nx["media"]), nx.get("mediaType") or "image"
+        if kind == "lipsync" and shot.get("mediaType") != "lipsync":
+            kind = "video"  # a borrowed talking clip is just footage here
         out = os.path.join(work, "shot_%03d.mp4" % i)
         f0 = round(shot["start"] * FPS)
         f1 = round((shot["end"] + nxt) * FPS) if i + 1 < len(shots) else round(total * FPS) + 2
@@ -1064,6 +1404,16 @@ def main():
     # assemble: xfade chain (offset = next cut time) + captions
     ass = os.path.join(work, "captions.ass")
     log("stage: captions")
+    oa_key = None if a.no_whisper else env_key("OPENAI_API_KEY", a.keys_env)
+    whisper = {"enabled": bool(oa_key)}
+    if oa_key:
+        try:
+            ww, _ = whisper_words(voice, oa_key, work, "voice")
+            words, moved = realign_words(words, segs, ww)
+            whisper["voice_pass"] = {"words_heard": len(ww), "caption_words_realigned": moved}
+            log("whisper voice pass: %d words, %d caption times snapped" % (len(ww), moved))
+        except Exception as e:
+            whisper["voice_pass_error"] = str(e)[:200]
     cues = build_ass(words, segs, edl, W, H, total, ass)
     inputs, fc, prev = [], ["[0:v]settb=1/%d[b0]" % FPS], "[b0]"
     for c in clips:
@@ -1079,14 +1429,60 @@ def main():
             fc.append("%s[in%d]xfade=transition=%s:duration=%.3f:offset=%.3f%s" % (prev, i, tr, shot["transition_duration"], round(shot["start"] * FPS) / FPS, lab))
         prev = lab
     ass_esc_path = ass.replace("\\", "/").replace(":", "\\:")
-    fc.append("%sfps=%d,trim=0:%.3f,setpts=PTS-STARTPTS,subtitles='%s'[v]" % (prev, FPS, total, ass_esc_path))
+    grade = ("lut3d=file='%s':interp=tetrahedral," % LUT_PATH.replace("'", r"\'")) if LUT_PATH else ""
+    fc.append("%sfps=%d,trim=0:%.3f,setpts=PTS-STARTPTS,%ssubtitles='%s'[v]" % (prev, FPS, total, grade, ass_esc_path))
     audio = os.path.join(work, "audio.m4a")
     log("stage: mixing")
     events = [] if a.no_sfx else sfx_events(edl["shots"], edl["arc_times"])
     sfx = build_sfx_track(events, total, work)
+    music_info = {"source": None}
+    bmus = b.get("music")
+    style = (b.get("musicStyle") or a.music_style or "cinematic").lower()
+    if bmus and os.path.exists(os.path.join(d, bmus)):
+        a.music, music_info = os.path.join(d, bmus), {"source": "bundle", "file": bmus}
+    elif style != "none" and not a.no_score:
+        el = env_key("ELEVENLABS_API_KEY", a.keys_env)
+        if el:
+            log("stage: composing score (%s)" % style)
+            pth, plan = compose_music(total, edl["arc_times"], style, el, work)
+            if pth:
+                a.music = pth
+                shutil.copy(pth, os.path.join(a.out, "score.mp3"))
+                music_info = {"source": "elevenlabs music_v2_5", "style": style, "plan": [(c["text"], c["duration_ms"]) for c in plan]}
+            else:
+                fk = env_key("FAL_KEY", a.keys_env)
+                p2, plan2 = compose_music_fal(total, edl["arc_times"], style, fk, work) if fk else (None, "no FAL_KEY")
+                if p2:
+                    a.music = p2
+                    shutil.copy(p2, os.path.join(a.out, "score.mp3"))
+                    music_info = {"source": "fal elevenlabs/music/v2", "style": style, "elevenlabs_direct_error": plan[:120],
+                                  "plan": [(c["text"], c["duration_ms"]) for c in plan2]}
+                else:
+                    music_info = {"source": "library" if a.music else None, "score_error": [plan[:160], plan2[:160]]}
+    elif style == "none":
+        a.music = None
     if a.music and not os.path.exists(a.music):
         log("warning: music file not found (%s); rendering without a music bed" % a.music)
         a.music = None
+    if a.music:
+        try:
+            def _stem(src, tag):
+                stem = os.path.join(work, "music_stem_%s.wav" % tag)
+                run(["ffmpeg", "-y", "-v", "error", "-i", src, "-i", voice, "-filter_complex",
+                     "[0:a]aloop=loop=-1:size=2e9,atrim=0:%.3f,volume='%s':eval=frame[m];[1:a]aformat=channel_layouts=stereo[sc];"
+                     "[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=400:makeup=1[d]" % (total, music_gain_expr(total, edl["arc_times"].get("turn"))),
+                     "-map", "[d]", stem])
+                return music_vs_voice(voice, stem, work)
+            gap = _stem(a.music, "raw")
+            music_info["below_voice_db_raw"] = gap
+            if gap is not None and not (MUSIC_UNDER_DB[0] <= gap <= MUSIC_UNDER_DB[1]):
+                adj = os.path.join(work, "music_adj.wav")
+                run(["ffmpeg", "-y", "-v", "error", "-i", a.music, "-af", "volume=%.1fdB" % (gap - MUSIC_UNDER_DB[2]), adj])
+                a.music = adj
+                gap = _stem(adj, "adj")
+            music_info["below_voice_db"] = gap
+        except Exception as e:
+            music_info["measure_error"] = str(e)[:120]
     build_audio(voice, a.music, total, audio, work, sfx, edl["arc_times"].get("turn"))
     final = os.path.join(a.out, "final.mp4")
     log("stage: encoding")
@@ -1106,7 +1502,35 @@ def main():
     pr = probe(final)
     v = next(s for s in pr["streams"] if s["codec_type"] == "video")
     au = [s for s in pr["streams"] if s["codec_type"] == "audio"]
-    report = {"final": final, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
+    try:
+        sharp = sharpness_check(clips, LUT_PATH, work)
+    except Exception as e:
+        sharp = {"error": str(e)[:200]}
+    if sharp and sharp.get("pass") is False:
+        log("WARNING: LUT grade lowered edge energy to %.3f of the source" % sharp["ratio"])
+    if oa_key:
+        try:
+            ww, txt = whisper_words(final, oa_key, work, "final")
+            chk, _, _, _ = whisper_check(segs, words, ww)
+            lip = []
+            for x in shots:
+                if x.get("mediaType") == "lipsync":
+                    sg = by_media.get(x["media"])
+                    ln = next((l for l in chk["lines"] if sg and l["index"] == sg["index"]), None)
+                    if ln and ln["first_word_heard"] is not None:
+                        lip.append({"media": x["media"], "clip_audio_start": round(x["start"] + x.get("lip_offset", 0), 3),
+                                    "speech_heard": ln["first_word_heard"],
+                                    "offset_ms": int(1000 * (ln["first_word_heard"] - x["start"] - x.get("lip_offset", 0)))})
+            chk["lipsync_timing"] = lip
+            whisper["final_pass"] = chk
+            log("whisper final pass: match %.3f, flagged lines %s" % (chk["match_overall"], chk["flagged"]))
+        except Exception as e:
+            whisper["final_pass_error"] = str(e)[:200]
+    try:
+        lipsync_check = lip_offsets(shots, d, voice, work)
+    except Exception as e:
+        lipsync_check = [{"error": str(e)[:160]}]
+    report = {"final": final, "whisper": whisper, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
               "audio_streams": len(au), "lufs": measure_lufs(final), "edl_source": source,
               "edl_problems": problems, "grok_usage": usage, "beats": len(segs),
@@ -1119,7 +1543,8 @@ def main():
               "shot_lengths": sorted(round(x["duration"], 2) for x in shots),
               "avg_shot": round(total / len(shots), 3), "min_shot": min(x["duration"] for x in shots),
               "interpolated_beats": [s["index"] for s in segs if s.get("interpolated")],
-              "caption_cues": cues, "padded_words": words, "render_seconds": round(time.time() - t0, 1)}
+              "caption_cues": cues, "padded_words": words, "render_seconds": round(time.time() - t0, 1),
+              "lut": os.path.basename(LUT_PATH) if LUT_PATH else None, "sharpness": sharp}
     json.dump(report, open(os.path.join(a.out, "report.json"), "w"), indent=1)
     shutil.copy(ass, os.path.join(a.out, "captions.ass"))
     if not a.keep_work:

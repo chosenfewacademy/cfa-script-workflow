@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end test for service.py: auth, CORS, upload, queue (1 at a time), status stages, video/thumbnail, re-edit, restart recovery."""
+"""End-to-end test for service.py: auth, CORS, reviewer feedback, upload, queue (1 at a time), status stages, video/thumbnail, re-edit, restart recovery."""
 import json, os, socket, subprocess, sys, tempfile, time, urllib.request, urllib.error
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -49,10 +49,43 @@ def main():
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     base = "http://127.0.0.1:%d" % port
     env = dict(os.environ, CFA_RENDER_DATA=os.path.join(d, "data"), CFA_RENDER_TOKEN_FILE=os.path.join(d, "token"),
-               CFA_RENDER_PORT=str(port), CFA_RENDER_ARGS="--no-grok", CFA_RENDER_MUSIC="", BASE=base)
+               CFA_RENDER_PORT=str(port), CFA_RENDER_ARGS="--no-grok --no-score --no-whisper --keys-env /dev/null", CFA_RENDER_MUSIC="", BASE=base)
     p = start(env)
     try:
         body = open(z, "rb").read()
+        # ── reviewer feedback ──
+        J = lambda path, method="GET", obj=None, t=tok, o=ORIGIN: (lambda r: (r[0], json.loads(r[2] or b"null")))(req(base, path, method, json.dumps(obj).encode() if obj is not None else None, token=t, origin=o, ctype="application/json"))
+        fbd = os.path.join(d, "data", "feedback")
+        check(J("/feedback", "POST", {"step": "script", "kind": "tool", "comment": "x"}, t=None)[0] == 401, "feedback: POST needs the token")
+        check(J("/feedback", t="wrong")[0] == 401, "feedback: GET needs the token")
+        check(J("/feedback", "POST", {"step": "script", "kind": "tool", "comment": "x"}, o="https://evil.example")[0] == 403, "feedback: other origins refused")
+        check(J("/feedback", "POST", {"step": "bogus", "kind": "tool", "comment": "x"})[0] == 400, "feedback: unknown step -> 400")
+        check(J("/feedback", "POST", {"step": "script", "kind": "other", "comment": "x"})[0] == 400, "feedback: unknown kind -> 400")
+        check(J("/feedback", "POST", {"step": "script", "kind": "tool", "comment": "  "})[0] == 400, "feedback: empty comment -> 400")
+        check(J("/feedback", "POST", ["not", "an", "object"])[0] == 400, "feedback: non-object body -> 400")
+        steps = ["research", "script", "voices", "registry", "shotlist", "stills", "clips", "lipsync", "music", "edit", "final"]
+        made = [J("/feedback", "POST", {"step": st, "kind": "episode" if i % 2 else "tool", "rating": 9 if i == 0 else i % 6, "comment": "note for " + st + "\x07", "ref": "shot 2", "episode": "Ep 1"}) for i, st in enumerate(steps)]
+        check(all(c == 201 and it["status"] == "submitted" for c, it in made), "feedback: accepted on all 11 steps")
+        check(made[0][1]["rating"] == 5 and "\x07" not in made[0][1]["comment"] and made[0][1]["reviewer"] == "Chris", "feedback: rating clamped, control chars stripped, reviewer defaults to Chris")
+        inbox = [json.loads(l) for l in open(os.path.join(fbd, "inbox.jsonl"))]
+        check(len(inbox) == 11 and [x["step"] for x in inbox] == steps, "feedback: every item appended to inbox.jsonl")
+        fid = made[1][1]["id"]
+        c, it = J("/feedback/%s/status" % fid, "POST", {"status": "in_progress", "resolution": "working"})
+        check(c == 200 and it["status"] == "in_progress" and it["resolution"] == "working", "feedback: status -> in_progress")
+        check(J("/feedback/%s/status" % fid, "POST", {"status": "submitted"})[0] == 400 and J("/feedback/%s/status" % fid, "POST", {"status": "weird"})[0] == 400, "feedback: invalid status refused")
+        check(J("/feedback/fb_000000000000/status", "POST", {"status": "ready"})[0] == 404 and J("/feedback/../../token")[0] == 404, "feedback: unknown / traversal ids -> 404")
+        t0 = J("/feedback")[1]["now"]
+        tid = made[0][1]["id"]
+        c, it = J("/feedback/%s/status" % tid, "POST", {"status": "ready", "accept": True, "rule": "Name the stakes in line 1."})
+        J("/feedback/%s/status" % tid, "POST", {"status": "ready", "accept": True})
+        mem = J("/feedback/memory")[1]["memory"]
+        check(c == 200 and it["accepted"] and len(mem) == 1 and mem[0]["rule"] == "Name the stakes in line 1." and mem[0]["step"] == "research", "feedback: accepted suggestion added to memory once")
+        ch = J("/feedback?since=%f" % t0)[1]
+        check([x["id"] for x in ch["items"]] == [tid] and ch["memory"] == mem, "feedback: ?since returns only changed items + memory")
+        check(J("/feedback/" + fid)[1]["history"][-1]["status"] == "in_progress", "feedback: item history kept")
+        r = subprocess.run([sys.executable, os.path.join(HERE, "fb.py"), "set", fid, "ready", "--resolution", "done by routine"], env=env, capture_output=True, text=True)
+        r2 = subprocess.run([sys.executable, os.path.join(HERE, "fb.py"), "inbox"], env=env, capture_output=True, text=True)
+        check(r.returncode == 0 and J("/feedback/" + fid)[1]["status"] == "ready" and fid not in r2.stdout and len(r2.stdout.strip().splitlines()) == 9, "feedback: routine CLI marks ready; inbox lists only open items")
         check(req(base, "/health", origin=None)[0] == 200, "health is open")
         check(req(base, "/jobs", "POST", body)[0] == 401, "upload without token -> 401")
         check(req(base, "/jobs", "POST", body, token="wrong")[0] == 401, "wrong token -> 401")
@@ -86,6 +119,7 @@ def main():
         # restart while job 3 is queued/running: it must resume
         p.terminate(); p.wait()
         p = start(env)
+        check(len(J("/feedback")[1]["items"]) == 11 and len(J("/feedback/memory")[1]["memory"]) == 1, "feedback: survives a restart")
         st3, _ = wait(base, tok, j3["id"])
         check(st3["state"] == "done", "job interrupted by a restart re-runs and finishes")
         log = open(os.path.join(d, "data", "jobs", j3["id"], "render.log")).read()
