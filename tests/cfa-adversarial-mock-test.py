@@ -5,7 +5,15 @@
 import asyncio, json, re, base64, sys
 from playwright.async_api import async_playwright
 import os
-URL='file://'+os.path.abspath(os.path.join(os.path.dirname(__file__),'..','CFA_Script_Workflow.html'))
+import http.server, threading, functools
+_ROOT=os.path.abspath(os.path.join(os.path.dirname(__file__),'..'))
+class _Q(http.server.SimpleHTTPRequestHandler):
+    def log_message(self,*a): pass
+_HTTPD=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(_Q,directory=_ROOT))
+threading.Thread(target=_HTTPD.serve_forever,daemon=True).start()
+# Served over http (not file://): Chrome keeps file:// localStorage per renderer, so reload tests flaked under load.
+URL='http://127.0.0.1:%d/CFA_Script_Workflow.html'%_HTTPD.server_address[1]
+_ORIGIN='http://127.0.0.1:%d/'%_HTTPD.server_address[1]
 LINEMP3=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'fixtures_line.mp3'),'rb').read()
 CLIP=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'fixtures_clip.mp4'),'rb').read()
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
@@ -123,6 +131,9 @@ async def fal_route(route):
     return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'images':[{'url':f'https://v3b.fal.media/files/g{n}.png'}]}))
 async def el_route(route):
     m=SC['el']
+    if SC.get('elFailN'):
+        SC['elFailN']-=1; SC['elFails']=(SC.get('elFails') or 0)+1
+        return await route.fulfill(status=503,content_type='application/json',body='{"detail":"busy"}')
     if m in('401','429'): return await route.fulfill(status=int(m),content_type='application/json',body=json.dumps({'detail':{'message':'nope'}}))
     if m=='empty': return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'audio_base64':'','alignment':None}))
     body=json.loads(route.request.post_data or '{}'); text=body.get('text',''); SC['elBody']=body; SC['elURL']=route.request.url
@@ -136,7 +147,7 @@ async def oai_route(route):
     return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'data':[{'b64_json':base64.b64encode(PNG).decode()}]}))
 async def other_route(route):
     u=route.request.url
-    if u.startswith(('file:','data:','blob:')): return await route.continue_()
+    if u.startswith(('file:','data:','blob:',_ORIGIN)): return await route.continue_()
     print('UNEXPECTED REQUEST',u); return await route.abort()
 
 async def newpage(b, keys=True, pre=None):
@@ -165,6 +176,12 @@ async def newpage(b, keys=True, pre=None):
     await pg.goto(URL); await pg.wait_for_timeout(300)
     return ctx,pg,errs
 J=lambda pg,js,*a: pg.evaluate(js,*a)
+async def persist_reload(pg, errs=None):
+    """Save, reload, wait for the app to boot. (Page is served over http://127.0.0.1 - on file:// Chrome can drop
+    localStorage when it swaps renderers under load.) Returns the page."""
+    await J(pg,"()=>saveWorkflowState()")
+    await pg.reload(); await pg.wait_for_function("()=>typeof resumeSavedSession==='function'")
+    return pg
 async def go_review(pg):
     await J(pg,"()=>{sv(document.querySelector('.vo'),'v01');startGen();}")
     await pg.wait_for_function("()=>curScreen===3||curScreen===1&&document.getElementById('e1').textContent",timeout=15000)
@@ -394,7 +411,7 @@ async def main():
             await J(pg,"()=>{startSceneGeneration();}"); await pg.wait_for_timeout(500)
             await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(600); await J(pg,"()=>confirmScene()"); await pg.wait_for_timeout(300)
             before=await J(pg,"()=>({n:sceneData.length,cur:currentScene,r:sceneData[0].resultURL,sel:selId})")
-            await J(pg,"()=>saveWorkflowState()"); await pg.reload(); await pg.wait_for_timeout(500)
+            pg=await persist_reload(pg,errs)
             check('reload: banner', await J(pg,"()=>document.getElementById('resume-banner').style.display!=='none'"), (before, SC))
             await J(pg,"()=>resumeSavedSession()"); await pg.wait_for_timeout(500)
             after=await J(pg,"()=>({n:sceneData.length,cur:currentScene,r:sceneData[0].resultURL,sel:selId})")
@@ -434,7 +451,7 @@ async def main():
             check('timing: Veo picks 8s', await J(pg,'()=>sceneDuration')==8)
             await J(pg,"()=>setDuration(4)"); await J(pg,"()=>jumpToScene(0)"); await J(pg,"()=>jumpToScene(1)")
             check('timing: manual pick sticks per scene', await J(pg,'()=>sceneDuration')==4 and 'you picked 4s' in await J(pg,"()=>document.getElementById('dur-hint').textContent"))
-            await pg.reload(); await pg.wait_for_timeout(400); await J(pg,"()=>resumeSavedSession()"); await pg.wait_for_timeout(400)
+            pg=await persist_reload(pg,errs); await J(pg,"()=>resumeSavedSession()"); await pg.wait_for_function("()=>sceneData.length>1",timeout=8000)
             check('timing: survives reload', await J(pg,"()=>voWords.length>5 && sceneData[1].videoDur===4 && sceneData[0].tEnd>0"), await J(pg,"()=>({w:voWords.length,d:sceneData[1]&&sceneData[1].videoDur,t:sceneData[0]&&sceneData[0].tEnd})"))
             check('timing: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
@@ -915,7 +932,7 @@ async def main():
         if want('feedback'):
             import subprocess, tempfile
             fbd=tempfile.mkdtemp(prefix='cfa-fb-'); tok=os.path.join(fbd,'tok'); open(tok,'w').write('fbtest'); os.chmod(tok,0o600)
-            env=dict(os.environ, CFA_RENDER_DATA=os.path.join(fbd,'data'), CFA_RENDER_TOKEN_FILE=tok, CFA_RENDER_PORT='8798', CFA_ALLOWED_ORIGINS='null')
+            env=dict(os.environ, CFA_RENDER_DATA=os.path.join(fbd,'data'), CFA_RENDER_TOKEN_FILE=tok, CFA_RENDER_PORT='8798', CFA_ALLOWED_ORIGINS=_ORIGIN.rstrip('/'))
             svc=subprocess.Popen(['python3',os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','tools','render','service.py')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             await asyncio.sleep(1.2)
             try:
@@ -969,6 +986,63 @@ async def main():
                 await ctx.close()
             finally:
                 svc.terminate()
+        if want('stress'):
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
+            ctx,pg,errs=await newpage(b,pre="localStorage.setItem('cfa_format','dialogue');")
+            def mk(n_words, speakers=('JORDAN','MARCUS'), per=10):
+                lines=['MARCUS: Sent is not the same as arrived.']; left=n_words-7; i=0
+                while left>0:
+                    k=min(per,left); lines.append(speakers[i%len(speakers)]+': '+' '.join(['word']*k)); left-=k; i+=1
+                return '\n'.join(lines)
+            for n,ok in ((650,True),(900,True),(649,False),(901,False)):
+                li=await J(pg,"(t)=>dialogueLint(t)",mk(n))
+                check(f'stress: {n}-word script {"passes" if ok else "flagged"} length lint', (not [x for x in li if 'Spoken length' in x])==ok, li)
+            six=mk(700,('JORDAN','MARCUS','DEE','PRIYA','MR. OKAFOR','NARRATOR'))
+            li=await J(pg,"(t)=>dialogueLint(t)",six)
+            check('stress: 6-speaker script lints clean', li==[], li)
+            v=await J(pg,"(t)=>parseDialogue(t).map(x=>lockedVoice(x.speaker).voiceId)",six)
+            check('stress: all 6 speakers resolve to locked voices', len(set(v))==6, sorted(set(v)))
+            mono="NARRATOR: The wallet opened.\nMARCUS: "+"This is how a ledger keeps every record honest and visible. "*8
+            li=' | '.join(await J(pg,"(t)=>dialogueLint(t)",mono))
+            check('stress: monologue flagged (one speaker, over-long line)', 'at least two speaking characters' in li and 'monologue' in li, li)
+            sl=(await J(pg,"(t)=>dialogueSegments(t)",mono)).split('\n')
+            check('stress: monologue line split into beats of <=35 words', len(sl)>=3 and all(len(l.split(': ',1)[1].split())<=35 for l in sl), [len(l.split()) for l in sl])
+            rapid='\n'.join(['MARCUS: Wait.']+[('JORDAN: ' if i%2 else 'MARCUS: ')+['Sent?','Not yet.','Now?','Check it.','Twelve.','There.'][i%6] for i in range(40)])
+            SC['elCalls']=[]; SC['elReal']=True; SC['elFailN']=2; SC['elFails']=0
+            await J(pg,"(t)=>{finalScript=t;segScript=dialogueSegments(t);goVO();}",rapid)
+            await J(pg,"()=>generateVO()")
+            await pg.wait_for_function("()=>document.getElementById('s5-result').style.display!=='none'||document.getElementById('e5').textContent",timeout=60000)
+            vo=await J(pg,"()=>({n:voLines.length,err:document.getElementById('e5').textContent,mono:voWords.every((w,i)=>!i||w[1]>=voWords[i-1][1])})")
+            check('stress: rapid exchange (41 short lines) voiced line-by-line, timings monotonic', vo['n']==41 and not vo['err'] and vo['mono'], vo)
+            check('stress: ElevenLabs 503s retried then succeed', SC['elFails']==2 and len(SC['elCalls'])==41, (SC['elFails'],len(SC['elCalls'])))
+            # Whisper re-voice: only the flagged line is re-generated, everything else reused
+            SC['elFailN']=0; SC['elCalls']=[]
+            r=await J(pg,"""()=>{const keep=sceneData; const t=dlgLast.lines[2].text;
+              sceneData=[{line:'1. '+dlgLast.lines[0].speaker+': '+dlgLast.lines[0].text},{line:'2. x'},{line:'3. '+dlgLast.lines[2].speaker+': '+t}];
+              const rep={whisper:{final_pass:{lines:[{index:3,speaker:dlgLast.lines[2].speaker,matched:0.4,flag:true,missing:['x']},{index:1,matched:1}]}}};
+              showWhisperFlags(rep); const idx=JSON.parse(document.getElementById('rs-whisper').dataset.idx||'[]');
+              const btn=!!document.getElementById('btn-revoice'); sceneData=keep; return {idx,btn,n:whisperFlagged(rep).length}}""")
+            check('stress: Whisper flags map to the right voiceover line + re-voice button', r['idx']==[2] and r['btn'] and r['n']==1, r)
+            n=await J(pg,"()=>revoiceFlagged([2])")
+            check('stress: re-voice calls ElevenLabs for the flagged line only (1 call, not 41)', n==1 and len(SC['elCalls'])==1, (n,len(SC['elCalls'])))
+            SC['elFailN']=10; SC['elCalls']=[]
+            await J(pg,"()=>{regenerateVO();generateVO();}")
+            await pg.wait_for_function("()=>document.getElementById('e5').textContent",timeout=60000)
+            e=await J(pg,"()=>document.getElementById('e5').textContent")
+            check('stress: persistent API failure -> clear error after 3 tries, no half voiceover', 'after 3 tries' in e and await J(pg,"()=>document.getElementById('s5-result').style.display")=='none', e)
+            SC['elFailN']=0; SC['el']='401'
+            await J(pg,"()=>{regenerateVO();generateVO();}")
+            await pg.wait_for_function("()=>document.getElementById('e5').textContent",timeout=20000)
+            check('stress: bad ElevenLabs key -> no retry storm, key message', 'Invalid API key' in await J(pg,"()=>document.getElementById('e5').textContent"))
+            SC['el']='ok'; SC['elReal']=False
+            # render service down
+            await J(pg,"()=>{sessionStorage.setItem('cfa_render_url','http://127.0.0.1:9');sessionStorage.setItem('cfa_render_token','t');}")
+            await J(pg,"()=>fbPoll()")
+            check('stress: render service down -> feedback sync shows failure, no crash', 'sync failed' in await J(pg,"()=>document.getElementById('fb-sync')?document.getElementById('fb-sync').textContent:'sync failed'"))
+            await J(pg,"()=>{fbOpen();document.getElementById('fb-comment').value='x';return fbSubmit()}")
+            check('stress: render service down -> feedback submit shows an error, nothing saved', 'Could not send' in await J(pg,"()=>document.getElementById('fb-err').textContent") and await J(pg,"()=>fbItems().length")==0)
+            check('stress: no page errors', not [x for x in errs if 'pageerror' in x], errs[:5])
+            await ctx.close()
         if want('export'):
             ctx,pg,errs=await newpage(b)
             await J(pg,"""()=>{selId='v07';finalScript='Jordan waits. Marcus says crypto is a ledger.';
