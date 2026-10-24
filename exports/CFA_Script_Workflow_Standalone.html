@@ -6197,6 +6197,15 @@ function clipScriptWords(s){
   const near=(x,y)=>{ if(Math.abs(x.length-y.length)>2) return false; const d=[...Array(y.length+1).keys()]; for(let i=1;i<=x.length;i++){ let p=d[0]; d[0]=i; for(let j=1;j<=y.length;j++){ const t=d[j]; d[j]=Math.min(d[j]+1,d[j-1]+1,p+(x[i-1]===y[j-1]?0:1)); p=t; } } return d[y.length]<=(y.length>5?2:1); };
   return t=>{ const w=String(t).toLowerCase().match(/[a-z0-9']+/g)||[]; return w.length>0 && w.every(x=>lw.some(y=>x===y||near(x,y))); };
 }
+// fal video endpoints reject prompts over 2500 chars. Keep the scene (start) and the identity guard / redo notes (end);
+// trim the middle (style and setting boilerplate) rather than failing the clip.
+const CLIP_PROMPT_MAX=2450;
+function fitClipPrompt(p){
+  p=String(p||''); if(p.length<=CLIP_PROMPT_MAX) return p;
+  const tailStart=Math.min(...[p.indexOf(' IDENTITY LOCK:'),p.indexOf(' STRICT, previous clip failed')].filter(i=>i>0).concat([p.length]));
+  let tail=p.slice(tailStart); if(tail.length>1100) tail=tail.slice(tail.length-1100);
+  return p.slice(0, CLIP_PROMPT_MAX-tail.length-3).replace(/\s+\S*$/,'')+' … '+tail.trim();
+}
 const clipRank=q=>!q?-1:(q.logicOk!==false?3:0)+(q.match?4:0)+(q.identityMatch!==false?4:0)+(q.strayText?0:1)+(Number(q.score)||0)/10+(q.identityScore==null?1:q.identityScore/10);
 function clipFixNote(q){ const n=[];
   if(!q.match) n.push('the art style drifted away from the flat 2D cartoon start frame');
@@ -6298,6 +6307,7 @@ async function generateScene(){
 
       const vp0=finalPrompt+(s.characters!=='NONE'?CLIP_IDENTITY_GUARD:'');
       const callVideo=async(vp)=>{
+      vp=fitClipPrompt(vp);
       let resultURL='', modelLabel='';
       if(selectedVideoModel==='kling-o1v' && startFrameURL){
         // ── Kling O1 image-to-video: start AND end pinned to the on-model still (keeps faces/outfits) ──
