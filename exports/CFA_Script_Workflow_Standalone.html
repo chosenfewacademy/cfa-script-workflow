@@ -2107,6 +2107,21 @@ select option{background:var(--surface2)}
         <div class="settings-ok" id="sm-render-ok">&#x2713; Render service saved for this session</div>
       </div>
 
+      <div class="settings-section" id="sm-format-panel">
+        <div class="settings-section-label">&#x1F3AD; Episode format, music &amp; locked character voices</div>
+        <div class="settings-section-desc"><b>Dialogue</b> (default): characters speak on screen with lip-synced talking shots; light narration. <b>Narrated</b>: one narrator over images and clips.</div>
+        <div class="settings-row" style="gap:8px;flex-wrap:wrap">
+          <label style="font-size:11px">Format <select class="inp" id="sm-format" onchange="smSaveFormat()" aria-label="Episode format"><option value="dialogue">Dialogue (live action)</option><option value="narration">Narrated</option></select></label>
+          <label style="font-size:11px">Talking shots <select class="inp" id="sm-talk" onchange="smSaveFormat()" aria-label="Talking shots"><option value="all">Lip-sync every character line</option><option value="off">Off (stills only)</option></select></label>
+          <label style="font-size:11px">Music <select class="inp" id="sm-music" onchange="smSaveFormat()" aria-label="Music style"><option value="cinematic">Cinematic (piano + strings)</option><option value="lofi">Lo-fi</option><option value="orchestral">Orchestral</option><option value="acoustic">Acoustic</option><option value="electronic">Soft electronic</option><option value="none">No music</option></select></label>
+        </div>
+        <div style="font-size:10.5px;color:var(--muted);margin:6px 0 2px">Character voices are <b>locked</b> (ElevenLabs eleven_v4). Every line is voiced with its speaker&rsquo;s locked voice.</div>
+        <div id="sm-voice-lock" style="font-size:11px"></div>
+        <label style="font-size:11px;display:block;margin-top:4px"><input type="checkbox" id="sm-voice-unlock" onchange="renderVoiceLockUI()"/> Unlock to change a voice (deliberate change)</label>
+        <div class="settings-row" id="sm-voice-btns" style="display:none"><button class="settings-save" onclick="smSaveVoiceLock()">Save voices</button><button class="settings-save" onclick="smResetVoiceLock()">Reset to series voices</button></div>
+        <div class="settings-ok" id="sm-format-ok">&#x2713; Saved</div>
+      </div>
+
       <!-- API budget trackers -->
       <div class="settings-section" id="budget-panel" style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px">
         <div class="settings-section-label">&#x1F4CA; API budgets — when to reload</div>
@@ -2426,6 +2441,7 @@ async function llmComplete({role, system, user, maxTokens, onDelta, signal, effo
 
 // ═══ SETTINGS MODAL ═══
 function openSettings(){
+  try{ loadFormatUI(); }catch(e){}
   try{ renderBudgetUI(); refreshLiveBalances(); }catch(e){}
   document.getElementById('settings-modal').classList.add('open');
   document.body.style.overflow='hidden';
@@ -2864,7 +2880,7 @@ function parseReadAloud(t){
 }
 const READALOUD_MIN=8, READALOUD_ROUNDS=1;
 const HOOK_MAX_WORDS=12;
-function firstSentence(t){ const m=String(t||'').trim().match(/^[\s\S]*?[.!?](["”’]?)(?=\s|$)/); return m?m[0]:String(t||'').trim().split('\n')[0]; }
+function firstSentence(t){ t=String(t||'').trim().replace(SPK_TAG_RE,''); const m=String(t||'').trim().match(/^[\s\S]*?[.!?](["”’]?)(?=\s|$)/); return m?m[0]:String(t||'').trim().split('\n')[0]; }
 function hookNeedsWork(t){ return wordCount(firstSentence(t))>HOOK_MAX_WORDS; }
 const SYS_HOOK=`You sharpen the opening of a narrated story script for Chosen Few Academy (calm beginner series about digital assets). You receive the FIRST PARAGRAPH only. Rewrite it so: sentence one is at most 12 words and drops us into a person hitting an everyday-money problem right now (a moment, a spoken line in quotes, or a question); sentence two makes the stakes and the clock clear. Keep every fact, name, place and the callback that the paragraph already contains, just reordered and tightened; keep about the same length. Never use the word "crypto". Output ONLY the rewritten paragraph.`;
 
@@ -2900,13 +2916,13 @@ function forbiddenTerms(text){
   for(const x of String(text||'').matchAll(FORBIDDEN_TERM_RE)){ const k=x[1].toLowerCase(); m[k]=(m[k]||0)+1; }
   return Object.entries(m).map(([term,count])=>({term,count}));
 }
-const wordCount=t=>(t||'').trim().split(/\s+/).filter(Boolean).length;
+const wordCount=t=>stripTags(t||'').trim().split(/\s+/).filter(Boolean).length;
 
 // Banned-phrase scan, used to hand the reviser concrete fixes and in tests
 const BANNED_PHRASES=["here's the thing","here's the kicker","here's the catch","but here's what","let's dive in","dive into","delve","in a world where","picture this","imagine this","fast forward","little did he know","the truth is","the reality is","turns out","spoiler","game-changer","game changer","journey","navigate","landscape","realm","tapestry","unlock","empower","seamless","crucial","pivotal","ever-evolving","in today's digital age","it's worth noting","at the end of the day","the bottom line","that's the point","that's the difference","that changes everything","a testament to","the power of","peace of mind","knowledge is power","next time","stay tuned","coming up"];
 function scriptLint(text){
   const t=(text||'').toLowerCase().replace(/[’]/g,"'");
-  const issues=[];
+  const issues=dialogueOn()?dialogueLint(text||''):[];
   const found=BANNED_PHRASES.filter(p=>t.includes(p));
   if(found.length) issues.push('Banned phrases present: '+found.map(p=>'"'+p+'"').join(', '));
   const notX=(text.match(/\b(it'?s|this is|that'?s)\s+not\s+(about\s+)?[^.?!]{1,40}[.,;—–-]\s*(it'?s|this is|that'?s)\b/gi)||[]);
@@ -3078,13 +3094,13 @@ async function startGen(){
       genResearch=rb.text||'';
       if(genResearch) brief+='\n\nRESEARCH BRIEF (verified facts; use only these for real-world anchors):\n'+genResearch;
       document.getElementById('s2-stat').textContent='Planning the story arc…';
-      const p=await llmComplete({role:'fast', system:SYS_PLAN, user:brief, maxTokens:5000, effort:'low', signal:ctrl.signal});
+      const p=await llmComplete({role:'fast', system:fmtSys(SYS_PLAN), user:brief, maxTokens:5000, effort:'low', signal:ctrl.signal});
       if(genAbort!==ctrl)return;
       plan=(p.text||'').trim();
     }
     setGStage(1);
     const draftRes=await llmComplete({
-      role:'writer', system:SYS_GEN,
+      role:'writer', system:fmtSys(SYS_GEN),
       user: plan ? brief+'\n\nPRIVATE STORY PLAN (follow its scene chain and throughline; never mention, label or output it):\n'+plan : brief,
       maxTokens:8000, signal: ctrl.signal,
       onDelta: t=>{ showStream(t,'Drafting…'); if(stage<2&&t.length>300){stage=2;setGStage(2);} }
@@ -3096,7 +3112,7 @@ async function startGen(){
       const lint=scriptLint(text);
       const req=brief+'\n\nDRAFT LENGTH: '+lint.words+' words (target '+SCRIPT_WORDS.min+'–'+SCRIPT_WORDS.max+').\n\n'+(lint.issues.length?'SPECIFIC ISSUES FOUND BY THE LINTER:\n- '+lint.issues.join('\n- ')+'\n\n':'')+'DRAFT SCRIPT:\n'+text.trim();
       try{
-        const rev=await llmComplete({role:'writer', system:SYS_REVISE, user:req, maxTokens:8000, effort:'medium', signal:ctrl.signal,
+        const rev=await llmComplete({role:'writer', system:fmtSys(SYS_REVISE), user:req, maxTokens:8000, effort:'medium', signal:ctrl.signal,
           onDelta: t=>showStream(t,'Polishing (critique + revise)…')});
         if(genAbort!==ctrl)return;
         // Keep the draft if the revision came back empty, cut off, or suspiciously short
@@ -3107,7 +3123,7 @@ async function startGen(){
       if(wc<SCRIPT_WORDS.min||wc>SCRIPT_WORDS.max){
         document.getElementById('s2-stat').textContent='Fitting to '+SCRIPT_WORDS.min+'–'+SCRIPT_WORDS.max+' words…';
         try{
-          const fit=await llmComplete({role:'writer', system:SYS_REVISE, effort:'low', maxTokens:8000, signal:ctrl.signal,
+          const fit=await llmComplete({role:'writer', system:fmtSys(SYS_REVISE), effort:'low', maxTokens:8000, signal:ctrl.signal,
             user:'ONLY TASK: this script is '+wc+' words. Rewrite it to '+(wc>SCRIPT_WORDS.max?'about 850':'about 750')+' words (must be within '+SCRIPT_WORDS.min+'–'+SCRIPT_WORDS.max+'). '+(wc>SCRIPT_WORDS.max?'Cut repetition and scene padding; keep every accurate explanation point.':'Deepen the explanation of how it works; do not add melodrama.')+' Keep everything else.\n\nSCRIPT:\n'+text.trim(),
             onDelta: t=>showStream(t,'Fitting to '+SCRIPT_WORDS.min+'–'+SCRIPT_WORDS.max+' words…')});
           if(genAbort!==ctrl)return;
@@ -3123,7 +3139,7 @@ async function startGen(){
         document.getElementById('s2-stat').textContent='Reading aloud: flow, logic & naturalness check'+(round?' (round 2)':'')+'…';
         let ra=null;
         try{
-          const r=await llmComplete({role:'fast', system:SYS_READALOUD, maxTokens:9000, effort:'medium', signal:ctrl.signal,
+          const r=await llmComplete({role:'fast', system:fmtSys(SYS_READALOUD), maxTokens:9000, effort:'medium', signal:ctrl.signal,
             user:(genResearch?'RESEARCH BRIEF (facts):\n'+genResearch+'\n\n':'')+'NEXT VIDEO / CONTINUITY CONTEXT:\n'+brief.slice(0,1500)+'\n\nSCRIPT:\n'+text.trim()});
           if(!r.truncated) ra=parseReadAloud(r.text);
         }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Read-aloud pass failed:',e.message); }
@@ -3144,7 +3160,7 @@ async function startGen(){
       document.getElementById('s2-stat').textContent='Fitting to '+SCRIPT_WORDS.min+'–'+SCRIPT_WORDS.max+' words…';
       try{
         const target=wc2>SCRIPT_WORDS.max?800:760;
-        const fit=await llmComplete({role:'fast', system:SYS_REVISE, effort:'low', maxTokens:8000, signal:ctrl.signal,
+        const fit=await llmComplete({role:'fast', system:fmtSys(SYS_REVISE), effort:'low', maxTokens:8000, signal:ctrl.signal,
           user:'ONLY TASK: this script is '+wc2+' words; it MUST be between '+SCRIPT_WORDS.min+' and '+SCRIPT_WORDS.max+'. Rewrite it to about '+target+' words. '+(wc2>SCRIPT_WORDS.max?'Cut '+(wc2-target)+' words: remove whole redundant sentences and scene padding; keep every accurate explanation, the hook, the reveal and the ending.':'Add about '+(target-wc2)+' words by deepening the explanation inside the scene.')+' Keep the voice, quotes and story. Output only the script.\n\nSCRIPT:\n'+text.trim()});
         if(genAbort!==ctrl)return;
         const fw=wordCount(fit.text);
@@ -3154,11 +3170,12 @@ async function startGen(){
     // Hook guard: the opening sentence must be a short, problem-first hook
     if(fullPasses && text.trim() && hookNeedsWork(text)){
       try{
-        const paras=text.trim().split(/\n\s*\n/);
-        const h=await llmComplete({role:'fast', system:SYS_HOOK, effort:'low', maxTokens:1500, signal:ctrl.signal, user:paras[0]});
+        const sep=dialogueOn()?'\n':'\n\n';
+        const paras=dialogueOn()?text.trim().split(/\n/):text.trim().split(/\n\s*\n/);
+        const h=await llmComplete({role:'fast', system:fmtSys(SYS_HOOK), effort:'low', maxTokens:1500, signal:ctrl.signal, user:paras[0]});
         if(genAbort!==ctrl)return;
         const np=String(h.text||'').trim();
-        if(np && !h.truncated && !forbiddenTerms(np).length && !hookNeedsWork(np) && Math.abs(wordCount(np)-wordCount(paras[0]))<=25){ paras[0]=np; text=paras.join('\n\n'); }
+        if(np && !h.truncated && !forbiddenTerms(np).length && !hookNeedsWork(np) && Math.abs(wordCount(np)-wordCount(paras[0]))<=25 && (!dialogueOn() || splitTag(np).speaker)){ paras[0]=np; text=paras.join(sep); }
       }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Hook guard failed:',e.message); }
     }
     if(genAbort!==ctrl)return; // cancelled or superseded
@@ -3308,7 +3325,7 @@ async function startSeg(){
   segAbort=ctrl;
 
   try{
-    const {text, truncated}=await llmComplete({
+    const {text, truncated}=dialogueOn()?{text:dialogueSegments(finalScript),truncated:false}:await llmComplete({
       role:'fast', system:SYS_SEG, user:'BEGIN SCRIPT\n'+finalScript+'\nEND SCRIPT',
       maxTokens:4000, signal:ctrl.signal,
       onDelta: accumulated=>{
@@ -3358,6 +3375,274 @@ function goVO(){
   goTo(5);
 }
 
+// ═══ DIALOGUE FORMAT ("live action") ═════════════════════════════════════════
+// Speaker-tagged scripts, LOCKED character voices, per-line TTS stitched with natural gaps,
+// lip-synced talking shots (Kling AI Avatar v2) for character lines; narration keeps stills/clips.
+const CHARACTER_REGISTRY=(()=>{ const r={version:1, model:'eleven_v4', speakers:{
+  NARRATOR:{name:'Narrator',  voice:'Bill',   voiceId:'pqHfZKP75CvOlQylNhV4', cast:'NONE'},
+  JORDAN:  {name:'Jordan',    voice:'Will',   voiceId:'bIHbv24MWmeRgasZH58o', cast:'JORDAN'},
+  MARCUS:  {name:'Marcus',    voice:'Brian',  voiceId:'nPczCjzI2devNBz1zQrb', cast:'MARCUS'},
+  DEE:     {name:'Dee',       voice:'Sarah',  voiceId:'EXAVITQu4vr4xnSDxMaL', cast:'NONE'},
+  PRIYA:   {name:'Priya',     voice:'Matilda',voiceId:'XrExE9yKIg1WjnnlVkGX', cast:'NONE'},
+  OKAFOR:  {name:'Mr. Okafor',voice:'George', voiceId:'JBFqnCBsd6RMkjVDRZzb', cast:'NONE'}}};
+  Object.values(r.speakers).forEach(Object.freeze); Object.freeze(r.speakers); return Object.freeze(r); })();
+const VOICE_LOCK_KEY='cfa_voice_lock_v1';
+const VOICE_ID_RE=/^[A-Za-z0-9]{16,32}$/;
+// The lock: registry ids, unless the user deliberately saved an override in Settings (unlock box + Save).
+function voiceLock(){
+  const out={}; for(const [k,v] of Object.entries(CHARACTER_REGISTRY.speakers)) out[k]={name:v.name,voice:v.voice,voiceId:v.voiceId,locked:true};
+  try{ const o=JSON.parse(safeGetItem(VOICE_LOCK_KEY)||'null');
+    if(o && o.deliberate===true && o.voices && typeof o.voices==='object')
+      for(const [k,id] of Object.entries(o.voices)) if(out[k] && VOICE_ID_RE.test(String(id)) && id!==out[k].voiceId) out[k]={name:out[k].name,voice:'custom',voiceId:String(id),locked:true,custom:true};
+  }catch(e){}
+  return out;
+}
+function normSpeaker(x){ const k=String(x||'').toUpperCase().replace(/[^A-Z]/g,''); return k==='MROKAFOR'?'OKAFOR':k; }
+function lockedVoice(spk){ const v=voiceLock()[normSpeaker(spk)]; if(!v) throw new Error('No locked voice for speaker "'+spk+'"'); return v; }
+const SPK_TAG_RE=/^\s*(?:\d+\.\s*)?(NARRATOR|JORDAN|MARCUS|DEE|PRIYA|MR\.?\s*OKAFOR|OKAFOR)\s*:\s*/i;
+const ANY_TAG_RE=/^\s*(?:\d+\.\s*)?([A-Z][A-Z .']{1,24}):\s*/;
+function splitTag(line){
+  const raw=String(line||'').replace(/^\s*\d+\.\s*/,'');
+  const m=raw.match(SPK_TAG_RE);
+  return m?{speaker:normSpeaker(m[1]),text:raw.replace(SPK_TAG_RE,'').trim()}:{speaker:null,text:raw.trim()};
+}
+function stripTags(t){ return String(t||'').split('\n').map(l=>l.replace(SPK_TAG_RE,'')).join('\n'); }
+function scriptFormat(){ return safeGetItem('cfa_format')==='narration'?'narration':'dialogue'; }
+function dialogueOn(){ return scriptFormat()==='dialogue'; }
+function talkMode(){ return safeGetItem('cfa_talk_mode')==='off'?'off':'all'; }
+const MUSIC_STYLES=['cinematic','lofi','orchestral','acoustic','electronic','none'];
+function musicStyle(){ const m=safeGetItem('cfa_music_style'); return MUSIC_STYLES.includes(m)?m:'cinematic'; }
+const DIALOGUE_RULES=`DIALOGUE FORMAT ("live action"; this OVERRIDES any narration-only instruction above):
+- Write the episode as a spoken screenplay. EVERY line starts with exactly one speaker tag in capitals and a colon: NARRATOR:, JORDAN:, MARCUS:, DEE:, PRIYA: or MR. OKAFOR:. One speaker per line, each line its own paragraph. No stage directions, no parentheticals, no scene headings, no quotation marks around dialogue, no asides like (laughs).
+- Mostly dialogue: at least 65% of the spoken words are character lines. NARRATOR is light: a short time/place line, a bridge between scenes, at most one closing line. Never more than 2 NARRATOR lines in a row.
+- Cold open (Resilia style): the FIRST line drops us into a conflict already happening, at most 12 words. No greeting, no setup, no lesson.
+- Short punchy exchanges: most character lines are 4-20 words; no character line over 40 words; the same character never speaks more than 2 lines in a row. Quick reactions are welcome ("Wait. It's gone?").
+- The lesson arrives as the natural solution to the problem in the scene: Marcus explains in at most three short sentences at a time, Jordan reacts or asks between.
+- One clear turning-point line that flips the problem (the reveal). The final character line pays off the cold open by calling back to it.
+- Voices: Jordan curious, a little anxious; Marcus calm, warm, concrete; Dee quick and practical; Priya organised and direct; Mr. Okafor old-school and dry. Only these characters speak.
+- Length: 650-900 spoken words (speaker tags do not count). Keep every SPEAKER: tag exactly as written when revising.`;
+function fmtSys(sys){ return dialogueOn()? sys+'\n\n'+DIALOGUE_RULES : sys; }
+function parseDialogue(text){
+  return String(text||'').split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+    const t=splitTag(l); const any=l.match(ANY_TAG_RE);
+    return {raw:l, speaker:t.speaker, text:t.text, unknown:!t.speaker&&any?any[1].trim():null};
+  });
+}
+// Lint for speaker-tagged scripts (Resilia feel + locked voices)
+function dialogueLint(text){
+  const L=parseDialogue(text), issues=[];
+  if(!L.length) return ['Script is empty.'];
+  const words=x=>wordCount(x.text);
+  const total=L.reduce((a,x)=>a+words(x),0);
+  const untagged=L.filter(x=>!x.speaker&&!x.unknown), unknown=L.filter(x=>x.unknown);
+  if(untagged.length) issues.push(untagged.length+' line(s) without a speaker tag (e.g. "'+untagged[0].raw.slice(0,50)+'")');
+  if(unknown.length) issues.push('Unknown speaker(s): '+[...new Set(unknown.map(x=>x.unknown))].join(', ')+' — only NARRATOR, JORDAN, MARCUS, DEE, PRIYA, MR. OKAFOR have locked voices');
+  const narr=L.filter(x=>x.speaker==='NARRATOR').reduce((a,x)=>a+words(x),0);
+  if(total && narr/total>0.35) issues.push('Too much narration: '+Math.round(100*narr/total)+'% of words (keep it under 35%)');
+  if(new Set(L.filter(x=>x.speaker&&x.speaker!=='NARRATOR').map(x=>x.speaker)).size<2) issues.push('Needs at least two speaking characters');
+  const long=L.filter(x=>x.speaker&&x.speaker!=='NARRATOR'&&words(x)>40);
+  if(long.length) issues.push(long.length+' monologue line(s) over 40 words (split them into an exchange)');
+  if(L[0] && words(L[0])>12) issues.push('Cold open is '+words(L[0])+' words — the first line should be a conflict in 12 words or fewer');
+  for(let i=2;i<L.length;i++) if(L[i].speaker==='NARRATOR'&&L[i-1].speaker==='NARRATOR'&&L[i-2].speaker==='NARRATOR'){ issues.push('Three NARRATOR lines in a row near line '+(i+1)); break; }
+  for(let i=2;i<L.length;i++) if(L[i].speaker&&L[i].speaker!=='NARRATOR'&&L[i].speaker===L[i-1].speaker&&L[i].speaker===L[i-2].speaker){ issues.push(L[i].speaker+' speaks 3 lines in a row near line '+(i+1)); break; }
+  if(total<650||total>900) issues.push('Spoken length '+total+' words (target 650-900)');
+  return issues;
+}
+// Deterministic segmentation: one beat per tagged line; a long line splits at sentence ends (same speaker).
+function dialogueSegments(text){
+  const out=[];
+  for(const x of parseDialogue(text)){
+    const spk=x.speaker||'NARRATOR', tag=spk==='OKAFOR'?'MR. OKAFOR':spk;
+    if(wordCount(x.text)<=35){ out.push(tag+': '+x.text); continue; }
+    const sents=x.text.match(/[^.!?…]+[.!?…]+["”’']?\s*|[^.!?…]+$/g)||[x.text];
+    let cur='';
+    for(const z of sents){ if(cur && wordCount(cur+z)>30){ out.push(tag+': '+cur.trim()); cur=''; } cur+=z; }
+    if(cur.trim()) out.push(tag+': '+cur.trim());
+  }
+  return out.map((l,i)=>(i+1)+'. '+l).join('\n');
+}
+const DLG_GAP_SAME=0.6, DLG_GAP_CHANGE=0.7;   // natural pauses between lines (s); >= renderer beat pause
+const TALK_MODEL='fal-ai/kling-video/ai-avatar/v2/standard', TALK_COST_PER_S=0.0562;
+const TALK_PROMPT='Natural conversational talking, subtle head movement and blinking, keeps the exact same character look and art style, no text.';
+let voLines=[]; // [{speaker, voiceId, text, start (line audio start), end (last word), dur, blob}]
+async function ttsLine(elKey, spk, text, settings){
+  const v=lockedVoice(spk);
+  let last='';
+  for(let a=0;a<3;a++){
+    let resp;
+    try{
+      resp=await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+v.voiceId+'/with-timestamps',{method:'POST',
+        headers:{'xi-api-key':elKey,'Content-Type':'application/json'},
+        body:JSON.stringify({text, model_id:CHARACTER_REGISTRY.model, voice_settings:settings})});
+    }catch(e){ last=friendlyNetError(e); await sleep(800*(a+1)); continue; }
+    if(resp.status===429||resp.status>=500){ last='HTTP '+resp.status; await sleep(1200*(a+1)); continue; }
+    if(!resp.ok){ let m='HTTP '+resp.status; try{const j=await resp.json(); m=j?.detail?.message||j?.detail||m;}catch(e){}
+      if(resp.status===401) m='Invalid API key — check your ElevenLabs key in ⚙ Settings.'; throw new Error(m); }
+    const j=await resp.json();
+    const bin=atob(j?.audio_base64||''); const bytes=new Uint8Array(bin.length); for(let k=0;k<bin.length;k++) bytes[k]=bin.charCodeAt(k);
+    if(!bytes.length){ last='empty audio'; continue; }
+    const words=alignmentToWords(j.alignment||j.normalized_alignment);
+    return {blob:new Blob([bytes],{type:'audio/mpeg'}), words, voiceId:v.voiceId, dur:(words.length?words[words.length-1][2]:0)+0.12};
+  }
+  throw new Error('Voice line failed after 3 tries ('+last+'): "'+text.slice(0,40)+'"');
+}
+function encodeWav(f32, sr){
+  const n=f32.length, buf=new ArrayBuffer(44+n*2), d=new DataView(buf);
+  const w=(o,str)=>{ for(let i=0;i<str.length;i++) d.setUint8(o+i,str.charCodeAt(i)); };
+  w(0,'RIFF'); d.setUint32(4,36+n*2,true); w(8,'WAVE'); w(12,'fmt '); d.setUint32(16,16,true); d.setUint16(20,1,true); d.setUint16(22,1,true);
+  d.setUint32(24,sr,true); d.setUint32(28,sr*2,true); d.setUint16(32,2,true); d.setUint16(34,16,true); w(36,'data'); d.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++){ const x=Math.max(-1,Math.min(1,f32[i])); d.setInt16(44+i*2,x<0?x*0x8000:x*0x7FFF,true); }
+  return new Blob([buf],{type:'audio/wav'});
+}
+// Stitch per-line audio in order with natural gaps; offsets every word. Web Audio → WAV;
+// if the browser cannot decode, falls back to back-to-back MP3 (no gaps) with matching timings.
+async function stitchLines(res, lines){
+  const SR=24000; let dec=null;
+  try{
+    const C=window.OfflineAudioContext||window.webkitOfflineAudioContext; const ctx=new C(1,SR,SR); dec=[];
+    for(const r of res) dec.push(await ctx.decodeAudioData(await r.blob.arrayBuffer()));
+  }catch(e){ dec=null; }
+  let t=0; const words=[], meta=[];
+  lines.forEach((l,i)=>{
+    if(i && dec) t+=lines[i-1].speaker===l.speaker?DLG_GAP_SAME:DLG_GAP_CHANGE;
+    const d=dec?dec[i].duration:res[i].dur;
+    const ws=res[i].words.map(w=>[w[0],Math.round((w[1]+t)*1000)/1000,Math.round((w[2]+t)*1000)/1000]);
+    words.push(...ws);
+    meta.push({speaker:l.speaker, voiceId:res[i].voiceId, text:l.text, start:Math.round(t*1000)/1000,
+      end:ws.length?ws[ws.length-1][2]:Math.round((t+d)*1000)/1000, dur:Math.round(d*1000)/1000, blob:res[i].blob});
+    t+=d;
+  });
+  let blob;
+  if(dec){
+    const out=new Float32Array(Math.ceil(t*SR)+SR/10);
+    meta.forEach((m,i)=>{ const b=dec[i], o=Math.round(m.start*SR); const ch=b.numberOfChannels;
+      for(let c=0;c<ch;c++){ const x=b.getChannelData(c); for(let k=0;k<x.length&&o+k<out.length;k++) out[o+k]+=x[k]/ch; } });
+    blob=encodeWav(out,SR);
+  } else blob=new Blob(res.map(r=>r.blob),{type:'audio/mpeg'});
+  return {blob, words, lines:meta, gaps:!!dec};
+}
+function dialogueVOLines(){
+  const src=(segScript||'').split('\n').map(l=>l.trim()).filter(l=>/^\d+\./.test(l));
+  const L=src.length?src.map(l=>splitTag(l)):parseDialogue(finalScript).map(x=>({speaker:x.speaker,text:x.text}));
+  return L.filter(x=>x.text).map(x=>({speaker:x.speaker||'NARRATOR',text:x.text}));
+}
+async function generateDialogueVO(){
+  const elKey=sessionStorage.getItem('cfa_el_key');
+  const stability=parseFloat(document.getElementById('el-stability').value);
+  const similarity=parseFloat(document.getElementById('el-similarity').value);
+  const styleVal=parseFloat(document.getElementById('el-style').value);
+  const pace=VO_PACES[document.getElementById('el-pace')?.value]?document.getElementById('el-pace').value:'slow';
+  const lines=dialogueVOLines();
+  if(!lines.length){ showErr('e5','No speaker lines found in the script.'); return; }
+  const unknown=lines.filter(l=>!voiceLock()[normSpeaker(l.speaker)]);
+  if(unknown.length){ showErr('e5','No locked voice for: '+[...new Set(unknown.map(l=>l.speaker))].join(', ')); return; }
+  const chars=lines.reduce((a,l)=>a+l.text.length,0), m=EL_MODELS[CHARACTER_REGISTRY.model]||EL_MODELS.eleven_multilingual_v2;
+  if(!budgetPreflight('eleven',{usd:chars*m.perChar,chars},'this dialogue voiceover ('+lines.length+' lines, '+chars+' characters)')) return;
+  const settings={stability:Math.max(0.2,Math.min(1,stability+VO_PACES[pace].stabilityBoost)), similarity_boost:similarity,
+    style:Math.min(0.8,styleVal+(VO_PACES[pace].styleBoost||0)), speed:VO_PACES[pace].speed, use_speaker_boost:true};
+  document.getElementById('btn-vo').disabled=true;
+  document.getElementById('s5-generating').style.display='';
+  document.getElementById('s5-result').style.display='none';
+  document.getElementById('s5-btns').style.display='none';
+  collapseVS(); showErr('e5','');
+  try{
+    const res=new Array(lines.length); let next=0, done=0;
+    setVOProgress(5,'Voicing '+lines.length+' lines with the locked character voices…');
+    const worker=async()=>{ while(next<lines.length){ const i=next++; res[i]=await ttsLine(elKey, lines[i].speaker, lines[i].text, settings); done++;
+      setVOProgress(5+85*done/lines.length,'Voiced line '+done+' of '+lines.length+' ('+lockedVoice(lines[i].speaker).name+')…'); } };
+    await Promise.all([worker(),worker(),worker()]);
+    trackVoiceSpend(chars*m.perChar);
+    setVOProgress(93,'Stitching lines with natural pauses…');
+    const st=await stitchLines(res, lines);
+    voWords=st.words; voLines=st.lines; voPace=pace;
+    if(voAudioURL){ try{URL.revokeObjectURL(voAudioURL);}catch(e){} }
+    voAudioURL=URL.createObjectURL(st.blob);
+    setVOProgress(100,'Complete ✓'); await sleep(300);
+    const audio=document.getElementById('vo-audio'); audio.src=voAudioURL;
+    const dl=document.getElementById('vo-download'); dl.href=voAudioURL;
+    dl.download=(V[selId]?V[selId].title:'CFA_Script').replace(/[^a-z0-9]/gi,'_')+'_Dialogue.'+(st.gaps?'wav':'mp3');
+    document.getElementById('vo-model-chip').textContent='Dialogue · '+lines.length+' lines · locked voices';
+    refreshVOTimingUI();
+    if(sceneData.length){ assignBeatTimes(); saveWorkflowState(); }
+    document.getElementById('s5-generating').style.display='none';
+    document.getElementById('s5-result').style.display='';
+    expandVS();
+  }catch(err){
+    document.getElementById('s5-generating').style.display='none';
+    document.getElementById('s5-btns').style.display='';
+    document.getElementById('btn-vo').disabled=false;
+    expandVS(); showErr('e5',err.message||'Dialogue voiceover failed');
+  }
+}
+// Talking shot: the on-model still + this line's audio → lip-synced clip, then identity/consistency check.
+async function talkClip(idx, s, stillUrl, say){
+  const L=voLines[idx];
+  let audioUrl=s.lineAudioURL||'';
+  if(!audioUrl){
+    if(!L||!L.blob) throw new Error('This line\u2019s voice audio is not in memory — re-run the dialogue voiceover (Step 5), then generate this talking shot.');
+    if(L.voiceId!==lockedVoice(s.speaker||L.speaker).voiceId) throw new Error('Line '+(idx+1)+' was voiced with a different voice than '+(s.speaker||L.speaker)+'\u2019s locked voice — re-run the voiceover.');
+    say('Uploading this line\u2019s audio…');
+    audioUrl=await uploadToFal(new File([L.blob],'line_'+(idx+1)+'.mp3',{type:'audio/mpeg'}));
+    s.lineAudioURL=audioUrl;
+  }
+  const secs=Math.max(2,L?L.dur:beatLen(s)||3), est=Math.round(secs*TALK_COST_PER_S*1000)/1000;
+  let best=null;
+  for(let a=0;a<2;a++){
+    if(!budgetPreflight('fal',est,a?'a talking-shot redo':'this talking shot (~$'+est.toFixed(2)+')')) break;
+    say((a?'Identity drifted — redoing':'Lip-syncing')+' '+(lockedVoice(s.speaker||'NARRATOR').name)+' with Kling AI Avatar v2 (~1-3 min)…');
+    const data=await falPost(TALK_MODEL,{image_url:stillUrl,audio_url:audioUrl,prompt:TALK_PROMPT});
+    trackSpend(est);
+    const url=data.video?.url||data.url||'';
+    if(!url) throw new Error('Lip-sync returned no video — try again.');
+    say('Checking the talking clip (first / middle / last frame) against the character sheet…');
+    let qa=null; try{ qa=await visionClipCheck(url, sceneIdentityRefs(s), stillUrl, sceneLogicCtx(idx,'lip-synced talking shot of '+(s.speaker||''))); }catch(e){ qa=null; }
+    if(!best || clipRank(qa)>clipRank(best.qa)) best={url,qa,attempts:a+1};
+    if(!qa || (qa.identityMatch!==false && qa.match!==false)) break;
+  }
+  if(!best) throw new Error('Budget stop — talking shot not generated.');
+  s.clipQA=Object.assign({kind:'lipsync',attempts:best.attempts}, best.qa||{checkErr:'check off'});
+  return {url:best.url, label:'Kling Avatar v2 lip-sync'+(best.qa&&best.qa.identityScore!=null?' · id '+best.qa.identityScore+'/10':'')};
+}
+function talkCostEstimate(){
+  const n=sceneData.filter(x=>x.tag==='TALK');
+  const secs=n.reduce((a,x,i)=>a+(beatLen(x)||Math.max(2,wordCount(splitTag(x.line).text)/2.4)),0);
+  return {shots:n.length, secs:Math.round(secs), usd:Math.round(secs*TALK_COST_PER_S*100)/100};
+}
+function tagLabel(t){ return t==='TALK'?'🗣 TALK':t==='IMAGE'?'🖼 IMAGE':'🎬 VIDEO'; }
+function nextTag(x){ const sp=splitTag(x.line).speaker; const talk=sp&&sp!=='NARRATOR';
+  return x.tag==='IMAGE'?'VIDEO':(x.tag==='VIDEO'&&talk?'TALK':'IMAGE'); }
+function renderVoiceLockUI(){
+  const box=document.getElementById('sm-voice-lock'); if(!box) return;
+  const un=document.getElementById('sm-voice-unlock')?.checked, L=voiceLock();
+  box.innerHTML=Object.entries(L).map(([k,v])=>'<div style="display:flex;gap:6px;align-items:center;margin:2px 0"><span style="width:84px">'+escHtml(v.name)+'</span>'+
+    (un?'<input class="inp" data-spk="'+k+'" value="'+escHtml(v.voiceId)+'" style="max-width:230px;font-family:ui-monospace" aria-label="'+escHtml(v.name)+' voice id"/>'
+       :'<code>'+escHtml(v.voice)+' · '+escHtml(v.voiceId)+'</code> 🔒')+'</div>').join('');
+  const b=document.getElementById('sm-voice-btns'); if(b) b.style.display=un?'':'none';
+}
+function smSaveVoiceLock(){
+  if(!document.getElementById('sm-voice-unlock')?.checked) return;
+  const voices={}, bad=[];
+  document.querySelectorAll('#sm-voice-lock input[data-spk]').forEach(i=>{ const id=i.value.trim(); if(!VOICE_ID_RE.test(id)) bad.push(i.dataset.spk); else voices[i.dataset.spk]=id; });
+  if(bad.length){ alert('Not a valid ElevenLabs voice id: '+bad.join(', ')); return; }
+  if(!confirm('Change the locked character voices? Every future line will use the new voices.')) return;
+  safeSetItem(VOICE_LOCK_KEY, JSON.stringify({deliberate:true, savedAt:new Date().toISOString(), voices}));
+  document.getElementById('sm-voice-unlock').checked=false; renderVoiceLockUI(); flashOk('sm-format-ok');
+}
+function smResetVoiceLock(){ try{localStorage.removeItem(VOICE_LOCK_KEY);}catch(e){} document.getElementById('sm-voice-unlock').checked=false; renderVoiceLockUI(); flashOk('sm-format-ok'); }
+function smSaveFormat(){
+  safeSetItem('cfa_format', document.getElementById('sm-format').value);
+  safeSetItem('cfa_talk_mode', document.getElementById('sm-talk').value);
+  safeSetItem('cfa_music_style', document.getElementById('sm-music').value);
+  flashOk('sm-format-ok');
+}
+function loadFormatUI(){
+  const f=document.getElementById('sm-format'); if(f) f.value=scriptFormat();
+  const t=document.getElementById('sm-talk'); if(t) t.value=talkMode();
+  const m=document.getElementById('sm-music'); if(m) m.value=musicStyle();
+  renderVoiceLockUI();
+}
+function flashOk(id){ const e=document.getElementById(id); if(!e) return; e.style.display='block'; setTimeout(()=>{e.style.display='';},1600); }
+
 // ═══ SCREEN 5 — ELEVENLABS VOICEOVER ═══
 const EL_VOICES={bill:{id:'pqHfZKP75CvOlQylNhV4',name:'Bill'},jamal:{id:'6OzrBCQf8cjERkYgzSg8',name:'Young Jamal'}};
 const EL_DEFAULT_VOICE='bill';
@@ -3375,6 +3660,8 @@ async function generateVO(){
   const elKey=sessionStorage.getItem('cfa_el_key');
   if(!elKey){showErr('e5','No ElevenLabs API key — open ⚙ Settings and add your key.');return;}
   if(!finalScript){showErr('e5','No script found — go back and generate a script first.');return;}
+  if(dialogueOn()) return generateDialogueVO();
+  voLines=[];
 
   const model      = document.getElementById('el-model').value;
   const stability  = parseFloat(document.getElementById('el-stability').value);
@@ -3800,7 +4087,7 @@ function computeBeatTimes(lines, words){
   const W=(words||[]).map(w=>({n:normWord(w[0]),s:w[1],e:w[2]})).filter(w=>w.n);
   let cur=0;
   return lines.map(line=>{
-    const toks=String(line).replace(/^\s*\d+\.\s*/,'').split(/\s+/).map(normWord).filter(Boolean);
+    const toks=String(line).replace(/^\s*\d+\.\s*/,'').replace(SPK_TAG_RE,'').split(/\s+/).map(normWord).filter(Boolean);
     if(!toks.length || cur>=W.length) return null;
     let p=-1;
     for(let k=cur;k<Math.min(W.length,cur+40);k++){
@@ -3812,8 +4099,11 @@ function computeBeatTimes(lines, words){
     return {start:W[p].s,end:W[last].e};
   });
 }
+function lineTimes(){ return voLines.length&&voLines.length===sceneData.length&&voLines.every((v,i)=>normWord(v.text)===normWord(splitTag(sceneData[i].line).text))?voLines.map(v=>({start:v.start,end:v.end})):null; }
 function assignBeatTimes(){
   if(!voWords.length || !sceneData.length) return 0;
+  const lt=lineTimes();
+  if(lt){ sceneData.forEach((x,i)=>{ x.tStart=lt[i].start; x.tEnd=lt[i].end; }); return lt.length; }
   const t=computeBeatTimes(sceneData.map(x=>x.line), voWords);
   let n=0;
   sceneData.forEach((x,i)=>{ if(t[i]){ x.tStart=t[i].start; x.tEnd=t[i].end; n++; } else { delete x.tStart; delete x.tEnd; } });
@@ -3878,9 +4168,13 @@ function saveWorkflowState(){
         done: !!s.done, resultURL: s.resultURL || '',
         resultType: s.resultType || '', resultModel: s.resultModel || '',
         savedStartFrameURL: s.savedStartFrameURL || '', startFrameManual: !!s.startFrameManual,
-        tStart: s.tStart, tEnd: s.tEnd, videoDur: s.videoDur
+        tStart: s.tStart, tEnd: s.tEnd, videoDur: s.videoDur,
+        sfx: s.sfx || '', overlay: s.overlay || '', motion: s.motion || '', directed: !!s.directed,
+        speaker: s.speaker || '', lipsync: !!s.lipsync, talkStill: s.talkStill || '', lineAudioURL: s.lineAudioURL || ''
       })),
       voWords: voWords,
+      voLines: voLines.map(v=>({speaker:v.speaker, voiceId:v.voiceId, text:v.text, start:v.start, end:v.end, dur:v.dur})),
+      format: scriptFormat(),
       voPace: voPace,
       selId: selId || '',
       currentScene: currentScene || 0,
@@ -3917,7 +4211,8 @@ function getSavedWorkflowState(){
     state.sceneData = state.sceneData
       .filter(x=>x && typeof x==='object' && typeof x.line==='string' && x.line.trim())
       .map(x=>({
-        line:x.line, tag:x.tag==='VIDEO'?'VIDEO':'IMAGE',
+        line:x.line, tag:x.tag==='VIDEO'?'VIDEO':(x.tag==='TALK'&&splitTag(x.line).speaker&&splitTag(x.line).speaker!=='NARRATOR'?'TALK':'IMAGE'),
+        speaker:splitTag(x.line).speaker||'', lipsync:!!x.lipsync&&x.resultType==='video', talkStill:url(x.talkStill), lineAudioURL:url(x.lineAudioURL),
         characters:CHARS.includes(x.characters)?x.characters:detectCharacters(x.line),
         prompt:str(x.prompt), sceneDesc:str(x.sceneDesc), styleDesc:str(x.styleDesc), sfx:str(x.sfx), overlay:str(x.overlay).slice(0,80), motion:str(x.motion), directed:!!x.directed,
         done:!!x.done, resultURL:url(x.resultURL),
@@ -3926,6 +4221,8 @@ function getSavedWorkflowState(){
         ...(Number.isFinite(x.tStart)&&Number.isFinite(x.tEnd)&&x.tEnd>x.tStart?{tStart:x.tStart,tEnd:x.tEnd}:{}),
         ...([4,5,6,8,10].includes(x.videoDur)?{videoDur:x.videoDur}:{})
       }));
+    state.voLines = Array.isArray(state.voLines) ? state.voLines.filter(v=>v&&typeof v.text==='string'&&Number.isFinite(v.start)&&Number.isFinite(v.end)&&voiceLock()[normSpeaker(v.speaker)]&&v.voiceId===voiceLock()[normSpeaker(v.speaker)].voiceId)
+      .map(v=>({speaker:normSpeaker(v.speaker),voiceId:v.voiceId,text:v.text,start:v.start,end:v.end,dur:Number.isFinite(v.dur)?v.dur:v.end-v.start})) : [];
     state.voWords = Array.isArray(state.voWords) ? state.voWords.filter(w=>Array.isArray(w)&&typeof w[0]==='string'&&Number.isFinite(w[1])&&Number.isFinite(w[2])) : [];
     if(state.sceneData.length === 0) return null;
     state.currentScene = Number.isInteger(state.currentScene) ? Math.max(0, Math.min(state.currentScene, state.sceneData.length-1)) : 0;
@@ -3984,6 +4281,7 @@ function resumeSavedSession(){
 
     segOriginal        = state.segOriginal || segScript;
     voWords            = state.voWords || [];
+    voLines            = state.voLines || [];
     voPace             = VO_PACES[state.voPace] ? state.voPace : 'slow';
     // Episode selection: without it a resumed session exported with no episode/title and lost continuity.
     if(state.selId && V[state.selId]){
@@ -4301,7 +4599,7 @@ async function buildFinalEditZip(say){
   {
     const enc=new TextEncoder(), files=[], segs=[], missing=[];
     const lines=sceneData.map(x=>x.line);
-    const times=voWords.length?computeBeatTimes(lines,voWords):[];
+    const times=lineTimes()||(voWords.length?computeBeatTimes(lines,voWords):[]);
     for(let i=0;i<sceneData.length;i++){
       const s=sceneData[i], n=String(i+1).padStart(3,'0');
       say('Fetching scene '+(i+1)+' of '+sceneData.length+'…');
@@ -4315,8 +4613,10 @@ async function buildFinalEditZip(say){
         }catch(e){ missing.push(i+1); media=null; }
       } else missing.push(i+1);
       const t=times[i]||(beatLen(s)?{start:s.tStart,end:s.tEnd}:null);
-      segs.push({index:i+1,text:String(s.line||'').replace(/^\s*\d+\.\s*/,''),tag:s.tag,characters:s.characters||'',
-        media, mediaType:media?kind:'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'',
+      const sp=splitTag(s.line);
+      segs.push({index:i+1,text:sp.text,tag:s.tag,characters:s.characters||'',
+        speaker:sp.speaker||(dialogueOn()?'NARRATOR':null), voice_id:sp.speaker?lockedVoice(sp.speaker).voiceId:(dialogueOn()?lockedVoice('NARRATOR').voiceId:null),
+        media, mediaType:media?(kind==='video'&&s.lipsync?'lipsync':kind):'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'',
         start:t?t.start:null, end:t?t.end:null});
     }
     say('Packing bundle…');
@@ -4329,7 +4629,9 @@ async function buildFinalEditZip(say){
     const bundle={format:'cfa-final-edit-bundle',version:1,createdAt:new Date().toISOString(),title,episode,videoId:selId||'',
       script:finalScript||'',segmentedScript:segScript||'',voiceover:voName,srt:'beats.srt',
       duration:voWords.length?voWords[voWords.length-1][2]:null,words:voWords,segments:segs,
-      voicePace:{pace:voPace,speed:VO_PACES[voPace].speed}};
+      voicePace:{pace:voPace,speed:VO_PACES[voPace].speed},
+      format_type:scriptFormat(), musicStyle:musicStyle(),
+      voiceLock:Object.fromEntries(Object.entries(voiceLock()).map(([k,v])=>[k,v.voiceId]))};
     files.unshift({name:'bundle.json',data:enc.encode(JSON.stringify(bundle,null,1))});
     files.push({name:'script.txt',data:enc.encode(finalScript||'')});
     files.push({name:'segments.txt',data:enc.encode(segs.map(g=>g.index+'. '+g.text).join('\n'))});
@@ -4682,6 +4984,8 @@ async function enterSceneGeneration(){
         sceneData[i].tag='IMAGE';
       }
     }
+    if(dialogueOn()) sceneData.forEach(x=>{ const sp=splitTag(x.line).speaker; x.speaker=sp||'NARRATOR';
+      if(sp && sp!=='NARRATOR' && talkMode()!=='off'){ x.tag='TALK'; const c=CHARACTER_REGISTRY.speakers[sp]?.cast; if(c && c!=='NONE') x.characters=c; } });
     sceneData.forEach((x,i)=>{ const p=prevByLine.get(normLine(x.line)); if(p){ sceneData[i]=Object.assign({},p,{line:x.line,locked:true}); } });
     assignBeatTimes(); // VO timings (if the voiceover was generated) → per-scene start/end
     // Persist initial sceneData so a refresh during prompt generation doesn't lose classifications
@@ -4703,7 +5007,8 @@ async function enterSceneGeneration(){
 
     const imgCount=sceneData.filter(s=>s.tag==='IMAGE').length;
     const vidCount=sceneData.filter(s=>s.tag==='VIDEO').length;
-    document.getElementById('s6-class-summary').textContent=sceneData.length+' scenes — '+imgCount+' image · '+vidCount+' video';
+    const tc=talkCostEstimate();
+    document.getElementById('s6-class-summary').textContent=sceneData.length+' scenes — '+imgCount+' image · '+vidCount+' video'+(tc.shots?' · '+tc.shots+' talking (~'+tc.secs+'s lip-sync ≈ $'+tc.usd.toFixed(2)+')':'');
 
   }catch(err){
     document.getElementById('s6-classifying').style.display='none';
@@ -4721,7 +5026,7 @@ function renderClassificationList(){
     row.id='scene-row-'+i;
     const charBadge = {'BOTH':'<span class="char-badge both">👤👤 Both</span>','BOTH_JM':'<span class="char-badge both">👤👤 Both</span>','MARCUS':'<span class="char-badge marcus">👤 Marcus</span>','JORDAN':'<span class="char-badge jordan">👤 Jordan</span>','NONE':'<span class="char-badge none">⬜ Concept</span>'}[s.characters]||'';
     row.innerHTML=
-      '<span class="scene-tag '+(s.tag==='IMAGE'?'image':'video')+'" onclick="flipTag('+i+')" id="tag-'+i+'">'+(s.tag==='IMAGE'?'🖼 IMAGE':'🎬 VIDEO')+'</span>'+
+      '<span class="scene-tag '+(s.tag==='IMAGE'?'image':'video')+'" onclick="flipTag('+i+')" id="tag-'+i+'">'+tagLabel(s.tag)+'</span>'+
       charBadge+
       '<span class="scene-line-text">'+(i+1)+'. '+escHtml(s.line.replace(/^\d+\.\s*/,'').slice(0,70))+'</span>'+
       (beatLen(s)?'<span style="font-size:10px;color:var(--muted);font-family:ui-monospace,monospace;margin-left:auto;padding:0 6px">'+beatLen(s).toFixed(1)+'s</span>':'')+
@@ -4731,11 +5036,11 @@ function renderClassificationList(){
 }
 
 function flipTag(i){
-  sceneData[i].tag = sceneData[i].tag==='IMAGE' ? 'VIDEO' : 'IMAGE';
+  sceneData[i].tag = nextTag(sceneData[i]);
   sceneData[i].prompt = '';
   const tag=document.getElementById('tag-'+i);
   const row=document.getElementById('scene-row-'+i);
-  tag.textContent = sceneData[i].tag==='IMAGE' ? '🖼 IMAGE' : '🎬 VIDEO';
+  tag.textContent = tagLabel(sceneData[i].tag);
   tag.className = 'scene-tag '+(sceneData[i].tag==='IMAGE'?'image':'video');
   row.className = 'scene-row '+(sceneData[i].tag==='IMAGE'?'image-tag':'video-tag');
   const readyEl=document.getElementById('prompt-ready-'+i);
@@ -4846,7 +5151,7 @@ function sceneContextNote(i){
 }
 async function generatePromptForScene(i){
   const s=sceneData[i];
-  const sys=s.tag==='IMAGE' ? SYS_KLING_IMAGE : SYS_KLING_VIDEO;
+  const sys=(s.tag==='IMAGE'||s.tag==='TALK') ? SYS_KLING_IMAGE : SYS_KLING_VIDEO;
 
   // Build the user message — add a Character Note when a secondary person is in the scene
   // so the AI knows to describe them as a distinct new individual, not a variation of Marcus/Jordan
@@ -6288,7 +6593,8 @@ async function generateScene(){
   const sfActionEl=document.getElementById('startframe-action');
   if(sfActionEl) sfActionEl.style.display='none';
 
-  const finalPrompt=composeScenePrompt(s, prompt, {
+  const talkFrame=s.tag==='TALK'?('Medium close-up talking shot of '+lockedVoice(s.speaker||'NARRATOR').name+' alone in frame, facing the camera at a slight three-quarter angle, mouth closed, head and shoulders clearly visible, face well lit. '):'';
+  const finalPrompt=talkFrame+composeScenePrompt(s, prompt, {
     sceneText: sceneRefs['scene']?.text, styleText: sceneRefs['style']?.text,
     camera: isVideo ? document.getElementById('s6-camera').value : ''
   });
@@ -6415,6 +6721,11 @@ async function generateScene(){
       resultType='video';
     }
 
+    if(s.tag==='TALK' && resultType==='image' && resultURL && talkMode()!=='off'){
+      const lbl=document.getElementById('s6-gen-label');
+      const t=await talkClip(idx, s, resultURL, x=>{ if(lbl&&stillHere()) lbl.textContent=x; });
+      s.talkStill=resultURL; s.lipsync=true; resultURL=t.url; resultType='video'; modelLabel=t.label;
+    }
     if(!resultURL)throw new Error('No result returned — try again.');
 
     // Spend estimate was captured at request start (model/duration may have changed since)

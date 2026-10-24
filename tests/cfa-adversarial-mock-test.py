@@ -6,6 +6,7 @@ import asyncio, json, re, base64, sys
 from playwright.async_api import async_playwright
 import os
 URL='file://'+os.path.abspath(os.path.join(os.path.dirname(__file__),'..','CFA_Script_Workflow.html'))
+LINEMP3=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'fixtures_line.mp3'),'rb').read()
 CLIP=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'fixtures_clip.mp4'),'rb').read()
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
 SC={'xai':'ok','fal':'ok','el':'ok','delay':0,'script':None,'cls':None,'falDelay':0}
@@ -125,9 +126,10 @@ async def el_route(route):
     if m in('401','429'): return await route.fulfill(status=int(m),content_type='application/json',body=json.dumps({'detail':{'message':'nope'}}))
     if m=='empty': return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'audio_base64':'','alignment':None}))
     body=json.loads(route.request.post_data or '{}'); text=body.get('text',''); SC['elBody']=body; SC['elURL']=route.request.url
+    (SC.__setitem__('elCalls',SC.get('elCalls') or []) or SC['elCalls']).append((route.request.url,body))
     assert route.request.url.endswith('/with-timestamps'), route.request.url
     chars=list(text); st=[round(i*0.06,3) for i in range(len(chars))]; en=[round(x+0.06,3) for x in st]
-    return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'audio_base64':base64.b64encode(b'ID3fakeaudio').decode(),'alignment':{'characters':chars,'character_start_times_seconds':st,'character_end_times_seconds':en}}))
+    return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'audio_base64':base64.b64encode(LINEMP3 if SC.get('elReal') else b'ID3fakeaudio').decode(),'alignment':{'characters':chars,'character_start_times_seconds':st,'character_end_times_seconds':en}}))
 async def oai_route(route):
     cnt['oai']=cnt.get('oai',0)+1
     SC['oaiBody']=route.request.post_data_buffer or b''
@@ -158,6 +160,7 @@ async def newpage(b, keys=True, pre=None):
     await ctx.route(re.compile(r'https://(rest\.alpha\.fal\.ai/billing/user_balance|api\.elevenlabs\.io/v1/user/subscription).*'),bal_route)
     if pre: await ctx.add_init_script(pre)
     if keys:
+        await ctx.add_init_script("try{if(localStorage.getItem('cfa_format')===null)localStorage.setItem('cfa_format','narration');}catch(e){}")
         await ctx.add_init_script("sessionStorage.setItem('cfa_xai_key','xai-test');sessionStorage.setItem('cfa_fal_key','fal-test');sessionStorage.setItem('cfa_el_key','el-test');localStorage.setItem('cfa_onboarded','1');")
     await pg.goto(URL); await pg.wait_for_timeout(300)
     return ctx,pg,errs
@@ -391,8 +394,8 @@ async def main():
             await J(pg,"()=>{startSceneGeneration();}"); await pg.wait_for_timeout(500)
             await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(600); await J(pg,"()=>confirmScene()"); await pg.wait_for_timeout(300)
             before=await J(pg,"()=>({n:sceneData.length,cur:currentScene,r:sceneData[0].resultURL,sel:selId})")
-            await pg.reload(); await pg.wait_for_timeout(500)
-            check('reload: banner', await J(pg,"()=>document.getElementById('resume-banner').style.display!=='none'"))
+            await J(pg,"()=>saveWorkflowState()"); await pg.reload(); await pg.wait_for_timeout(500)
+            check('reload: banner', await J(pg,"()=>document.getElementById('resume-banner').style.display!=='none'"), (before, SC))
             await J(pg,"()=>resumeSavedSession()"); await pg.wait_for_timeout(500)
             after=await J(pg,"()=>({n:sceneData.length,cur:currentScene,r:sceneData[0].resultURL,sel:selId})")
             check('reload: state restored', before==after, (before,after))
@@ -432,7 +435,7 @@ async def main():
             await J(pg,"()=>setDuration(4)"); await J(pg,"()=>jumpToScene(0)"); await J(pg,"()=>jumpToScene(1)")
             check('timing: manual pick sticks per scene', await J(pg,'()=>sceneDuration')==4 and 'you picked 4s' in await J(pg,"()=>document.getElementById('dur-hint').textContent"))
             await pg.reload(); await pg.wait_for_timeout(400); await J(pg,"()=>resumeSavedSession()"); await pg.wait_for_timeout(400)
-            check('timing: survives reload', await J(pg,"()=>voWords.length>5 && sceneData[1].videoDur===4 && sceneData[0].tEnd>0"))
+            check('timing: survives reload', await J(pg,"()=>voWords.length>5 && sceneData[1].videoDur===4 && sceneData[0].tEnd>0"), await J(pg,"()=>({w:voWords.length,d:sceneData[1]&&sceneData[1].videoDur,t:sceneData[0]&&sceneData[0].tEnd})"))
             check('timing: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
             # too-long script for model
@@ -820,6 +823,95 @@ async def main():
             check('pace: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
 
+        if want('dialogue'):
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
+            LOCK={'NARRATOR':'pqHfZKP75CvOlQylNhV4','JORDAN':'bIHbv24MWmeRgasZH58o','MARCUS':'nPczCjzI2devNBz1zQrb','DEE':'EXAVITQu4vr4xnSDxMaL','PRIYA':'XrExE9yKIg1WjnnlVkGX','OKAFOR':'JBFqnCBsd6RMkjVDRZzb'}
+            ctx,pg,errs=await newpage(b,pre="localStorage.setItem('cfa_format','dialogue');")
+            check('dialogue: default format is dialogue', await J(pg,"()=>{localStorage.removeItem('cfa_format');const f=scriptFormat();localStorage.setItem('cfa_format','dialogue');return f}")=='dialogue')
+            vl=await J(pg,"()=>Object.fromEntries(Object.entries(voiceLock()).map(([k,v])=>[k,v.voiceId]))")
+            check('voice lock: registry map is exactly the locked series voices', vl==LOCK, vl)
+            check('voice lock: registry is frozen', await J(pg,"()=>{try{CHARACTER_REGISTRY.speakers.JORDAN.voiceId='x';}catch(e){} return CHARACTER_REGISTRY.speakers.JORDAN.voiceId}")==LOCK['JORDAN'])
+            t1=await J(pg,"""()=>{localStorage.setItem('cfa_voice_lock_v1',JSON.stringify({voices:{JORDAN:'AAAAAAAAAAAAAAAAAAAA'}}));const a=voiceLock().JORDAN.voiceId;
+              localStorage.setItem('cfa_voice_lock_v1',JSON.stringify({deliberate:true,voices:{JORDAN:'bad id!'}}));const b=voiceLock().JORDAN.voiceId;
+              localStorage.setItem('cfa_voice_lock_v1','{not json');const c=voiceLock().JORDAN.voiceId;
+              localStorage.setItem('cfa_voice_lock_v1',JSON.stringify({deliberate:true,voices:{JORDAN:'AAAAAAAAAAAAAAAAAAAA'}}));const d=voiceLock().JORDAN.voiceId;
+              localStorage.removeItem('cfa_voice_lock_v1');return [a,b,c,d,voiceLock().JORDAN.voiceId]}""")
+            check('voice lock: only a deliberate Settings save with a valid id overrides; junk ignored', t1==[LOCK['JORDAN'],LOCK['JORDAN'],LOCK['JORDAN'],'AAAAAAAAAAAAAAAAAAAA',LOCK['JORDAN']], t1)
+            await J(pg,"()=>{openSettings();}")
+            ui=await J(pg,"()=>({f:document.getElementById('sm-format').value,lock:document.getElementById('sm-voice-lock').textContent,inputs:document.querySelectorAll('#sm-voice-lock input').length})")
+            check('voice lock: settings panel shows locked voices read-only until unlocked', ui['f']=='dialogue' and 'Brian' in ui['lock'] and ui['inputs']==0, ui)
+            await J(pg,"()=>{document.getElementById('sm-voice-unlock').checked=true;renderVoiceLockUI();}")
+            check('voice lock: unlock shows editable ids', await J(pg,"()=>document.querySelectorAll('#sm-voice-lock input').length")==6)
+            await J(pg,"()=>{document.getElementById('sm-voice-unlock').checked=false;renderVoiceLockUI();closeSettings&&closeSettings();}")
+            # lint
+            good="\n".join(["MARCUS: The payment says sent, but Dee has nothing yet.","JORDAN: Wait, so where is it right now?"]+[("JORDAN: " if i%2 else "MARCUS: ")+"word "*13 for i in range(50)]+["NARRATOR: Later that night, the shop was quiet again."])
+            li=await J(pg,"(t)=>dialogueLint(t)",good)
+            check('dialogue lint: clean tagged script passes', li==[], li)
+            bad="Jordan looked at the screen for a long while and wondered what had gone wrong with it.\nBOB: Hi there.\nNARRATOR: "+("calm "*400)+"\nMARCUS: "+("long "*45)+"\nMARCUS: one\nMARCUS: two"
+            li=await J(pg,"(t)=>dialogueLint(t).join(' | ')",bad)
+            for frag in ['without a speaker tag','Unknown speaker','Too much narration','monologue','Cold open','3 lines in a row','Spoken length']:
+                check('dialogue lint flags: '+frag, frag in li, li[:300])
+            check('dialogue: word count ignores speaker tags', await J(pg,"()=>wordCount('JORDAN: one two\\nMR. OKAFOR: three')")==3)
+            seg=await J(pg,"(t)=>dialogueSegments(t)","JORDAN: Hi.\nMR. OKAFOR: "+"This is a sentence of words. "*10+"\nNARRATOR: End.")
+            sl=seg.split('\n')
+            check('dialogue segments: one beat per line, long line split, tags kept', len(sl)>=4 and sl[0]=='1. JORDAN: Hi.' and all(re.match(r'^\d+\. (JORDAN|MR\. OKAFOR|NARRATOR): ',l) for l in sl), seg[:300])
+            # per-line TTS: every line uses its speaker's locked voice
+            script="NARRATOR: Ten minutes to close.\nJORDAN: I sent it an hour ago!\nMARCUS: Sent is not arrived.\nDEE: Nothing on my phone.\nPRIYA: Check the confirmations.\nMR. OKAFOR: In my day we used cash.\nJORDAN: Twelve confirmations. It's there."
+            SC['elCalls']=[]; SC['elReal']=True
+            await J(pg,"(t)=>{finalScript=t;segScript=dialogueSegments(t);goVO();}",script)
+            await J(pg,"()=>generateVO()")
+            await pg.wait_for_function("()=>document.getElementById('s5-result').style.display!=='none'||document.getElementById('e5').textContent",timeout=20000)
+            calls=SC['elCalls']; spk=[l.split(':')[0].replace('MR. ','') for l in script.split('\n')]
+            ok=len(calls)==7 and all(any(c[0].split('/text-to-speech/')[1].startswith(LOCK[s]) and c[1]['text']==t.split(': ',1)[1] for c in calls) for s,t in zip(spk,script.split('\n')))
+            check('LOCKED VOICES: every line voiced with its character\'s locked id', ok, [(c[0].split('/')[-2],c[1]['text'][:20]) for c in calls])
+            check('dialogue TTS: eleven_v4, Slow pace (0.9), with-timestamps', all(c[1]['model_id']=='eleven_v4' and c[1]['voice_settings']['speed']==0.9 and c[0].endswith('/with-timestamps') for c in calls))
+            vo=await J(pg,"()=>({n:voLines.length,gaps:voLines.map((v,i)=>i?+(v.start-(voLines[i-1].start+voLines[i-1].dur)).toFixed(2):0),mono:voWords.every((w,i)=>!i||w[1]>=voWords[i-1][1]),type:document.getElementById('vo-download').download,ids:voLines.map(v=>v.voiceId),err:document.getElementById('e5').textContent})")
+            check('dialogue stitch: WAV with natural gaps (0.6 same / 0.7 change), words monotonic', vo['n']==7 and all(g in (0.6,0.7) for g in vo['gaps'][1:]) and vo['mono'] and vo['type'].endswith('.wav'), vo)
+            check('dialogue stitch: stored voice ids match the lock', vo['ids']==[LOCK[s] for s in spk], vo['ids'])
+            # a tampered line (voiced with another id) is refused before lip-sync
+            # classification → TALK beats, cost estimate, export
+            SC['elReal']=False
+            await go_scenes(pg)
+            cl=await J(pg,"()=>({tags:sceneData.map(s=>s.tag),cast:sceneData.map(s=>s.characters),t:sceneData.map(s=>[s.tStart,s.tEnd]),sum:document.getElementById('s6-class-summary').textContent})")
+            check('dialogue: character lines become TALK beats; narrator keeps image/video', cl['tags'][0] in ('IMAGE','VIDEO') and all(t=='TALK' for t in cl['tags'][1:]), cl['tags'])
+            check('dialogue: Jordan/Marcus talking shots carry their cast', cl['cast'][1]=='JORDAN' and cl['cast'][2]=='MARCUS', cl['cast'])
+            check('dialogue: beat times are the exact line times', all(a is not None and b>a for a,b in cl['t']), cl['t'])
+            check('dialogue: lip-sync cost estimate shown', 'talking' in cl['sum'] and '$' in cl['sum'], cl['sum'])
+            # talking shot: still + line audio → Kling Avatar v2, identity check
+            SC['falLog']=[]
+            await J(pg,"()=>startSceneGeneration()"); await pg.wait_for_timeout(400)
+            await J(pg,"()=>{jumpToScene(1);}"); await pg.wait_for_timeout(300)
+            await J(pg,"()=>generateScene()"); 
+            await pg.wait_for_function("()=>sceneData[1].resultURL||document.getElementById('e6').textContent",timeout=20000)
+            r=await J(pg,"()=>({url:sceneData[1].resultURL,type:sceneData[1].resultType,lip:sceneData[1].lipsync,still:sceneData[1].talkStill,audio:sceneData[1].lineAudioURL,qa:sceneData[1].clipQA,e:document.getElementById('e6').textContent})")
+            av=[x for x in SC['falLog'] if 'ai-avatar' in x[0]]
+            avb=json.loads(av[0][1]) if av else {}
+            check('lip-sync: Kling AI Avatar v2 called with the character still + this line\'s audio', bool(av) and avb.get('image_url','').startswith('https://') and avb.get('audio_url','').startswith('https://'), (len(av),avb.keys(),r['e']))
+            check('lip-sync: result stored as lip-synced video, still kept, identity check recorded', r['type']=='video' and r['lip'] and r['still'] and r['url']!=r['still'] and (r['qa'] or {}).get('kind')=='lipsync', r)
+            # tampered audio voice id is refused
+            msg=await J(pg,"async()=>{const s=sceneData[2]; voLines[2].voiceId='AAAAAAAAAAAAAAAAAAAA'; s.lineAudioURL=''; try{await talkClip(2,s,'https://v3b.fal.media/files/x.png',()=>{});return 'no error'}catch(e){return e.message}}")
+            check('LOCKED VOICES: lip-sync refuses a line voiced with a non-locked id', 'locked voice' in msg, msg)
+            await J(pg,"()=>{voLines[2].voiceId='"+LOCK['MARCUS']+"'}")
+            # export bundle
+            z=await J(pg,"""async()=>{const r=await buildFinalEditZip(()=>{}); if(!r) return null; let s=''; const u=r.zip instanceof Blob?new Uint8Array(await r.zip.arrayBuffer()):r.zip; for(let i=0;i<u.length;i+=8192) s+=String.fromCharCode.apply(null,u.subarray(i,i+8192)); return btoa(s);}""")
+            import zipfile, io
+            bj=json.loads(zipfile.ZipFile(io.BytesIO(base64.b64decode(z))).read('bundle.json')) if z else {}
+            segs=bj.get('segments',[])
+            check('bundle: speaker + locked voice_id on every segment', segs and all(g['voice_id']==LOCK[g['speaker']] for g in segs), [(g.get('speaker'),g.get('voice_id')) for g in segs])
+            check('bundle: talking shot exported as lipsync, text without tag', segs and segs[1]['mediaType']=='lipsync' and not segs[1]['text'].startswith('JORDAN'), segs[1] if segs else None)
+            check('bundle: format, music style and voice lock recorded', bj.get('format_type')=='dialogue' and bj.get('musicStyle')=='cinematic' and bj.get('voiceLock')==LOCK, {k:bj.get(k) for k in ('format_type','musicStyle')})
+            check('bundle: segment start = line audio start (lip-sync anchor)', segs and abs(segs[1]['start']-await J(pg,"()=>voLines[1].start"))<1e-6)
+            # resume keeps TALK + lip-sync fields + director fields; drops lines with a non-locked voice id
+            await J(pg,"()=>{sceneData[0].sfx='door bell';sceneData[0].overlay='Sent is not arrived';saveWorkflowState();}")
+            st=await J(pg,"()=>{const s=getSavedWorkflowState();return {tag:s.sceneData[1].tag,lip:s.sceneData[1].lipsync,still:!!s.sceneData[1].talkStill,sfx:s.sceneData[0].sfx,ov:s.sceneData[0].overlay,vl:s.voLines.length}}")
+            check('resume: TALK tag, lip-sync, director sfx/overlay and line timings survive', st=={'tag':'TALK','lip':True,'still':True,'sfx':'door bell','ov':'Sent is not arrived','vl':7}, st)
+            st2=await J(pg,"()=>{const raw=JSON.parse(localStorage.getItem(WORKFLOW_STATE_KEY));raw.voLines[1].voiceId='AAAAAAAAAAAAAAAAAAAA';raw.sceneData[0].tag='TALK';localStorage.setItem(WORKFLOW_STATE_KEY,JSON.stringify(raw));const s=getSavedWorkflowState();return {vl:s.voLines.length,t0:s.sceneData[0].tag}}")
+            check('resume: a line with a non-locked voice id is dropped; narrator can\'t be TALK', st2['vl']==6 and st2['t0']=='IMAGE', st2)
+            # narration format unchanged
+            await J(pg,"()=>localStorage.setItem('cfa_format','narration')")
+            check('narration format: prompts unchanged, no dialogue rules', await J(pg,"()=>fmtSys('X')==='X' && !/speaker tag/.test(JSON.stringify(scriptLint('A calm story.')))"))
+            check("dialogue: no page errors", not [e for e in errs if "favicon" not in e and "Failed to load resource" not in e], errs[:5])
+            await ctx.close()
         if want('export'):
             ctx,pg,errs=await newpage(b)
             await J(pg,"""()=>{selId='v07';finalScript='Jordan waits. Marcus says crypto is a ledger.';
