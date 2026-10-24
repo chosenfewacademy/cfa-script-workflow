@@ -4299,6 +4299,8 @@ function extFromBlob(blob,url,kind){ // kind wins over a wrong Content-Type
   return /^(png|jpe?g|webp)$/.test(u)?u.replace('jpeg','jpg'):'png';
 }
 async function exportFinalEditBundle(){
+  { const stills=clipBeatsHoldingStills();
+    if(stills.length && !confirm('Clip beat'+(stills.length>1?'s ':' ')+stills.join(', ')+' marked VIDEO '+(stills.length>1?'hold still images':'holds a still image')+'. Export anyway?')) return; }
   const btn=document.getElementById('btn-final-edit'), st=document.getElementById('fe-status');
   const say=m=>{ if(st){ st.style.display=m?'':'none'; st.textContent=m; } };
   if(btn){ btn.disabled=true; }
@@ -4404,12 +4406,19 @@ function uploadWithProgress(url, blob, onProg){
     x.send(blob);
   });
 }
+// VIDEO beats whose result is a still (e.g. restored from an older session where the beat was an image, or a
+// start frame left as the result). Never let these pass silently as a clip.
+function clipBeatsHoldingStills(){
+  return sceneData.map((x,i)=>(x.tag==='VIDEO' && x.resultURL && x.resultType!=='video')?i+1:0).filter(Boolean);
+}
 async function sendToGrokRender(){
   const st=document.getElementById('fe-status');
   const say=m=>{ if(st){ st.style.display=m?'':'none'; st.textContent=m; } };
   if(!renderServiceReady()){ say('Add the Grok Bot render service URL and access token in ⚙ Settings first (or use 🎬 Export for final edit and send the .zip in chat).'); openSettings(); return; }
   const btn=document.getElementById('btn-send-grok'), up=document.getElementById('rs-upload'), bar=document.getElementById('rs-upload-bar'), txt=document.getElementById('rs-upload-txt');
   const missing=sceneData.map((x,i)=>x.resultURL?0:i+1).filter(Boolean);
+  const stills=clipBeatsHoldingStills();
+  if(stills.length && !confirm('Clip beat'+(stills.length>1?'s ':' ')+stills.join(', ')+(stills.length>1?' are':' is')+' marked VIDEO but '+(stills.length>1?'hold still images':'holds a still image')+' — the render would show a still where a clip belongs.\n\nOK = send anyway, Cancel = go back and generate the clip'+(stills.length>1?'s':'')+'.')){ jumpToScene(sceneData.findIndex((x,i)=>i+1===stills[0])); return; }
   if(missing.length && !confirm('Scene'+(missing.length>1?'s ':' ')+missing.join(', ')+(missing.length>1?' have':' has')+' no image or clip yet. Grok will hold the neighbouring shot over '+(missing.length>1?'them':'it')+'.\n\nOK = send anyway, Cancel = go back and generate '+(missing.length>1?'them':'it')+'.')) return;
   if(!budgetPreflight('xai',0.05,'the Grok final edit')) return;
   btn.disabled=true;
@@ -4993,6 +5002,13 @@ function renderResultMedia(url, type){
   el.style.cssText='width:100%;border-radius:8px';
   if(type==='video'){ el.controls=true; el.autoplay=true; el.muted=true; el.loop=true; }
   container.appendChild(el);
+  const cs=sceneData[currentScene];
+  if(cs && cs.tag==='VIDEO' && type!=='video'){
+    const w=document.createElement('div'); w.className='clip-still-warn';
+    w.style.cssText='margin-top:6px;padding:6px 8px;border-radius:6px;background:#3a2410;color:#ffb35c;font-size:12px';
+    w.textContent='⚠ This is a VIDEO beat but it holds a still image — generate the clip (the render would otherwise show a still here).';
+    container.appendChild(w);
+  }
 }
 
 function setDuration(s, auto){
