@@ -6260,6 +6260,7 @@ async function generateScene(){
         // ── Kling O1 image-to-video: start AND end pinned to the on-model still (keeps faces/outfits) ──
         const body={prompt:vp,start_image_url:startFrameURL,duration:String(Math.max(3,Math.min(10,Math.round(sceneDuration))))};
         if(s.characters!=='NONE') body.end_image_url=startFrameURL;
+        else body.duration=Number(body.duration)<=7?'5':'10'; // O1 allows 3-10 s only with an end frame; start-only clips are 5 or 10 s
         document.getElementById('s6-gen-label').textContent='Generating video with Kling O1 (start + end frame locked)… (~60-90 seconds)';
         const data=await falPost('fal-ai/kling-video/o1/image-to-video', body);
         resultURL=data.video?.url||data.url||'';
