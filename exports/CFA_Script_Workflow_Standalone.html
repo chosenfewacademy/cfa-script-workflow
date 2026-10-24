@@ -3884,7 +3884,7 @@ function getSavedWorkflowState(){
       .map(x=>({
         line:x.line, tag:x.tag==='VIDEO'?'VIDEO':'IMAGE',
         characters:CHARS.includes(x.characters)?x.characters:detectCharacters(x.line),
-        prompt:str(x.prompt), sceneDesc:str(x.sceneDesc), styleDesc:str(x.styleDesc),
+        prompt:str(x.prompt), sceneDesc:str(x.sceneDesc), styleDesc:str(x.styleDesc), sfx:str(x.sfx), overlay:str(x.overlay).slice(0,80), motion:str(x.motion), directed:!!x.directed,
         done:!!x.done, resultURL:url(x.resultURL),
         resultType:x.resultType==='video'||x.resultType==='image'?x.resultType:(url(x.resultURL)?(x.tag==='VIDEO'?'video':'image'):''),
         resultModel:str(x.resultModel), savedStartFrameURL:url(x.savedStartFrameURL), startFrameManual:!!x.startFrameManual,
@@ -4281,7 +4281,7 @@ async function buildFinalEditZip(say){
       } else missing.push(i+1);
       const t=times[i]||(beatLen(s)?{start:s.tStart,end:s.tEnd}:null);
       segs.push({index:i+1,text:String(s.line||'').replace(/^\s*\d+\.\s*/,''),tag:s.tag,characters:s.characters||'',
-        media, mediaType:media?kind:'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'',
+        media, mediaType:media?kind:'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:s.overlay||'', motion:s.motion||'',
         start:t?t.start:null, end:t?t.end:null});
     }
     say('Packing bundle…');
@@ -4718,11 +4718,58 @@ function updateClassSummary(){
     +(consec?'  ⚠ '+consec+' back-to-back video pair'+(consec>1?'s':'')+' (no start frame between them)':'');
 }
 
+// ═══ DIRECTOR PASS — one Grok call plans the whole shot list ═══
+// Per-beat prompting drifted (lighting, place and mood changed shot to shot). The director sees every
+// beat at once and returns, per scene, an image prompt, a motion/camera prompt and an ambient SFX
+// prompt, under one shared look (lighting, palette, mood). Any beat it misses falls back to per-beat.
+const SYS_DIRECTOR=`You are the director and cinematographer of one episode of Chosen Few Academy, a calm story series about digital assets (never write "crypto"). You receive every numbered beat of the narration with its shot type (IMAGE = still, VIDEO = short animated clip) and who is on screen. Plan the WHOLE shot list in one pass so it plays as one continuous film.
+Rules:
+- One shared LOOK for the episode: lighting, colour palette, mood and time of day that follow the story; change them only when the story moves place or time.
+- Every shot happens in a named place from the story; keep props and positions consistent between neighbouring shots; never invent people who are not in the narration; respect who is on screen.
+- image: 2-4 sentences describing the frame (setting first, then characters' pose and expression, 2-3 props, composition and shot size). Describe characters by name and action only; their look comes from reference sheets. Do NOT describe the art style.
+- NO TEXT IN IMAGES: never ask for words, numbers, signs, labels, captions, screens with readable text or handwriting. If the viewer must read something (an amount, a word, an address fragment), put those exact few words in "overlay" instead (at most 6 words) and keep the image itself text-free.
+- motion: for VIDEO shots, one or two sentences of subject motion plus one camera move (slow push-in, gentle pan, static); for IMAGE shots, a subtle camera move for a Ken Burns pass.
+- sfx: a short ambient sound description for the shot (room tone, street, shop bell, keyboard), no music, no voices.
+Return ONLY JSON: {"look":{"lighting":"...","palette":"...","mood":"..."},"shots":[{"n":1,"place":"4-8 word setting","image":"...","motion":"...","sfx":"...","overlay":""}]}`;
+function parseDirector(t){
+  try{ const m=String(t||'').match(/\{[\s\S]*\}/); if(!m) return null; const j=JSON.parse(m[0]);
+    return j&&Array.isArray(j.shots)?j:null; }catch(e){ return null; }
+}
+function directorOn(){ return safeGetItem('cfa_director')!=='0'; }
+let sceneLook=null;
+async function directorPass(data){
+  const beats=data.map((x,i)=>'['+(i+1)+'] '+x.tag+' | on screen: '+(x.characters||'NONE')+(castInScene(x).length?', '+castInScene(x).join(', '):'')+' | '+String(x.line).replace(/^\s*\d+\.\s*/,''));
+  const user=(V[selId]?'EPISODE: '+V[selId].title+'\n':'')+'BEATS:\n'+beats.join('\n');
+  const r=await llmComplete({role:'fast', system:SYS_DIRECTOR, user, maxTokens:Math.min(16000,900+data.length*260), effort:'low'});
+  const j=parseDirector(r.text); if(!j) throw new Error('director returned no shot list');
+  if(sceneData!==data) return 0;
+  sceneLook=j.look||null;
+  const look=j.look?(' Lighting: '+(j.look.lighting||'')+'. Palette: '+(j.look.palette||'')+'. Mood: '+(j.look.mood||'')+'.'):'';
+  let n=0;
+  for(const sh of j.shots){
+    const i=(parseInt(sh.n,10)||0)-1, x=data[i];
+    if(!x || x.locked&&x.prompt || !String(sh.image||'').trim()) continue;
+    const img=String(sh.image).trim().replace(/\bcrypto\w*/gi,'digital asset');
+    const mot=String(sh.motion||'').trim();
+    x.prompt=(x.tag==='VIDEO'&&mot? img+' Motion: '+mot : img)+look;
+    x.motion=mot; x.sfx=String(sh.sfx||'').trim(); x.overlay=String(sh.overlay||'').trim().split(/\s+/).slice(0,6).join(' ');
+    x.sceneDesc=String(sh.place||'').trim()||x.sceneDesc; x.directed=true; x.promptFailed=false;
+    if(x.characters==='NONE'){ const pc=promptOnScreenCast(x.prompt); if(pc!=='NONE'){ x.characters=pc; x.castFromPrompt=true; } }
+    const el=document.getElementById('prompt-ready-'+i); if(el){el.textContent='✓ prompt';el.style.display='';}
+    n++;
+  }
+  saveWorkflowState();
+  return n;
+}
 async function generateAllPrompts(){
+  if(directorOn() && sceneData.some(x=>!(x.locked&&x.prompt))){
+    try{ await directorPass(sceneData); }catch(e){ console.warn('Director pass failed, per-beat prompts instead:',e.message); }
+  }
   const data=sceneData;
   for(let i=0;i<data.length;i++){
     if(sceneData!==data)return; // restarted
     if(data[i].locked && data[i].prompt) continue; // kept from the earlier run
+    if(data[i].directed && data[i].prompt) continue; // planned by the director pass
     await generatePromptForScene(i);
   }
 }

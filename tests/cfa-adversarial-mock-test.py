@@ -47,6 +47,12 @@ async def xai_route(route):
             v={'scores':{'flow':9,'cohesion':9,'logic':9,'human':9,'story_pull':9,'accuracy':9},'problems':[],'script':sc_}
         content=v if isinstance(v,str) else json.dumps(v)
         return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'choices':[{'message':{'content':content},'finish_reason':'stop'}],'usage':{}}))
+    if 'director and cinematographer' in sysmsg:
+        cnt['director']=cnt.get('director',0)+1; SC['lastDirector']=user
+        v=SC.get('dirOut')
+        if v is None: content='no shot list today'
+        else: content=v if isinstance(v,str) else json.dumps(v)
+        return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'choices':[{'message':{'content':content},'finish_reason':'stop'}],'usage':{}}))
     if 'character-continuity supervisor' in sysmsg:
         cnt['idcheck']=cnt.get('idcheck',0)+1
         q=SC.get('idq') or []
@@ -654,6 +660,25 @@ async def main():
             check('voice: Young Jamal still selectable', '6OzrBCQf8cjERkYgzSg8' in (SC.get('elURL') or ''), SC.get('elURL'))
             check('voice: no page errors', not [e for e in errs3 if 'pageerror' in e], errs3[:3])
             await ctx3.close()
+            # ── director pass ──
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
+            SC['dirOut']={'look':{'lighting':'warm late-afternoon window light','palette':'amber and teal','mood':'quiet worry'},'shots':[{'n':1,'place':'bike shop back office','image':'Jordan at the desk staring at his phone, a crypto chart behind him.','motion':'Jordan lowers the phone; slow push-in.','sfx':'shop bell, distant traffic','overlay':'$212.40 pending since Tuesday morning at nine'},{'n':2,'place':'bike shop back office','image':'Marcus leans in the doorway holding the green notebook.','motion':'gentle pan','sfx':'room tone','overlay':''}]}
+            ctxd,pgd,errsd=await newpage(b)
+            await J(pgd,"()=>{segScript='1. Jordan checked the payment.\\n2. Marcus walked in.\\n3. The bell rang.';enterSceneGeneration();}"); await pgd.wait_for_timeout(2500)
+            sd=await J(pgd,"()=>sceneData.map(x=>({p:x.prompt,sfx:x.sfx,ov:x.overlay,d:!!x.directed,desc:x.sceneDesc,tag:x.tag}))")
+            check('director: one call plans the shot list', cnt.get('director',0)>=1 and '[1]' in (SC.get('lastDirector') or '') and '[3]' in (SC.get('lastDirector') or ''), SC.get('lastDirector'))
+            check('director: image + shared look applied', sd and sd[0]['d'] and 'warm late-afternoon' in sd[0]['p'] and sd[0]['desc']=='bike shop back office', sd[:1])
+            check('director: VIDEO shot carries motion', 'Motion: gentle pan' in sd[1]['p'] if sd[1]['tag']=='VIDEO' else 'Motion:' not in sd[1]['p'], sd[1])
+            check('director: sfx + overlay captured, overlay capped at 6 words', sd[0]['sfx']=='shop bell, distant traffic' and len(sd[0]['ov'].split())==6, sd[0])
+            check('director: no "crypto" leaks into prompts', all('crypto' not in (x['p'] or '').lower() for x in sd), [x['p'] for x in sd])
+            check('director: missing beat falls back to per-beat prompt', sd[2]['p'] and not sd[2]['d'], sd[2])
+            SC['dirOut']=None; await ctxd.close()
+            ctxd,pgd,errsd=await newpage(b)
+            await J(pgd,"()=>{segScript='1. Jordan checked the payment.\\n2. Marcus walked in.';enterSceneGeneration();}"); await pgd.wait_for_timeout(2500)
+            sd=await J(pgd,"()=>sceneData.map(x=>({p:x.prompt,d:!!x.directed}))")
+            check('director: junk reply falls back for every beat', all(x['p'] and not x['d'] for x in sd), sd)
+            check('director: no page errors', not [e for e in errsd if 'pageerror' in e], errsd[:3])
+            await ctxd.close()
             # ── audit fixes ──
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sessionStorage.setItem('cfa_openai_key','sk-test');}")
             SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
