@@ -4395,6 +4395,7 @@ function uploadWithProgress(url, blob, onProg){
     const x=new XMLHttpRequest(); x.open('POST',url);
     x.setRequestHeader('Authorization','Bearer '+sessionStorage.getItem('cfa_render_token'));
     x.setRequestHeader('Content-Type','application/zip');
+    x.setRequestHeader('ngrok-skip-browser-warning','1');
     x.upload.onprogress=e=>{ if(e.lengthComputable) onProg(e.loaded/e.total, e.loaded); };
     x.onload=()=>{ let j=null; try{ j=JSON.parse(x.responseText); }catch(e){}
       if(x.status===401) return rej(new Error('The render service rejected the access token — check it in ⚙ Settings.'));
@@ -4413,7 +4414,7 @@ async function sendToGrokRender(){
   if(!budgetPreflight('xai',0.05,'the Grok final edit')) return;
   btn.disabled=true;
   try{
-    try{ await fetch(renderBase()+'/health',{cache:'no-store'}); }catch(e){ throw new Error('Could not reach the render service at '+renderBase()+'. Is Grok Bot’s computer running? You can still use 🎬 Export for final edit.'); }
+    try{ await fetch(renderBase()+'/health',{cache:'no-store',headers:{'ngrok-skip-browser-warning':'1'}}); }catch(e){ throw new Error('Could not reach the render service at '+renderBase()+'. Is Grok Bot’s computer running? You can still use 🎬 Export for final edit.'); }
     const b=await buildFinalEditZip(say); if(!b) return;
     say(''); up.style.display=''; bar.style.width='0';
     const mb=b.zip.size/1048576;
@@ -6086,7 +6087,7 @@ async function generateAllImages(){
       try{
         const refs=[];
         if(s.characters==='BOTH'||s.characters==='BOTH_JM'){
-          const order=s.characters==='BOTH_JM'?[['Jordan',JORDAN_B64],['Marcus',MARCUS_B64]]:[['Marcus',MARCUS_B64],['Jordan',JORDAN_B64]];
+          const order=s.characters==='NONE'?[]:s.characters==='BOTH_JM'?[['Jordan',JORDAN_B64],['Marcus',MARCUS_B64]]:[['Marcus',MARCUS_B64],['Jordan',JORDAN_B64]];
           for(const [n,b64] of order) refs.push(await getCharacterUrl(n,b64));
         } else if(s.characters==='MARCUS') refs.push(await getCharacterUrl('Marcus',MARCUS_B64));
         else if(s.characters==='JORDAN') refs.push(await getCharacterUrl('Jordan',JORDAN_B64));
@@ -6243,7 +6244,7 @@ async function generateScene(){
       genCost=getEstimatedCost();
       // A clip of Marcus/Jordan with no earlier still of them: make an opening frame from
       // their reference sheets first, so image-to-video keeps their look.
-      if(!startFrameURL && s.characters!=='NONE'){
+      if(!startFrameURL && (s.characters!=='NONE' || selectedVideoModel==='kling-o1v')){
         document.getElementById('s6-gen-label').textContent='Making a start frame from the character references (Kling O1)…';
         const order=s.characters==='BOTH_JM'?[['Jordan',JORDAN_B64],['Marcus',MARCUS_B64]]:s.characters==='BOTH'?[['Marcus',MARCUS_B64],['Jordan',JORDAN_B64]]:s.characters==='MARCUS'?[['Marcus',MARCUS_B64]]:[['Jordan',JORDAN_B64]];
         const refs=[]; for(const [n,b64] of order) refs.push(await getCharacterUrl(n,b64));
@@ -6265,7 +6266,7 @@ async function generateScene(){
         modelLabel='Kling O1';
       }else if(selectedVideoModel==='kling-v16' || selectedVideoModel==='kling-o1v'){
         // ── Kling v1.6 Pro ───────────────────────────────────────────────────
-        const body={prompt:vp,duration:sceneDuration,aspect_ratio:'16:9'};
+        const body={prompt:vp,duration:String(sceneDuration>=8?10:5),aspect_ratio:'16:9'};
         if(startFrameURL) body.image_url=startFrameURL;
         if(body.image_url&&sceneRefs['subject']?.url?.startsWith('https://'))
           body.subject_reference_image_url=sceneRefs['subject'].url;
