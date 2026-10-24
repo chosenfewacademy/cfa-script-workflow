@@ -143,7 +143,7 @@ async def newpage(b, keys=True, pre=None):
     ctx=await b.new_context(accept_downloads=True)
     pg=await ctx.new_page()
     errs=[]
-    pg.on('pageerror',lambda e: errs.append('pageerror: '+str(e)))
+    pg.on('pageerror',lambda e: errs.append('pageerror: '+str(e)+(' @'+str(SC.get('_step')) if os.environ.get('FBDBG') else '')))
     pg.on('console',lambda m: errs.append(m.type+': '+m.text) if m.type=='error' else None)
     pg.on('dialog',lambda d: (SC.setdefault('dialogs',[]).append(d.message), asyncio.ensure_future(d.dismiss() if SC.get('dismiss') else d.accept())))
     await ctx.route('**/*',other_route)
@@ -912,6 +912,63 @@ async def main():
             check('narration format: prompts unchanged, no dialogue rules', await J(pg,"()=>fmtSys('X')==='X' && !/speaker tag/.test(JSON.stringify(scriptLint('A calm story.')))"))
             check("dialogue: no page errors", not [e for e in errs if "favicon" not in e and "Failed to load resource" not in e], errs[:5])
             await ctx.close()
+        if want('feedback'):
+            import subprocess, tempfile
+            fbd=tempfile.mkdtemp(prefix='cfa-fb-'); tok=os.path.join(fbd,'tok'); open(tok,'w').write('fbtest'); os.chmod(tok,0o600)
+            env=dict(os.environ, CFA_RENDER_DATA=os.path.join(fbd,'data'), CFA_RENDER_TOKEN_FILE=tok, CFA_RENDER_PORT='8798', CFA_ALLOWED_ORIGINS='null')
+            svc=subprocess.Popen(['python3',os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','tools','render','service.py')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            await asyncio.sleep(1.2)
+            try:
+                ctx,pg,errs=await newpage(b,pre="sessionStorage.setItem('cfa_render_url','http://127.0.0.1:8798');sessionStorage.setItem('cfa_render_token','fbtest');")
+                await ctx.route(re.compile(r'http://127\.0\.0\.1:8798/.*'),lambda r: asyncio.ensure_future(r.continue_()))
+                st=await J(pg,"()=>{fbOpen();return {n:document.getElementById('fb-step').options.length,step:document.getElementById('fb-step').value,kinds:[...document.getElementById('fb-kind').options].map(o=>o.value)}}")
+                check('feedback: box covers all 11 steps, defaults to the current step, both kinds', st=={'n':11,'step':'research','kinds':['episode','tool']}, st)
+                mp=await J(pg,"()=>{const o={};const c=curScreen;for(const n of [1,2,3,4,5]){curScreen=n;o[n]=fbCurrentStep();}curScreen=c;return o}")
+                check('feedback: each screen maps to its step', mp=={'1':'research','2':'script','3':'script','4':'shotlist','5':'voices'}, mp)
+                await J(pg,"()=>{document.getElementById('fb-comment').value='';return fbSubmit()}")
+                check('feedback: empty comment is refused', 'comment' in await J(pg,"()=>document.getElementById('fb-err').textContent"))
+                await J(pg,"""()=>{document.getElementById('fb-step').value='script';document.getElementById('fb-kind').value='tool';fbRating=4;document.getElementById('fb-comment').value='Hooks should name the stakes in line 1 <img src=x onerror=window.__x=1>';return fbSubmit()}""")
+                await pg.wait_for_timeout(300)
+                st=await J(pg,"()=>({th:document.getElementById('fb-thanks').textContent,vis:document.getElementById('fb-thanks').style.display,items:fbItems().map(i=>[i.step,i.kind,i.rating,i.status]),list:document.getElementById('fb-list').textContent,x:!!window.__x,imgs:document.querySelectorAll('#fb-list img').length})")
+                check('feedback: thank-you message exactly as specified', st['th']=="Thanks Chris, your feedback was received. Changes may take up to 24 hours. You'll see a Changes ready notice here when they're live." and st['vis']=='block', st)
+                check('feedback: item saved with status Submitted', st['items']==[['script','tool',4,'submitted']] and 'Submitted' in st['list'], st)
+                check('feedback: comment rendered as text (no injection)', not st['x'] and st['imgs']==0, st)
+                inbox=[json.loads(l) for l in open(os.path.join(fbd,'data','feedback','inbox.jsonl'))]
+                check('feedback: written to inbox.jsonl and the item file', len(inbox)==1 and inbox[0]['comment'].startswith('Hooks') and inbox[0]['reviewer']=='Chris' and os.path.exists(os.path.join(fbd,'data','feedback','items',inbox[0]['id']+'.json')), inbox)
+                fid=inbox[0]['id']
+                r=subprocess.run(['python3',os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','tools','render','fb.py'),'set',fid,'in_progress','--resolution','Looking at it'],env=env,capture_output=True,text=True)
+                await J(pg,"()=>fbPoll()"); await pg.wait_for_timeout(300)
+                check('feedback: routine can mark in progress; tool shows it', r.returncode==0 and await J(pg,"()=>fbItems()[0].status")=='in_progress' and 'In progress' in await J(pg,"()=>document.getElementById('fb-list').textContent"), r.stderr[-300:])
+                await J(pg,"()=>fbToggle(false)")
+                r=subprocess.run(['python3',os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','tools','render','fb.py'),'set',fid,'ready','--accept','--resolution','Hook rule added','--rule','Name the stakes in the first line.'],env=env,capture_output=True,text=True)
+                await J(pg,"()=>fbPoll()"); await pg.wait_for_timeout(300)
+                st=await J(pg,"()=>({b:document.getElementById('fb-banner').style.display,bt:document.getElementById('fb-banner-text').textContent,badge:document.getElementById('fb-badge').textContent,bv:document.getElementById('fb-badge').style.display,st:fbItems()[0].status})")
+                check('feedback: ready -> Changes ready banner + badge', st['b']=='block' and st['badge']=='1 ready' and st['bv']=='inline-block' and st['st']=='ready', st)
+                st=await J(pg,"()=>({s:fmtSys('X').includes('Name the stakes in the first line.'),i:fbBlock(['stills']).includes('Name the stakes')})")
+                check('feedback: accepted suggestion enters feedback memory and the script prompts (not unrelated steps)', st=={'s':True,'i':False}, st)
+                await J(pg,"()=>{fbOpen()}")
+                check('feedback: opening the panel clears the badge', await J(pg,"()=>document.getElementById('fb-badge').style.display")=='none')
+                # episode feedback on the script: regenerated with the note
+                SC['script']=None
+                await J(pg,"""()=>{genScript='Jordan waits. Marcus helps.';document.getElementById('txed').value=genScript;document.getElementById('fb-step').value='script';document.getElementById('fb-kind').value='episode';document.getElementById('fb-comment').value='Make Jordan more anxious';return fbSubmit()}""")
+                await pg.wait_for_timeout(2500)
+                st=await J(pg,"()=>({items:fbItems().map(i=>i.status),note:fbBlock(['script']).includes('Make Jordan more anxious'),img:fbBlock(['stills']).includes('anxious')})")
+                srv=json.load(open(os.path.join(fbd,'data','feedback','items',[json.loads(l) for l in open(os.path.join(fbd,'data','feedback','inbox.jsonl'))][1]['id']+'.json')))
+                check('feedback: episode note goes into that step\'s prompts only', st['note'] and not st['img'], st)
+                check('feedback: episode item is processed (server status moved past submitted)', srv['status'] in ('in_progress','ready') and len(srv['history'])>=2, srv['history'])
+                # episode feedback when the step has no output yet: kept for the next generation
+                await J(pg,"()=>{document.getElementById('fb-step').value='music';document.getElementById('fb-kind').value='episode';document.getElementById('fb-comment').value='Softer score';return fbSubmit()}")
+                await pg.wait_for_timeout(500)
+                check('feedback: no output yet -> in progress, note kept for next run', await J(pg,"()=>fbItems().slice(-1)[0].status")=='in_progress' and 'next time' in await J(pg,"()=>fbItems().slice(-1)[0].resolution"))
+                # wrong key
+                await J(pg,"()=>{sessionStorage.setItem('cfa_render_token','nope');document.getElementById('fb-kind').value='tool';document.getElementById('fb-comment').value='x';return fbSubmit()}")
+                check('feedback: wrong access key shows an error, nothing saved locally', 'access token' in await J(pg,"()=>document.getElementById('fb-err').textContent") and await J(pg,"()=>fbItems().length")==3)
+                await J(pg,"()=>{sessionStorage.removeItem('cfa_render_url');document.getElementById('fb-comment').value='x';return fbSubmit()}")
+                check('feedback: no render service -> asks to connect it', 'Settings' in await J(pg,"()=>document.getElementById('fb-err').textContent"))
+                check('feedback: no page errors', not [e for e in errs if 'pageerror' in e], errs[:5])
+                await ctx.close()
+            finally:
+                svc.terminate()
         if want('export'):
             ctx,pg,errs=await newpage(b)
             await J(pg,"""()=>{selId='v07';finalScript='Jordan waits. Marcus says crypto is a ledger.';

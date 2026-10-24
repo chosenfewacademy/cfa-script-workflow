@@ -1016,6 +1016,20 @@ select option{background:var(--surface2)}
   .tl-dot:not(.active) .tl-label{opacity:0!important}
 }
 .research-panel{margin:0 0 10px;font-size:13px}.research-panel summary{cursor:pointer;color:var(--accent)}.research-brief{white-space:pre-wrap;max-height:260px;overflow:auto;background:rgba(0,0,0,.25);padding:10px;border-radius:8px;font-size:12px}.ra-scores{margin-top:6px;opacity:.8}
+
+/* ═══ Reviewer feedback (Chris) ═══ */
+#fb-fab{position:fixed;right:18px;bottom:18px;z-index:900;background:var(--accent);color:#111;border:0;border-radius:22px;padding:10px 16px;font-weight:700;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+#fb-badge{display:none;margin-left:8px;background:#34d399;color:#062;border-radius:10px;padding:1px 7px;font-size:11px}
+#fb-panel{display:none;position:fixed;right:18px;bottom:66px;z-index:901;width:min(380px,calc(100vw - 36px));max-height:78vh;overflow:auto;background:var(--surface,#141414);color:var(--text);border:1px solid var(--accent);border-radius:12px;padding:14px;font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#fb-panel label{display:block;font-size:11px;color:var(--muted);margin:8px 0 3px}
+#fb-panel select,#fb-panel textarea,#fb-panel input{width:100%;box-sizing:border-box;background:rgba(255,255,255,.04);color:var(--text);border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:6px}
+#fb-stars button{background:none;border:0;font-size:20px;cursor:pointer;color:#666;padding:0 2px}
+#fb-stars button.on{color:var(--accent)}
+#fb-thanks{display:none;margin-top:10px;padding:10px;border-radius:8px;background:rgba(52,211,153,.12);border:1px solid #34d399}
+.fb-item{border-top:1px solid rgba(255,255,255,.08);padding:7px 0;font-size:12px}
+.fb-st{display:inline-block;border-radius:8px;padding:0 7px;font-size:10px;font-weight:700;text-transform:uppercase}
+.fb-st-submitted{background:#444;color:#ddd}.fb-st-in_progress{background:#f59e0b;color:#111}.fb-st-ready{background:#34d399;color:#062}.fb-st-declined{background:#7f1d1d;color:#fdd}
+#fb-banner{display:none;position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:950;background:#065f46;color:#ecfdf5;border:1px solid #34d399;border-radius:10px;padding:10px 16px;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.4)}
 </style>
 </head>
 <body>
@@ -3421,7 +3435,7 @@ const DIALOGUE_RULES=`DIALOGUE FORMAT ("live action"; this OVERRIDES any narrati
 - One clear turning-point line that flips the problem (the reveal). The final character line pays off the cold open by calling back to it.
 - Voices: Jordan curious, a little anxious; Marcus calm, warm, concrete; Dee quick and practical; Priya organised and direct; Mr. Okafor old-school and dry. Only these characters speak.
 - Length: 650-900 spoken words (speaker tags do not count). Keep every SPEAKER: tag exactly as written when revising.`;
-function fmtSys(sys){ return dialogueOn()? sys+'\n\n'+DIALOGUE_RULES : sys; }
+function fmtSys(sys){ return (dialogueOn()? sys+'\n\n'+DIALOGUE_RULES : sys)+fbBlock(['research','script','voices']); }
 function parseDialogue(text){
   return String(text||'').split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
     const t=splitTag(l); const any=l.match(ANY_TAG_RE);
@@ -3642,6 +3656,182 @@ function loadFormatUI(){
   renderVoiceLockUI();
 }
 function flashOk(id){ const e=document.getElementById(id); if(!e) return; e.style.display='block'; setTimeout(()=>{e.style.display='';},1600); }
+
+
+// ═══ REVIEWER FEEDBACK (Chris) ═══════════════════════════════════════════════
+// Every step has a feedback box. Items go to the render service (POST /feedback,
+// same access key), which also appends them to feedback/inbox.jsonl for pickup.
+// "episode" items are applied here: the comment is fed into that step's prompt and
+// the step's output is regenerated. "tool" items are queued for the developer.
+// Accepted suggestions come back as the feedback memory and are injected into the
+// script, director and image prompts.
+const FB_STEPS=[['research','Research'],['script','Script'],['voices','Voices'],['registry','Character registry'],['shotlist','Shot list'],['stills','Stills'],['clips','Clips'],['lipsync','Lip-sync'],['music','Music'],['edit','Edit'],['final','Final review']];
+const FB_ITEMS_KEY='cfa_fb_items_v1', FB_MEM_KEY='cfa_fb_memory_v1', FB_NOTES_KEY='cfa_fb_notes_v1';
+const FB_THANKS="Thanks Chris, your feedback was received. Changes may take up to 24 hours. You'll see a Changes ready notice here when they're live.";
+let fbRating=0, fbPollTimer=null, fbSince=0;
+function fbJSON(k,d){ try{ const v=JSON.parse(safeGetItem(k)||'null'); return v==null?d:v; }catch(e){ return d; } }
+function fbItems(){ const v=fbJSON(FB_ITEMS_KEY,[]); return Array.isArray(v)?v.filter(x=>x&&typeof x.id==='string'):[]; }
+function fbSetItems(a){ safeSetItem(FB_ITEMS_KEY, JSON.stringify(a.slice(-200))); }
+function fbMemory(){ const v=fbJSON(FB_MEM_KEY,[]); return Array.isArray(v)?v.filter(x=>x&&typeof x.rule==='string'):[]; }
+function fbNotes(){ const v=fbJSON(FB_NOTES_KEY,{}); return v&&typeof v==='object'&&!Array.isArray(v)?v:{}; }
+// Prompt block: accepted tool suggestions (memory) + this episode's pending notes for the given steps.
+function fbBlock(steps){
+  const mem=fbMemory().filter(m=>!m.step||steps.includes(m.step)).map(m=>'- '+String(m.rule).slice(0,600));
+  const notes=fbNotes(), en=[];
+  steps.forEach(st=>(Array.isArray(notes[st])?notes[st]:[]).forEach(n=>en.push('- ['+st+(n.ref?' · '+n.ref:'')+'] '+String(n.comment).slice(0,1200))));
+  let out='';
+  if(mem.length) out+='\n\nREVIEWER FEEDBACK MEMORY (standing rules from the reviewer; follow them unless they conflict with the hard rules above):\n'+mem.slice(-30).join('\n');
+  if(en.length) out+='\n\nREVIEWER NOTES FOR THIS EPISODE (apply these):\n'+en.slice(-20).join('\n');
+  return out;
+}
+function fbCurrentStep(){
+  const sc=(typeof sceneData!=='undefined'&&sceneData&&sceneData[currentScene])||null;
+  const rs=document.getElementById('render-screen');
+  if(rs&&rs.offsetParent!==null) return 'final';
+  switch(typeof curScreen!=='undefined'?curScreen:1){
+    case 1: return 'research'; case 2: case 3: return 'script'; case 4: return 'shotlist'; case 5: return 'voices';
+    case 6: return sc&&sc.tag==='TALK'?'lipsync':(sc&&sc.tag==='VIDEO'?'clips':'stills');
+    default: return 'edit';
+  }
+}
+function fbRefOptions(){
+  const step=document.getElementById('fb-step').value, sel=document.getElementById('fb-ref');
+  const opts=[['','Whole step']];
+  if(['stills','clips','lipsync','shotlist','edit','music'].includes(step) && typeof sceneData!=='undefined' && Array.isArray(sceneData))
+    sceneData.forEach((s,i)=>{ if(s) opts.push(['shot '+(i+1),'Shot '+(i+1)+' — '+String(stripTags(s.line||'')).replace(/^\d+\.\s*/,'').slice(0,50)]); });
+  else if(['script','voices','research'].includes(step)){
+    const txt=(document.getElementById('txed')||{}).value||finalScript||genScript||'';
+    txt.split(/\n+/).map(l=>l.trim()).filter(Boolean).slice(0,80).forEach((l,i)=>opts.push(['line '+(i+1),'Line '+(i+1)+' — '+l.slice(0,50)]));
+  }
+  sel.innerHTML=''; opts.forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; sel.appendChild(o); });
+  if(['stills','clips','lipsync'].includes(step) && typeof currentScene==='number') sel.value='shot '+(currentScene+1);
+}
+function fbStars(){
+  const el=document.getElementById('fb-stars'); el.innerHTML='';
+  for(let i=1;i<=5;i++){ const b=document.createElement('button'); b.type='button'; b.textContent='\u2605'; b.className=i<=fbRating?'on':''; b.setAttribute('aria-label',i+' star'+(i>1?'s':'')); b.onclick=()=>{fbRating=i;fbStars();}; el.appendChild(b); }
+}
+function fbOpen(){ fbToggle(true); }
+function fbToggle(show){
+  const p=document.getElementById('fb-panel'); const on=show==null?p.style.display!=='block':show;
+  p.style.display=on?'block':'none';
+  if(!on) return;
+  const st=document.getElementById('fb-step');
+  if(!st.options.length) FB_STEPS.forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; st.appendChild(o); });
+  st.value=fbCurrentStep(); fbRefOptions(); fbStars();
+  document.getElementById('fb-name').value=safeGetItem('cfa_fb_name')||'Chris';
+  document.getElementById('fb-thanks').style.display='none';
+  fbSeen(); fbRenderList(); fbPoll();
+}
+function fbEsc(t){ return escHtml(String(t==null?'':t)); }
+function fbRenderList(){
+  const el=document.getElementById('fb-list'); const items=fbItems().slice().reverse();
+  const label={submitted:'Submitted',in_progress:'In progress',ready:'Ready',declined:'Declined'};
+  el.innerHTML=items.length?items.map(it=>'<div class="fb-item"><span class="fb-st fb-st-'+fbEsc(label[it.status]?it.status:'submitted')+'">'+fbEsc(label[it.status]||'Submitted')+'</span> <b>'+fbEsc((FB_STEPS.find(x=>x[0]===it.step)||[0,it.step])[1])+'</b> · '+(it.kind==='tool'?'tool suggestion':'this episode')+(it.ref?' · '+fbEsc(it.ref):'')+'<div style="color:var(--muted);margin-top:2px">'+fbEsc(String(it.comment||'').slice(0,160))+'</div>'+(it.resolution?'<div style="margin-top:2px">&#x2192; '+fbEsc(it.resolution)+'</div>':'')+'</div>').join(''):'<div style="color:var(--muted);font-size:12px;margin-top:4px">Nothing yet.</div>';
+}
+function fbUnseenReady(){ return fbItems().filter(i=>i.status==='ready'&&!i.seen); }
+function fbBadge(){ const n=fbUnseenReady().length, b=document.getElementById('fb-badge'); if(!b) return; b.textContent=n+' ready'; b.style.display=n?'inline-block':'none'; }
+function fbSeen(){ const a=fbItems(); a.forEach(i=>{ if(i.status==='ready') i.seen=true; }); fbSetItems(a); fbBadge(); }
+function fbHideBanner(){ document.getElementById('fb-banner').style.display='none'; }
+function fbNotify(items){
+  if(!items.length) return;
+  const txt=items.length===1?('your '+((FB_STEPS.find(x=>x[0]===items[0].step)||[0,items[0].step])[1])+' feedback is live.'):(items.length+' feedback items are live.');
+  document.getElementById('fb-banner-text').textContent=txt; document.getElementById('fb-banner').style.display='block';
+  try{ if(window.Notification&&Notification.permission==='granted') new Notification('CFA: Changes ready',{body:txt[0].toUpperCase()+txt.slice(1)}); }catch(e){}
+  fbBadge();
+}
+// Merge server items into the local list; returns items that just became ready.
+function fbMerge(serverItems){
+  const a=fbItems(), byId=Object.fromEntries(a.map(i=>[i.id,i])), fresh=[];
+  (serverItems||[]).forEach(si=>{
+    if(!si||typeof si.id!=='string') return;
+    const cur=byId[si.id];
+    if(!cur) return;   // only track items submitted from this browser
+    if(si.status==='ready'&&cur.status!=='ready') fresh.push(si);
+    Object.assign(cur,{status:si.status,resolution:si.resolution||'',updated:si.updated});
+  });
+  fbSetItems(a); return fresh;
+}
+async function fbPoll(){
+  if(!renderServiceReady()) { const e=document.getElementById('fb-sync'); if(e) e.textContent='(connect the render service in Settings to sync)'; return; }
+  try{
+    const r=await renderFetch('/feedback?since='+encodeURIComponent(fbSince));
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    if(Array.isArray(j.memory)) safeSetItem(FB_MEM_KEY, JSON.stringify(j.memory.slice(-100).map(m=>({step:String(m.step||''),rule:String(m.rule||'').slice(0,600)}))));
+    const fresh=fbMerge(j.items);
+    if(typeof j.now==='number') fbSince=j.now-5;
+    fbNotify(fresh); fbRenderList();
+    const e=document.getElementById('fb-sync'); if(e) e.textContent='synced '+new Date().toLocaleTimeString();
+  }catch(e){ const el=document.getElementById('fb-sync'); if(el) el.textContent='(sync failed: '+(e.message||e)+')'; }
+}
+async function fbSetStatus(id,status,resolution){
+  const a=fbItems(), it=a.find(i=>i.id===id); if(it){ it.status=status; it.resolution=resolution||it.resolution; fbSetItems(a); fbRenderList(); }
+  try{ await renderFetch('/feedback/'+id+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status,resolution})}); }catch(e){}
+  if(status==='ready') fbNotify([it||{step:''}]);
+}
+async function fbSubmit(){
+  const comment=document.getElementById('fb-comment').value.trim();
+  const err=document.getElementById('fb-err'); err.textContent='';
+  if(!comment){ err.textContent='Please write a comment.'; return; }
+  if(!renderServiceReady()){ err.textContent='Connect the render service (URL + access key) in Settings first — feedback is saved there.'; return; }
+  const body={step:document.getElementById('fb-step').value, kind:document.getElementById('fb-kind').value, rating:fbRating, comment,
+    ref:document.getElementById('fb-ref').value, reviewer:document.getElementById('fb-name').value.trim()||'Chris',
+    episode:(typeof selId!=='undefined'&&selId&&typeof V!=='undefined'&&V[selId])?V[selId].title:''};
+  safeSetItem('cfa_fb_name', body.reviewer);
+  const btn=document.getElementById('fb-submit'); btn.disabled=true;
+  let it;
+  try{
+    const r=await renderFetch('/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    it=await r.json(); if(!r.ok) throw new Error(it.error||('HTTP '+r.status));
+  }catch(e){ err.textContent='Could not send feedback: '+(e.message||e); btn.disabled=false; return; }
+  btn.disabled=false;
+  const a=fbItems(); a.push(it); fbSetItems(a);
+  document.getElementById('fb-comment').value=''; fbRating=0; fbStars();
+  const th=document.getElementById('fb-thanks'); th.textContent=FB_THANKS.replace(/^Thanks Chris/,'Thanks '+(body.reviewer.split(/\s+/)[0]||'Chris')); th.style.display='block';
+  fbRenderList();
+  try{ if(window.Notification&&Notification.permission==='default') Notification.requestPermission(); }catch(e){}
+  if(it.kind==='episode') fbApplyEpisode(it);
+}
+// Episode feedback: remember the note for this step's prompts, then regenerate that step's output.
+async function fbApplyEpisode(it){
+  const notes=fbNotes(); (notes[it.step]=Array.isArray(notes[it.step])?notes[it.step]:[]).push({comment:it.comment,ref:it.ref||''}); notes[it.step]=notes[it.step].slice(-10);
+  safeSetItem(FB_NOTES_KEY, JSON.stringify(notes));
+  let done='';
+  try{
+    await fbSetStatus(it.id,'in_progress','Regenerating with your note…');
+    done=await fbRegenerate(it);
+  }catch(e){ done=''; }
+  if(done) await fbSetStatus(it.id,'ready',done);
+  else await fbSetStatus(it.id,'in_progress','Saved — your note will be used the next time this step is generated.');
+}
+async function fbRegenerate(it){
+  const shot=/^shot (\d+)$/.exec(it.ref||''); const idx=shot?parseInt(shot[1],10)-1:null;
+  if(it.step==='script'||it.step==='research'){
+    const ed=document.getElementById('txed'); const cur=(ed&&ed.value)||genScript;
+    if(!cur) return '';
+    const out=await llmComplete({role:'writer', system:fmtSys(SYS_REVISE), maxTokens:8000, effort:'medium',
+      user:'Revise this script to address the reviewer note'+(it.ref?' (about '+it.ref+')':'')+'. Keep everything else.\n\nREVIEWER NOTE:\n'+it.comment+'\n\nSCRIPT:\n'+cur});
+    const txt=String(out&&out.text!=null?out.text:out||'').trim(); if(!txt) return '';
+    genScript=txt; if(ed){ ed.value=txt; onEd(); }
+    return 'Script revised with your note — review it on the Review screen.';
+  }
+  if(it.step==='voices'){ if(!voAudioURL) return ''; regenerateVO(); await generateVO(); return 'Voiceover regenerated.'; }
+  if(['stills','clips','lipsync','registry','shotlist'].includes(it.step)){
+    if(typeof sceneData==='undefined'||!sceneData.length||curScreen!==6) return '';
+    if(idx!=null&&idx>=0&&idx<sceneData.length&&idx!==currentScene) jumpToScene(idx);
+    if(!sceneData[currentScene]) return '';
+    sceneData[currentScene].prompt=''; await generateScene();
+    return sceneData[currentScene].resultURL?('Shot '+(currentScene+1)+' regenerated with your note.'):'';
+  }
+  if(['music','edit','final'].includes(it.step)){
+    if(typeof renderJob==='undefined'||!renderJob) return '';
+    const n=document.getElementById('rs-notes'); if(n) n.value='['+it.step+(it.ref?' · '+it.ref:'')+'] '+it.comment;
+    await reEditRender(false); return 'Re-edit started with your note — the new cut appears when the render finishes.';
+  }
+  return '';
+}
+function fbStartPolling(){ if(fbPollTimer) return; fbBadge(); fbPollTimer=setInterval(fbPoll,60000); setTimeout(fbPoll,1500); }
+document.addEventListener('DOMContentLoaded', fbStartPolling);
 
 // ═══ SCREEN 5 — ELEVENLABS VOICEOVER ═══
 const EL_VOICES={bill:{id:'pqHfZKP75CvOlQylNhV4',name:'Bill'},jamal:{id:'6OzrBCQf8cjERkYgzSg8',name:'Young Jamal'}};
@@ -5080,7 +5270,7 @@ let sceneLook=null;
 async function directorPass(data){
   const beats=data.map((x,i)=>'['+(i+1)+'] '+x.tag+' | on screen: '+(x.characters||'NONE')+(castInScene(x).length?', '+castInScene(x).join(', '):'')+' | '+String(x.line).replace(/^\s*\d+\.\s*/,''));
   const user=(V[selId]?'EPISODE: '+V[selId].title+'\n':'')+'BEATS:\n'+beats.join('\n');
-  const r=await llmComplete({role:'fast', system:SYS_DIRECTOR, user, maxTokens:Math.min(16000,900+data.length*260), effort:'low'});
+  const r=await llmComplete({role:'fast', system:SYS_DIRECTOR+fbBlock(['registry','shotlist','clips','lipsync','edit']), user, maxTokens:Math.min(16000,900+data.length*260), effort:'low'});
   const j=parseDirector(r.text); if(!j) throw new Error('director returned no shot list');
   if(sceneData!==data) return 0;
   sceneLook=j.look||null;
@@ -5151,7 +5341,7 @@ function sceneContextNote(i){
 }
 async function generatePromptForScene(i){
   const s=sceneData[i];
-  const sys=(s.tag==='IMAGE'||s.tag==='TALK') ? SYS_KLING_IMAGE : SYS_KLING_VIDEO;
+  const sys=((s.tag==='IMAGE'||s.tag==='TALK') ? SYS_KLING_IMAGE : SYS_KLING_VIDEO)+fbBlock(s.tag==='TALK'?['registry','stills','lipsync']:s.tag==='VIDEO'?['registry','clips']:['registry','stills']);
 
   // Build the user message — add a Character Note when a secondary person is in the scene
   // so the AI knows to describe them as a distinct new individual, not a variation of Marcus/Jordan
@@ -7039,5 +7229,32 @@ function restart(){
 </script>
 
 
+
+<!-- ═══ Reviewer feedback (Chris) ═══ -->
+<div id="fb-banner" role="status"><b>Changes ready</b> — <span id="fb-banner-text"></span> <button class="btn bsec" style="padding:3px 10px;font-size:11px;margin-left:8px" onclick="fbOpen();fbHideBanner()">View</button> <button class="btn bsec" style="padding:3px 8px;font-size:11px" onclick="fbHideBanner()">&#x2715;</button></div>
+<button id="fb-fab" onclick="fbToggle()" aria-label="Give feedback">&#x1F4AC; Feedback<span id="fb-badge">0</span></button>
+<div id="fb-panel" role="dialog" aria-label="Reviewer feedback">
+  <div style="display:flex;justify-content:space-between;align-items:center"><b>Feedback for this step</b><button class="btn bsec" style="padding:2px 8px;font-size:11px" onclick="fbToggle(false)">&#x2715;</button></div>
+  <label for="fb-step">Step</label>
+  <select id="fb-step" onchange="fbRefOptions()"></select>
+  <label for="fb-kind">Type</label>
+  <select id="fb-kind">
+    <option value="episode">Fix this episode (Grok regenerates this step using your comment)</option>
+    <option value="tool">Suggest a change to the tool (queued for the developer)</option>
+  </select>
+  <label>Rating</label>
+  <div id="fb-stars"></div>
+  <label for="fb-ref">Which shot or line? (optional)</label>
+  <select id="fb-ref"></select>
+  <label for="fb-comment">Comment</label>
+  <textarea id="fb-comment" rows="4" maxlength="4000" placeholder="What should change?"></textarea>
+  <label for="fb-name">Your name</label>
+  <input id="fb-name" maxlength="60">
+  <div class="err" id="fb-err" style="margin-top:6px"></div>
+  <button class="btn" id="fb-submit" style="margin-top:10px;width:100%" onclick="fbSubmit()">Send feedback</button>
+  <div id="fb-thanks"></div>
+  <div style="margin-top:12px"><b style="font-size:12px">Your feedback</b> <span id="fb-sync" style="font-size:10px;color:var(--muted)"></span></div>
+  <div id="fb-list"></div>
+</div>
 </body>
 </html>

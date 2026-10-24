@@ -33,7 +33,7 @@ async def main():
     sp = free_port(); base = "http://127.0.0.1:%d" % sp
     tok = "ui-" + os.urandom(8).hex(); open(os.path.join(d, "token"), "w").write(tok)
     env = dict(os.environ, CFA_RENDER_DATA=os.path.join(d, "data"), CFA_RENDER_TOKEN_FILE=os.path.join(d, "token"), CFA_RENDER_PORT=str(sp),
-               CFA_RENDER_ARGS="--no-grok", CFA_RENDER_MUSIC="", CFA_ALLOWED_ORIGINS=origin)
+               CFA_RENDER_ARGS="--no-grok --no-score --no-whisper --keys-env /dev/null", CFA_RENDER_MUSIC="", CFA_ALLOWED_ORIGINS=origin)
     svc = subprocess.Popen([sys.executable, os.path.join(ROOT, "tools/render/service.py")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(50):
         try: urllib.request.urlopen(base + "/health", timeout=1); break

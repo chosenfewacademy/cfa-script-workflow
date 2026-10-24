@@ -5,6 +5,10 @@
   POST /jobs/<id>/reedit   JSON {"notes": "...", "aspect": "landscape|vertical"} -> {"id": new}
   GET  /jobs/<id>          -> {state, stage, progress, elapsed, eta, queue_position, error, report}
   GET  /jobs/<id>/video    -> final.mp4        GET /jobs/<id>/thumbnail -> thumbnail.jpg
+  POST /feedback           JSON {step, kind: episode|tool, rating 1-5, comment, ref, reviewer, episode} -> item
+  GET  /feedback           -> {items: [...], memory: [...]}   (?since=<epoch> for changes only)
+  GET  /feedback/<id>      -> item          GET /feedback/memory -> {memory: [...]}
+  POST /feedback/<id>/status JSON {status: in_progress|ready|declined, resolution, accept} -> item
   GET  /health             -> {"ok": true, "queue": n}   (no auth)
 
 Auth: "Authorization: Bearer <token>"; the token lives in CFA_RENDER_TOKEN_FILE (never in the repo).
@@ -166,6 +170,91 @@ def load_jobs():
         q.put(j["id"])
 
 
+FB_STEPS = ("research", "script", "voices", "registry", "shotlist", "stills", "clips", "lipsync", "music", "edit", "final")
+FB_STATUS = ("submitted", "in_progress", "ready", "declined")
+fb_lock = threading.Lock()
+
+
+def fb_dir(*p):
+    d = os.path.join(DATA, "feedback")
+    os.makedirs(os.path.join(d, "items"), exist_ok=True)
+    return os.path.join(d, *p)
+
+
+def fb_clean(v, n):
+    return re.sub(r"[\x00-\x08\x0b-\x1f]", "", str(v or ""))[:n]
+
+
+def fb_items():
+    out = []
+    for f in sorted(os.listdir(fb_dir("items"))):
+        if f.endswith(".json"):
+            try:
+                out.append(json.load(open(fb_dir("items", f))))
+            except (OSError, ValueError):
+                pass
+    return sorted(out, key=lambda x: x.get("created", 0))
+
+
+def fb_memory():
+    try:
+        return [json.loads(l) for l in open(fb_dir("memory.jsonl")) if l.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def fb_write(it):
+    tmp = fb_dir("items", it["id"] + ".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(it, f)
+    os.replace(tmp, fb_dir("items", it["id"] + ".json"))
+
+
+def fb_new(body):
+    step = body.get("step")
+    kind = body.get("kind")
+    if step not in FB_STEPS or kind not in ("episode", "tool"):
+        raise ValueError("step must be one of %s and kind episode|tool" % ",".join(FB_STEPS))
+    comment = fb_clean(body.get("comment"), 4000).strip()
+    if not comment:
+        raise ValueError("comment is required")
+    try:
+        rating = int(body.get("rating") or 0)
+    except (TypeError, ValueError):
+        rating = 0
+    now = time.time()
+    it = {"id": "fb_" + uuid.uuid4().hex[:12], "step": step, "kind": kind, "rating": max(0, min(5, rating)),
+          "comment": comment, "ref": fb_clean(body.get("ref"), 200), "reviewer": fb_clean(body.get("reviewer") or "Chris", 60),
+          "episode": fb_clean(body.get("episode"), 200), "status": "submitted", "resolution": "",
+          "created": now, "updated": now, "history": [{"status": "submitted", "at": now}]}
+    with fb_lock:
+        fb_write(it)
+        with open(fb_dir("inbox.jsonl"), "a") as f:
+            f.write(json.dumps(it) + "\n")
+    return it
+
+
+def fb_status(fid, body):
+    st = body.get("status")
+    if st not in FB_STATUS[1:]:
+        raise ValueError("status must be in_progress, ready or declined")
+    with fb_lock:
+        path = fb_dir("items", fid + ".json")
+        it = json.load(open(path))
+        now = time.time()
+        it["status"], it["updated"] = st, now
+        if body.get("resolution") is not None:
+            it["resolution"] = fb_clean(body.get("resolution"), 2000)
+        it["history"].append({"status": st, "at": now})
+        if body.get("accept") and st == "ready" and not it.get("accepted"):
+            it["accepted"] = True
+            rule = fb_clean(body.get("rule") or it["comment"], 600)
+            with open(fb_dir("memory.jsonl"), "a") as f:
+                f.write(json.dumps({"id": it["id"], "step": it["step"], "rule": rule, "at": now}) + "\n")
+        fb_write(it)
+    return it
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "cfa-render/1"
 
@@ -222,11 +311,23 @@ class H(BaseHTTPRequestHandler):
         return [x for x in u.path.split("/") if x], parse_qs(u.query)
 
     def do_GET(self):
-        parts, _ = self.route()
+        parts, qs = self.route()
         if parts == ["health"]:
             return self.send(200, {"ok": True, "queue": sum(1 for j in jobs.values() if j["state"] in ("queued", "running"))})
         if not self.origin_ok() or not self.authed():
             return
+        if parts[:1] == ["feedback"]:
+            if parts == ["feedback"]:
+                try:
+                    since = float((qs.get("since") or ["0"])[0])
+                except ValueError:
+                    since = 0
+                return self.send(200, {"items": [i for i in fb_items() if i["updated"] > since], "memory": fb_memory(), "now": time.time()})
+            if parts == ["feedback", "memory"]:
+                return self.send(200, {"memory": fb_memory()})
+            if len(parts) == 2 and re.fullmatch(r"fb_[0-9a-f]{12}", parts[1]) and os.path.exists(fb_dir("items", parts[1] + ".json")):
+                return self.send(200, json.load(open(fb_dir("items", parts[1] + ".json"))))
+            return self.send(404, {"error": "not found"})
         if len(parts) >= 2 and parts[0] == "jobs" and parts[1] in jobs:
             j = jobs[parts[1]]
             if len(parts) == 2:
@@ -273,6 +374,18 @@ class H(BaseHTTPRequestHandler):
             aspect = "vertical" if (qs.get("aspect") or [""])[0] == "vertical" else "landscape"
             j = new_job(tmp, aspect, (qs.get("notes") or [""])[0])
             return self.send(202, public(j))
+        if parts[:1] == ["feedback"]:
+            try:
+                body = json.loads(self.rfile.read(min(n, 65536)) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("JSON object expected")
+                if parts == ["feedback"]:
+                    return self.send(201, fb_new(body))
+                if len(parts) == 3 and parts[2] == "status" and re.fullmatch(r"fb_[0-9a-f]{12}", parts[1]) and os.path.exists(fb_dir("items", parts[1] + ".json")):
+                    return self.send(200, fb_status(parts[1], body))
+            except ValueError as e:
+                return self.send(400, {"error": str(e)})
+            return self.send(404, {"error": "not found"})
         if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "reedit" and parts[1] in jobs:
             try:
                 body = json.loads(self.rfile.read(min(n, 65536)) or b"{}")
