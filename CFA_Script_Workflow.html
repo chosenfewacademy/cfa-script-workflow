@@ -4316,7 +4316,7 @@ async function buildFinalEditZip(say){
       } else missing.push(i+1);
       const t=times[i]||(beatLen(s)?{start:s.tStart,end:s.tEnd}:null);
       segs.push({index:i+1,text:String(s.line||'').replace(/^\s*\d+\.\s*/,''),tag:s.tag,characters:s.characters||'',
-        media, mediaType:media?kind:'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:s.overlay||'', motion:s.motion||'',
+        media, mediaType:media?kind:'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'',
         start:t?t.start:null, end:t?t.end:null});
     }
     say('Packing bundle…');
@@ -5861,7 +5861,18 @@ function composeScenePrompt(s, prompt, {sceneText, styleText, camera}={}){
 const NO_TEXT_RULE='NO WRITING ANYWHERE: no visible text, letters, numbers, words, signs, labels, logos, captions, headlines or handwriting. Papers, books, notebooks, screens, charts and signs show only blank space, simple shapes, bars or soft unreadable grey lines.';
 const TEXT_ALLOWED_RULE='Only the specific words the script line requires may appear, spelled exactly and large enough to read; no other text anywhere.';
 const NEEDS_TEXT_RE=/["“][^"”]{2,40}["”]|\b(writes?|wrote|written|writing|scribbles?|underlin\w*|circles?d?|headline|sign (says|reads)|reads? (the|a|it|that)\b|label(l?ed)? |typed?|types)\b/i;
-function beatNeedsText(s){ return NEEDS_TEXT_RE.test(String(s?.line||'')); }
+// OVERLAY-ONLY TEXT (default on): images never carry words; any words the viewer must read are drawn
+// by the renderer as a clean overlay (segment.overlay), so no garbled or invented text reaches the frame.
+function overlayOnly(){ return safeGetItem('cfa_overlay_only')!=='0'; }
+function beatNeedsText(s){ return !overlayOnly() && NEEDS_TEXT_RE.test(String(s?.line||'')); }
+const READ_CUE_RE=/\b(writes?|wrote|written|scribbles?|underlin\w*|headline|sign (says|reads)|reads?|label(l?ed)?|typed?|types|screen (said|says|showed|shows))\b/i;
+function beatOverlayText(s){
+  const own=String(s?.overlay||'').trim(); if(own) return own.split(/\s+/).slice(0,6).join(' ');
+  const line=String(s?.line||'');
+  if(!READ_CUE_RE.test(line)) return '';
+  const q=line.match(/["“]([^"”]{2,40})["”]/); if(!q) return '';
+  const w=q[1].trim().split(/\s+/); return w.length<=6?w.join(' ').replace(/\bcrypto\w*/gi,'digital assets'):'';
+}
 // ═══ STYLE ANCHOR — every character and every image in the Marcus/Jordan art style ═══
 // Written spec (in every prompt) + the Marcus/Jordan sheets sent as style references to every
 // still, + a vision check against those sheets that regenerates drifting results.

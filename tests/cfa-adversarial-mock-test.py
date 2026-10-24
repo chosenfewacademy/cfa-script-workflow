@@ -186,7 +186,7 @@ async def main():
             check('story: research brief fed into plan+draft', 'RESEARCH BRIEF' in SC.get('lastDraftUser',''))
             check('story: read-aloud critic ran once', cnt.get('readaloud',0)==1, cnt.get('readaloud'))
             check('story: read-aloud scores shown', 'flow 9/10' in await J(pg,"()=>document.getElementById('research-panel').textContent"))
-            check('happy: text spend tracked (plan 0.0005 + draft + revise + length-fit 0.005 each)', abs(await J(pg,'()=>textSpend')-0.0155)<1e-6, await J(pg,'()=>textSpend'))
+            check('happy: text spend tracked (fast planner/critic/hook + draft + revise + length-fit)', abs(await J(pg,'()=>textSpend')-0.0165)<1e-6, await J(pg,'()=>textSpend'))
             await go_seg(pg); check('happy: segments', await J(pg,"()=>(segScript.match(/^\\d+\\./gm)||[]).length")>=3)
             await go_scenes(pg)
             st=await J(pg,"()=>({n:sceneData.length,consec:sceneData.some((s,i)=>i&&s.tag==='VIDEO'&&sceneData[i-1].tag==='VIDEO'),prompts:sceneData.every(s=>s.prompt)})")
@@ -490,7 +490,7 @@ async def main():
             # length enforcement: short mock script → one fit pass + UI flag; in-range fit output is used
             f0=cnt.get('fit',0)
             await J(pg,"()=>goTo(1,'left')"); await go_review(pg)
-            check('length: out-of-range triggers exactly one fit pass', cnt.get('fit',0)-f0==1, cnt.get('fit',0)-f0)
+            check('length: out-of-range triggers a fit pass plus at most 2 final hard fits', 1<=cnt.get('fit',0)-f0<=3, cnt.get('fit',0)-f0)
             check('length: review flags out-of-range words', 'outside the 650' in await J(pg,"()=>document.getElementById('e3').textContent"))
             SC['fitOut']=' '.join(['word']*780)
             await J(pg,"()=>goTo(1,'left')"); await go_review(pg)
@@ -575,6 +575,7 @@ async def main():
             st=await J(pg,"()=>({m:sceneData[0].resultModel,qa:sceneData[0].styleQA,box:document.getElementById('qa-gpt-text').checked})")
             check('no-text: plain beat forbids writing in the prompt', gl and 'NO WRITING ANYWHERE' in gl[0], gl[:1])
             check('no-text: stray writing on a plain beat triggers a redo, not a GPT pass', len(gl)==2 and 'remove ALL text' in gl[1] and cnt.get('oai',0)==o0 and '+ GPT' not in st['m'] and st['box'], (len(gl),st))
+            await J(pg,"()=>localStorage.setItem('cfa_overlay_only','0')")  # in-image text path (overlay-only off)
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].line='1. Jordan writes \"October 2008\" in the notebook.';sceneData[0].prompt='Jordan writing in a notebook';}")
             o0=cnt.get('oai',0); SC['falLog']=[]; SC['vision']=[{'style_score':9,'style_match':True,'has_text':True,'text':['Octobr 2008'],'identity':[{'name':'Jordan','visible':True,'score':9}]}]
             await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
@@ -590,6 +591,7 @@ async def main():
             # Identity check
             r=await J(pg,"()=>[beatNeedsText({line:'Jordan almost nodded.'}),beatNeedsText({line:'Marcus had underlined October 2008.'}),beatNeedsText({line:'\"People made money on this.\"'})]")
             check('no-text: needs-text detector', r==[False,True,True], r)
+            await J(pg,"()=>localStorage.removeItem('cfa_overlay_only')")
             await J(pg,"()=>{sceneData[0]={line:'1. Jordan sits at the desk.',tag:'IMAGE',characters:'JORDAN',prompt:'Jordan at desk',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''};}")
             SC['falLog']=[]; v0=cnt.get('vision',0)
             off={'style_score':9,'style_match':True,'has_text':False,'text':[],'identity':[{'name':'Jordan','visible':True,'score':3,'problems':'older, darker hair, heavier build'}]}
@@ -679,6 +681,20 @@ async def main():
             check('director: junk reply falls back for every beat', all(x['p'] and not x['d'] for x in sd), sd)
             check('director: no page errors', not [e for e in errsd if 'pageerror' in e], errsd[:3])
             await ctxd.close()
+            # ── overlay-only text ──
+            ctxo,pgo,errso=await newpage(b)
+            r=await J(pgo,"""()=>{const a={line:'He wrote "check the first four" in the notebook.',characters:'JORDAN',tag:'IMAGE'};
+              const b={line:'"Card declined," Dee said.',characters:'JORDAN',tag:'IMAGE'};
+              const c={line:'Marcus walked in.',overlay:'one two three four five six seven',characters:'MARCUS',tag:'IMAGE'};
+              const p=composeScenePrompt(a,'Jordan at the desk.');
+              localStorage.setItem('cfa_overlay_only','0'); const p2=composeScenePrompt(a,'Jordan at the desk.'); localStorage.removeItem('cfa_overlay_only');
+              return {noText:p.includes('NO WRITING ANYWHERE'), needs:beatNeedsText(a), ova:beatOverlayText(a), ovb:beatOverlayText(b), ovc:beatOverlayText(c), old:p2.includes('Only the specific words')};}""")
+            check('overlay: a writing beat still forbids text in the image', r['noText'] and not r['needs'], r)
+            check('overlay: the needed words become the overlay', r['ova']=='check the first four', r)
+            check('overlay: plain dialogue gets no overlay', r['ovb']=='', r)
+            check('overlay: director overlay capped at 6 words', len(r['ovc'].split())==6, r)
+            check('overlay: toggle off restores in-image text', r['old'], r)
+            await ctxo.close()
             # ── audit fixes ──
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sessionStorage.setItem('cfa_openai_key','sk-test');}")
             SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
@@ -697,6 +713,7 @@ async def main():
             await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
             r=await J(pg,"()=>[sceneData[0].styleQA, sceneData[0].resultModel]")
             check('audit2: GPT clean is re-checked; text that survives two passes stays flagged', cnt.get('oai',0)-o0==2 and r[0]['strayText'] is True and 'text remains' in (r[1] or ''), (cnt.get('oai',0)-o0, r))
+            await J(pg,"()=>localStorage.setItem('cfa_overlay_only','0')")  # in-image text path (overlay-only off)
             r=await J(pg,"()=>{sceneData[0].line='1. Jordan nearly typed the shop password into the exchange.'; return beatNeedsText(sceneData[0])}")
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;}")
             o0=cnt.get('oai',0)
@@ -705,6 +722,7 @@ async def main():
             body=SC.get('oaiBody',b'').decode('latin1')
             q=await J(pg,"()=>sceneData[0].styleQA")
             check('audit2: on a words beat, gibberish beyond the script line is treated as stray and GPT keeps only script words', (not r or cnt.get('oai',0)-o0==1) and 'ONLY words from this script line' in body and q['strayText'] is False, (r, cnt.get('oai',0)-o0, q, body[:300]))
+            await J(pg,"()=>localStorage.removeItem('cfa_overlay_only')")
             r=await J(pg,"()=>deRealize('A dimly lit, cinematic room at night, laptop glowing')")
             check('audit: realism/darkness words are neutralised in still prompts', 'cinematic' not in r and 'dimly' not in r and 'night' not in r and 'glow' not in r, r)
             r=await J(pg,"()=>{const keep=currentScene; sceneData[keep].prompt=sceneData[keep].prompt||'A test prompt'; document.getElementById('s6-prompt').value=''; jumpToScene(keep); return document.getElementById('s6-prompt').value}")

@@ -2262,7 +2262,13 @@ You are a storyteller, not a form-filler. The notes below are ingredients, never
 - Every sentence follows from the one before it. Use cause-and-effect bridges a listener can hear: so, because, which meant, that's when, by the time, but, then. A newcomer must never wonder "wait, how did we get here?"
 - Rhythm like speech: mostly flowing sentences of 8–20 words, with a short one (2–6 words) now and then for weight. Never stack fragments.
 - Dialogue does the heavy lifting. Put spoken lines in quotation marks with contractions, interruptions and plain words ("Hang on. Who sent that?"). Marcus talks like a friend at a workbench, not a teacher at a whiteboard. Jordan asks what a real beginner would ask, including the slightly embarrassing questions.
-- Explain the concept INSIDE the action: Marcus shows something on Jordan's phone, or at the bench, or in the green notebook, and explains it in four to six short causal sentences, using a bike-shop comparison where it really fits. Then the story moves on and the explanation is immediately put to use. No textbook paragraphs and no definitions read out like a glossary.
+- Explain the concept INSIDE the action: Marcus shows something on Jordan's phone, or at the bench, or in the green notebook, and explains it in at most THREE short sentences at a time; then Jordan reacts, asks, or does something before Marcus says more. Use a bike-shop comparison where it really fits. Then the story moves on and the explanation is immediately put to use. No textbook paragraphs and no definitions read out like a glossary.
+- NO INFO-DUMP DIALOGUE: nobody speaks more than three sentences in a row, nobody recites numbers or specs a friend wouldn't say aloud, and nobody tells the other something they both already know. Prefer one vivid fact over three precise ones.
+- THE OPENING IS SACRED: the first sentence is at most 12 words and is a person hitting a problem right now (a moment, a line of dialogue, or a question). No logistics, inventory or background before the problem. Backstory comes later, one clause at a time.
+- PLACE CONSISTENCY: every scene happens in ONE named place. When characters move, say so in a sentence of its own ("Upstairs at the workbench, …"). Never let a line imply they are somewhere they are not, and never refer to "downstairs/upstairs" without having established where everyone is.
+- ONE IDEA PER BEAT: never cram several facts or claims into one line. A real-world anchor (a date, a headline) gets its own moment, introduced by a character for a reason, then reacted to.
+- NO TEXTBOOK OR SLOGAN LINES: never write abstract summaries ("The crash sits beside the announcement"), definitions in passive voice, or ad-copy fragments ("Money that works online, no bank required"). If Marcus explains a mechanism, he says it as a person would to a friend, tied to the object in front of them.
+- Every character who appears gets a reason to be there that a newcomer understands within one sentence.
 - Plain English. Past tense. Concrete sensory details from the series world (the bell on the shop door, grease on Marcus's thumb, the green notebook).
 
 STORY SHAPE (the "story pull" formula, adapted from the best first-person story channels; keep it grounded, no melodrama)
@@ -2845,7 +2851,7 @@ logic (a newcomer always knows where we are, who is talking and why things happe
 human (sounds like a person telling a story, not a template: natural dialogue in quotes with contractions, varied rhythm, no list or textbook phrasing, no labels such as "trigger" or "lesson"),
 story_pull (a hook that poses one question the viewer needs answered and hurts a little, stakes with a clock, constant visible progress, failed obvious fixes or a light B-plot as conflict, an outcome uncertain until late then answered quickly, a calm payoff that answers the hook; any line that doesn't move toward the answer counts against this — cut it),
 accuracy (every digital-asset claim is correct; nothing invented).
-Then list the weakest lines (quote them) and fix them. Rewrite ONLY what needs it: smooth transitions, make dialogue sound spoken, turn textbook passages into Marcus explaining in the moment, fix any logic gap, fix any factual error. Keep the story, the characters, the facts, the hook and the ending. Keep 650-900 words. Always "digital assets", never "crypto". No banned clichés ("here's the thing", "journey", "navigate", "game-changer", "turns out", "the truth is", "next time", "stay tuned").
+Never lengthen the first sentence; if it is over 12 words or opens with background instead of a problem, rewrite it into a sharp hook. Break up any speech longer than three sentences. Watch especially for: a scene's place drifting or contradicting itself; several facts crammed into one line; abstract, textbook or slogan phrasing; characters who appear without a reason. Then list the weakest lines (quote them) and fix them. Rewrite ONLY what needs it: smooth transitions, make dialogue sound spoken, turn textbook passages into Marcus explaining in the moment, fix any logic gap, fix any factual error. Keep the story, the characters, the facts, the hook and the ending. Keep 650-900 words. Always "digital assets", never "crypto". No banned clichés ("here's the thing", "journey", "navigate", "game-changer", "turns out", "the truth is", "next time", "stay tuned").
 
 Return ONLY JSON: {"scores":{"flow":n,"cohesion":n,"logic":n,"human":n,"story_pull":n,"accuracy":n},"problems":["..."],"script":"<the full improved script as plain paragraphs separated by \\n\\n>"}`;
 function parseReadAloud(t){
@@ -2856,7 +2862,11 @@ function parseReadAloud(t){
     return j;
   }catch(e){ return null; }
 }
-const READALOUD_MIN=8;
+const READALOUD_MIN=8, READALOUD_ROUNDS=1;
+const HOOK_MAX_WORDS=12;
+function firstSentence(t){ const m=String(t||'').trim().match(/^[\s\S]*?[.!?](["”’]?)(?=\s|$)/); return m?m[0]:String(t||'').trim().split('\n')[0]; }
+function hookNeedsWork(t){ return wordCount(firstSentence(t))>HOOK_MAX_WORDS; }
+const SYS_HOOK=`You sharpen the opening of a narrated story script for Chosen Few Academy (calm beginner series about digital assets). You receive the FIRST PARAGRAPH only. Rewrite it so: sentence one is at most 12 words and drops us into a person hitting an everyday-money problem right now (a moment, a spoken line in quotes, or a question); sentence two makes the stakes and the clock clear. Keep every fact, name, place and the callback that the paragraph already contains, just reordered and tightened; keep about the same length. Never use the word "crypto". Output ONLY the rewritten paragraph.`;
 
 // Critique + revise pass: an editor fixes what makes drafts feel generic, without changing the story or the brand rules
 const SYS_REVISE=`You are a senior script editor and fact-checker for Chosen Few Academy (CFA), a calm, trust-first beginner digital asset education channel. You receive a narrated Marcus/Jordan script draft. Silently critique it, then output the improved full script.
@@ -3068,7 +3078,7 @@ async function startGen(){
       genResearch=rb.text||'';
       if(genResearch) brief+='\n\nRESEARCH BRIEF (verified facts; use only these for real-world anchors):\n'+genResearch;
       document.getElementById('s2-stat').textContent='Planning the story arc…';
-      const p=await llmComplete({role:'writer', system:SYS_PLAN, user:brief, maxTokens:5000, effort:'low', signal:ctrl.signal});
+      const p=await llmComplete({role:'fast', system:SYS_PLAN, user:brief, maxTokens:5000, effort:'low', signal:ctrl.signal});
       if(genAbort!==ctrl)return;
       plan=(p.text||'').trim();
     }
@@ -3108,12 +3118,12 @@ async function startGen(){
     }
     // Read-aloud naturalness + coherence critic (up to 2 rounds while any score is below the bar)
     if(fullPasses && text.trim() && !truncated){
-      for(let round=0; round<2; round++){
+      for(let round=0; round<READALOUD_ROUNDS; round++){
         if(genAbort!==ctrl)return;
         document.getElementById('s2-stat').textContent='Reading aloud: flow, logic & naturalness check'+(round?' (round 2)':'')+'…';
         let ra=null;
         try{
-          const r=await llmComplete({role:'writer', system:SYS_READALOUD, maxTokens:9000, effort:'medium', signal:ctrl.signal,
+          const r=await llmComplete({role:'fast', system:SYS_READALOUD, maxTokens:9000, effort:'medium', signal:ctrl.signal,
             user:(genResearch?'RESEARCH BRIEF (facts):\n'+genResearch+'\n\n':'')+'NEXT VIDEO / CONTINUITY CONTEXT:\n'+brief.slice(0,1500)+'\n\nSCRIPT:\n'+text.trim()});
           if(!r.truncated) ra=parseReadAloud(r.text);
         }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Read-aloud pass failed:',e.message); }
@@ -3125,6 +3135,31 @@ async function startGen(){
         const low=Object.values(sc).some(v=>Number(v)<READALOUD_MIN);
         if(!low) break;
       }
+    }
+    // Final hard length enforcement (up to 2 tries) — length is a channel rule
+    for(let t=0; fullPasses && text.trim() && t<2; t++){
+      const wc2=wordCount(text);
+      if(wc2>=SCRIPT_WORDS.min && wc2<=SCRIPT_WORDS.max) break;
+      if(genAbort!==ctrl)return;
+      document.getElementById('s2-stat').textContent='Fitting to '+SCRIPT_WORDS.min+'–'+SCRIPT_WORDS.max+' words…';
+      try{
+        const target=wc2>SCRIPT_WORDS.max?800:760;
+        const fit=await llmComplete({role:'fast', system:SYS_REVISE, effort:'low', maxTokens:8000, signal:ctrl.signal,
+          user:'ONLY TASK: this script is '+wc2+' words; it MUST be between '+SCRIPT_WORDS.min+' and '+SCRIPT_WORDS.max+'. Rewrite it to about '+target+' words. '+(wc2>SCRIPT_WORDS.max?'Cut '+(wc2-target)+' words: remove whole redundant sentences and scene padding; keep every accurate explanation, the hook, the reveal and the ending.':'Add about '+(target-wc2)+' words by deepening the explanation inside the scene.')+' Keep the voice, quotes and story. Output only the script.\n\nSCRIPT:\n'+text.trim()});
+        if(genAbort!==ctrl)return;
+        const fw=wordCount(fit.text);
+        if(fit.text.trim() && !fit.truncated && !forbiddenTerms(fit.text).length && Math.abs(fw-800)<Math.abs(wc2-800)) text=fit.text;
+      }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Final fit failed:',e.message); }
+    }
+    // Hook guard: the opening sentence must be a short, problem-first hook
+    if(fullPasses && text.trim() && hookNeedsWork(text)){
+      try{
+        const paras=text.trim().split(/\n\s*\n/);
+        const h=await llmComplete({role:'fast', system:SYS_HOOK, effort:'low', maxTokens:1500, signal:ctrl.signal, user:paras[0]});
+        if(genAbort!==ctrl)return;
+        const np=String(h.text||'').trim();
+        if(np && !h.truncated && !forbiddenTerms(np).length && !hookNeedsWork(np) && Math.abs(wordCount(np)-wordCount(paras[0]))<=25){ paras[0]=np; text=paras.join('\n\n'); }
+      }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Hook guard failed:',e.message); }
     }
     if(genAbort!==ctrl)return; // cancelled or superseded
     if(!text.trim())throw new Error('No content received — please try again');
@@ -4281,7 +4316,7 @@ async function buildFinalEditZip(say){
       } else missing.push(i+1);
       const t=times[i]||(beatLen(s)?{start:s.tStart,end:s.tEnd}:null);
       segs.push({index:i+1,text:String(s.line||'').replace(/^\s*\d+\.\s*/,''),tag:s.tag,characters:s.characters||'',
-        media, mediaType:media?kind:'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:s.overlay||'', motion:s.motion||'',
+        media, mediaType:media?kind:'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'',
         start:t?t.start:null, end:t?t.end:null});
     }
     say('Packing bundle…');
@@ -5826,7 +5861,18 @@ function composeScenePrompt(s, prompt, {sceneText, styleText, camera}={}){
 const NO_TEXT_RULE='NO WRITING ANYWHERE: no visible text, letters, numbers, words, signs, labels, logos, captions, headlines or handwriting. Papers, books, notebooks, screens, charts and signs show only blank space, simple shapes, bars or soft unreadable grey lines.';
 const TEXT_ALLOWED_RULE='Only the specific words the script line requires may appear, spelled exactly and large enough to read; no other text anywhere.';
 const NEEDS_TEXT_RE=/["“][^"”]{2,40}["”]|\b(writes?|wrote|written|writing|scribbles?|underlin\w*|circles?d?|headline|sign (says|reads)|reads? (the|a|it|that)\b|label(l?ed)? |typed?|types)\b/i;
-function beatNeedsText(s){ return NEEDS_TEXT_RE.test(String(s?.line||'')); }
+// OVERLAY-ONLY TEXT (default on): images never carry words; any words the viewer must read are drawn
+// by the renderer as a clean overlay (segment.overlay), so no garbled or invented text reaches the frame.
+function overlayOnly(){ return safeGetItem('cfa_overlay_only')!=='0'; }
+function beatNeedsText(s){ return !overlayOnly() && NEEDS_TEXT_RE.test(String(s?.line||'')); }
+const READ_CUE_RE=/\b(writes?|wrote|written|scribbles?|underlin\w*|headline|sign (says|reads)|reads?|label(l?ed)?|typed?|types|screen (said|says|showed|shows))\b/i;
+function beatOverlayText(s){
+  const own=String(s?.overlay||'').trim(); if(own) return own.split(/\s+/).slice(0,6).join(' ');
+  const line=String(s?.line||'');
+  if(!READ_CUE_RE.test(line)) return '';
+  const q=line.match(/["“]([^"”]{2,40})["”]/); if(!q) return '';
+  const w=q[1].trim().split(/\s+/); return w.length<=6?w.join(' ').replace(/\bcrypto\w*/gi,'digital assets'):'';
+}
 // ═══ STYLE ANCHOR — every character and every image in the Marcus/Jordan art style ═══
 // Written spec (in every prompt) + the Marcus/Jordan sheets sent as style references to every
 // still, + a vision check against those sheets that regenerates drifting results.
