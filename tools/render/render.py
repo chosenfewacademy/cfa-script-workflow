@@ -19,9 +19,15 @@ import argparse, json, math, os, re, shutil, subprocess, sys, tempfile, time, ur
 
 FPS = 30
 XAI_URL = "https://api.x.ai/v1/chat/completions"
-MOTIONS = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "static"]
-TRANSITIONS = {"cut": None, "dissolve": "fade", "fadeblack": "fadeblack"}  # gentle only
+MOTIONS = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "punch_in", "push_in", "static"]
+TRANSITIONS = {"cut": None, "whip": "smoothleft", "dissolve": "fade", "fadeblack": "fadeblack"}
+TRANS_RANGE = {"whip": (0.2, 0.35), "dissolve": (0.5, 1.0), "fadeblack": (0.5, 1.0)}
+FOCI = {"center": (0.5, 0.5), "left": (0.25, 0.45), "right": (0.75, 0.45), "top": (0.5, 0.25), "bottom": (0.5, 0.75)}
+ROLES = ["hook", "tension", "turn", "realization", "resolve"]
 CAPTION_STYLES = ["bold_pop", "clean_lower", "boxed"]
+PUNCH_ZOOM = 1.28      # punch-in framing (second half of a split still)
+SPLIT_OVER = 4.2       # a still held longer than this (outside the realization) is split wide -> punch-in
+TP_RE = re.compile(r"\b(that'?s why|which is why|so that|the point|realiz\w*|not a price|instead|because|the answer|it meant|that was it|finally|suddenly|clicked|understood|that's the)\b", re.I)
 FONT = "Montserrat"
 
 
@@ -185,9 +191,9 @@ def fill_timings(segs, words, total):
     return segs
 
 
-MIN_HOLD = 3.75        # seconds a picture stays up at minimum (short beats share a shot)
-XFADE = 0.9            # default crossfade
-KB_DEFAULT, KB_MAX = 0.045, 0.07   # Ken Burns: slow and subtle
+MIN_HOLD = 1.6         # seconds a picture stays up at minimum (only very short beats share a shot)
+XFADE = 0.8            # default dissolve (realization / resolve only)
+KB_DEFAULT, KB_MAX = 0.06, 0.12    # motion on every shot
 
 
 def add_pauses(voice, words, segs, work, beat_pause=0.6, sentence_pause=0.45):
@@ -309,25 +315,32 @@ def group_shots(segs, cuts, min_hold=MIN_HOLD):
 
 
 # ── Grok edit decision list ──────────────────────────────────────────────────
-EDL_SYSTEM = """You are a senior YouTube video editor for Chosen Few Academy, a calm, unhurried, beginner-friendly
-education channel about digital assets (story-driven 2D illustrated explainers with characters Marcus and Jordan).
-The pace must feel slow and easy to follow. You receive SHOTS (each already holds one or more voiceover beats,
-at least ~3.75 s each) with LOCKED timings and the media for each shot.
+EDL_SYSTEM = """You are a senior short-form story editor for Chosen Few Academy, a calm, trust-first education channel about
+digital assets (story-driven 2D cartoon explainers with Marcus and Jordan). Calm does NOT mean flat: the edit must hold attention.
+You receive SHOTS (one or more voiceover beats each) with LOCKED timings and media type. Plan the edit around the story arc:
+- HOOK (first ~3 s): cold open on the tension, no title card on top of it; the first cut lands fast.
+- TENSION (hook -> turning point): short-short-long rhythm, hard cuts, punch-ins on long stills, motion every shot, something changes every 2-4 s.
+- TURN: the one shot where the story turns (the reveal / the answer starts). Mark it; it gets a whip/hard cut with a riser + impact.
+- REALIZATION (1-2 shots after the turn): slow down — longer holds, slow push, a dissolve, no punch-in. This is the longest hold.
+- RESOLVE: steady, gentle dissolves or cuts to the end.
 Return ONLY a JSON object, no prose:
 {
- "shots":[{"index":int,"motion":"zoom_in|zoom_out|pan_left|pan_right|pan_up|pan_down|static",
-           "intensity":0.02-0.07,"transition_in":"cut|dissolve|fadeblack",
-           "transition_duration":0.8-1.0,"emphasis":["word",...]}],
- "caption_style":{"preset":"clean_lower|boxed|bold_pop","words_per_caption":5-8,"highlight_color":"#RRGGBB","position":"bottom|center"},
- "title_card":{"enabled":bool,"text":"...","subtitle":"...","duration":2.5-4},
+ "arc":{"hook_end_shot":int,"turning_point_shot":int,"realization_shots":[int,...]},
+ "shots":[{"index":int,"role":"hook|tension|turn|realization|resolve",
+           "motion":"zoom_in|zoom_out|pan_left|pan_right|pan_up|pan_down|push_in","intensity":0.03-0.12,
+           "transition_in":"cut|whip|dissolve|fadeblack","transition_duration":0.2-1.0,
+           "punch_in":bool,"focus":"center|left|right|top|bottom","emphasis":["word",...]}],
+ "caption_style":{"preset":"bold_pop|clean_lower|boxed","words_per_caption":2-5,"highlight_color":"#RRGGBB","position":"bottom|center"},
+ "title_card":{"enabled":bool,"text":"...","subtitle":"...","duration":2-3.5},
  "end_card":{"enabled":bool,"text":"...","duration":2.5-4},
  "thumbnail":{"shot_index":int,"text":"max 5 words"}
 }
 Rules: exactly one entry per shot, same index. Durations are fixed by the voice; never invent timing.
-Motion is slow and subtle (intensity 0.03-0.05 typical, never above 0.07); alternate direction between consecutive stills; "static" for video clips.
-Transitions are gentle: dissolve 0.8-1.0 s by default, fadeblack only at a big story turn, plain cut only for a deliberate jolt (rare). First shot transition_in is "cut".
-Captions are calm phrase-level chunks (5-8 words, broken at natural phrase boundaries), not word-by-word pops; 1-2 emphasis words per shot at most.
-On-screen text must say "digital assets", never the word "crypto". Keep text short and calm, no hype."""
+Motion on every shot (videos get "push_in"); alternate direction between consecutive stills; intensity 0.07-0.12 in tension, 0.04-0.06 in realization.
+punch_in=true splits a long still into wide then a tighter punch-in on "focus" (the face or the key object) — use it on long tension/hook stills, never in realization.
+Transitions: "cut" for tension, "whip" (0.2-0.35 s) only for a big scene change and the turn (it gets a whoosh, so use at most 4), "dissolve" 0.6-1.0 s for realization/resolve, "fadeblack" at most once. First shot is "cut".
+Captions are punchy 2-4 word chunks; 1-2 emphasis words per shot (numbers, names, the key noun/verb of the line).
+The title card appears right after the hook, not over it. On-screen text must say "digital assets", never "crypto". No hype words."""
 
 
 def grok_edl(bundle, shots, key, model="grok-4.3", timeout=120):
@@ -346,20 +359,82 @@ def grok_edl(bundle, shots, key, model="grok-4.3", timeout=120):
     return json.loads(txt), j.get("usage", {})
 
 
+STOP = set("the a an and or but of to in on at for with is was were it its he she they his her their that this then than had has have be been as by from not no so just".split())
+
+
+def pick_emphasis(text, k=2):
+    """Numbers first, then mid-sentence names, then the longest content words."""
+    toks = re.findall(r"[A-Za-z0-9'$%.,-]+", text or "")
+    out = []
+    for i, t in enumerate(toks):
+        w = t.strip(".,")
+        if re.search(r"\d", w) and w not in out:
+            out.append(w)
+    for i, t in enumerate(toks):
+        w = t.strip(".,")
+        if i and w[:1].isupper() and not toks[i - 1].endswith(".") and w.lower() not in STOP and w not in out:
+            out.append(w)
+    rest = sorted({t.strip(".,") for t in toks if len(t.strip(".,")) >= 6 and t.lower().strip(".,") not in STOP}, key=lambda w: -len(w))
+    out += [w for w in rest if w not in out]
+    return out[:k]
+
+
+def detect_arc(shots):
+    """Hook = shots starting in the first 3 s; turn = best turning-point cue in 40-85% of the runtime
+    (else the shot at ~62%); realization = the 1-2 shots after it."""
+    n = len(shots)
+    total = shots[-1]["end"] if shots else 1.0
+    hook_end = max([s["index"] for s in shots if s["start"] < 3.0] or [shots[0]["index"]]) if shots else 1
+    best, bscore = None, -1e9
+    for s in shots:
+        pos = s["start"] / total
+        if s["index"] <= hook_end or not (0.35 <= pos <= 0.88):
+            continue
+        sc = 2.0 * min(1, len(TP_RE.findall(s.get("text", "")))) - abs(pos - 0.62) * 3
+        if sc > bscore:
+            best, bscore = s["index"], sc
+    tp = best or min(n, max(hook_end + 1, round(n * 0.62)))
+    real = [i for i in (tp + 1, tp + 2) if i <= n][:2]
+    return {"hook_end_shot": hook_end, "turning_point_shot": tp, "realization_shots": real}
+
+
+def role_of(idx, arc):
+    if idx <= arc["hook_end_shot"]:
+        return "hook"
+    if idx < arc["turning_point_shot"]:
+        return "tension"
+    if idx == arc["turning_point_shot"]:
+        return "turn"
+    if idx in arc["realization_shots"]:
+        return "realization"
+    return "resolve"
+
+
 def fallback_edl(bundle, shots):
-    cycle = ["zoom_in", "pan_right", "zoom_out", "pan_left"]
+    cycle = ["zoom_in", "pan_right", "zoom_out", "pan_left", "pan_up", "pan_down"]
+    arc = detect_arc(shots)
     out, k = [], 0
     for i, s in enumerate(shots):
         vid = s.get("mediaType") == "video"
-        out.append({"index": s["index"], "motion": "static" if vid else cycle[k % len(cycle)],
-                    "intensity": KB_DEFAULT, "transition_in": "cut" if i == 0 else "dissolve",
-                    "transition_duration": 0.0 if i == 0 else XFADE, "emphasis": []})
+        role = role_of(s["index"], arc)
+        dur = s["end"] - s["start"]
+        tr, td = "cut", 0.0
+        if i and role == "turn":
+            tr, td = "whip", 0.3
+        elif i and role == "realization":
+            tr, td = "dissolve", 0.9
+        elif i and role == "resolve":
+            tr, td = ("dissolve", 0.6) if k % 2 == 0 else ("cut", 0.0)
+        out.append({"index": s["index"], "role": role, "motion": "push_in" if vid else cycle[k % len(cycle)],
+                    "intensity": 0.05 if role == "realization" else 0.09, "transition_in": tr, "transition_duration": td,
+                    "punch_in": (not vid) and dur > SPLIT_OVER and role in ("hook", "tension", "resolve"),
+                    "focus": "center", "emphasis": pick_emphasis(s.get("text", ""))})
         k += 0 if vid else 1
     t = bundle.get("title") or "Chosen Few Academy"
     ep = bundle.get("episode")
-    return {"shots": out,
-            "caption_style": {"preset": "clean_lower", "words_per_caption": 7, "highlight_color": "#FFD23F", "position": "bottom"},
-            "title_card": {"enabled": True, "text": t, "subtitle": ("Episode %d" % ep) if ep else "Chosen Few Academy", "duration": 3.5},
+    return {"arc": arc, "shots": out,
+            "caption_style": {"preset": "bold_pop", "words_per_caption": 3, "highlight_color": "#FFD23F", "position": "bottom"},
+            "title_card": {"enabled": True, "text": t, "subtitle": ("Episode %d" % ep) if ep else "Chosen Few Academy", "duration": 2.5},
             "end_card": {"enabled": True, "text": "Subscribe for the next episode", "duration": 3.5},
             "thumbnail": {"shot_index": 1, "text": t}}
 
@@ -386,6 +461,20 @@ def validate_edl(raw, bundle, shots_in):
             except Exception:
                 pass
     problems = []
+    n = len(shots_in)
+    ra = raw.get("arc") if isinstance(raw.get("arc"), dict) else {}
+    arc = dict(fb["arc"])
+    try:
+        he, tp = int(ra.get("hook_end_shot")), int(ra.get("turning_point_shot"))
+        if 1 <= he < tp <= n:
+            arc["hook_end_shot"], arc["turning_point_shot"] = he, tp
+            rs = [int(x) for x in (ra.get("realization_shots") or []) if tp < int(x) <= n][:2]
+            arc["realization_shots"] = rs or [i for i in (tp + 1, tp + 2) if i <= n][:2]
+        else:
+            problems.append("arc out of range; detected arc used")
+    except Exception:
+        if ra:
+            problems.append("arc unreadable; detected arc used")
     if len(by_idx) < max(1, int(0.8 * len(shots_in))):
         raise ValueError("EDL covers %d of %d shots" % (len(by_idx), len(shots_in)))
     shots = []
@@ -395,11 +484,18 @@ def validate_edl(raw, bundle, shots_in):
             problems.append("shot %d missing; fallback used" % base["index"])
             s = f
         dur = base["end"] - base["start"]
-        motion = s.get("motion") if s.get("motion") in MOTIONS else f["motion"]
-        if base.get("mediaType") == "video":
-            motion = "static"
+        role = role_of(base["index"], arc)
+        vid = base.get("mediaType") == "video"
+        motion = s.get("motion") if s.get("motion") in MOTIONS and s.get("motion") not in ("static", "punch_in") else f["motion"]
+        if vid:
+            motion = "push_in"
+        elif motion == "push_in":
+            motion = "zoom_in"
         tr = s.get("transition_in") if s.get("transition_in") in TRANSITIONS else f["transition_in"]
-        td = clamp(s.get("transition_duration"), 0.8, 1.0, XFADE)
+        if role == "realization" and tr == "whip":
+            tr = "dissolve"
+        lo, hi = TRANS_RANGE.get(tr, (0, 0))
+        td = clamp(s.get("transition_duration"), lo, hi, (lo + hi) / 2)
         if i == 0:
             tr, td = "cut", 0.0
         # a transition may use at most 40% of either neighbouring shot
@@ -407,16 +503,21 @@ def validate_edl(raw, bundle, shots_in):
         td = min(td, 0.4 * dur, 0.4 * prev_dur) if i else 0.0
         if tr == "cut" or td < 0.1:
             tr, td = "cut", 0.0
+        punch = bool(s.get("punch_in", f["punch_in"])) and not vid and role != "realization" and dur > 3.2
+        if not vid and dur > SPLIT_OVER and role in ("hook", "tension"):
+            punch = True     # long tension stills always get a punch-in
+        focus = s.get("focus") if s.get("focus") in FOCI else "center"
+        emph = [str(x) for x in (s.get("emphasis") or []) if isinstance(x, (str, int))][:2] or f["emphasis"]
         shots.append({"index": base["index"], "beats": base["beats"], "start": round(base["start"], 3),
                       "end": round(base["end"], 3), "duration": round(dur, 3),
                       "media": base["media"], "mediaType": base["mediaType"], "motion": motion,
-                      "intensity": clamp(s.get("intensity"), 0.02, KB_MAX, KB_DEFAULT),
-                      "transition_in": tr, "transition_duration": round(td, 3),
-                      "emphasis": [str(x) for x in (s.get("emphasis") or []) if isinstance(x, (str, int))][:2]})
+                      "intensity": clamp(s.get("intensity"), 0.03, KB_MAX, KB_DEFAULT) if role != "realization" else clamp(s.get("intensity"), 0.03, 0.06, 0.05),
+                      "transition_in": tr, "transition_duration": round(td, 3), "role": role,
+                      "punch_in": punch, "focus": focus, "emphasis": emph})
     cs = raw.get("caption_style") if isinstance(raw.get("caption_style"), dict) else {}
     hc = cs.get("highlight_color", "")
-    cap = {"preset": cs.get("preset") if cs.get("preset") in CAPTION_STYLES else "clean_lower",
-           "words_per_caption": int(clamp(cs.get("words_per_caption"), 5, 8, 7)),
+    cap = {"preset": cs.get("preset") if cs.get("preset") in CAPTION_STYLES else "bold_pop",
+           "words_per_caption": int(clamp(cs.get("words_per_caption"), 2, 5, 3)),
            "highlight_color": hc if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(hc)) else "#FFD23F",
            "position": cs.get("position") if cs.get("position") in ("bottom", "center") else "bottom"}
 
@@ -424,7 +525,7 @@ def validate_edl(raw, bundle, shots_in):
         c = c if isinstance(c, dict) else {}
         out = {"enabled": bool(c.get("enabled", d["enabled"])),
                "text": screen_text(str(c.get("text") or d["text"]))[:80],
-               "duration": clamp(c.get("duration"), 2.5, 4.0, d["duration"])}
+               "duration": clamp(c.get("duration"), 2.0, 4.0, d["duration"])}
         if "subtitle" in d:
             out["subtitle"] = screen_text(str(c.get("subtitle") or d["subtitle"]))[:80]
         return out
@@ -432,11 +533,61 @@ def validate_edl(raw, bundle, shots_in):
     ti = int(clamp(th.get("shot_index"), 1, len(shots_in), 1))
     if not shots_in[ti - 1].get("media"):
         ti = next((s["index"] for s in shots_in if s.get("media")), 1)
-    return ({"shots": shots, "caption_style": cap,
+    return ({"arc": arc, "shots": shots, "caption_style": cap,
              "title_card": card(raw.get("title_card"), fb["title_card"]),
              "end_card": card(raw.get("end_card"), fb["end_card"]),
              "thumbnail": {"shot_index": ti, "text": screen_text(str(th.get("text") or bundle.get("title") or ""))[:60]}},
             problems)
+
+
+def split_punch_ins(shots, words):
+    """Split each punch_in still at the word gap nearest its middle: wide (planned motion) -> hard cut -> punch-in."""
+    out = []
+    for sh in shots:
+        dur = sh["end"] - sh["start"]
+        if not sh.get("punch_in") or sh.get("mediaType") == "video" or dur <= 3.2:
+            out.append(dict(sh, part=""))
+            continue
+        mid = sh["start"] + dur / 2
+        gaps = [float(w[1]) for w in words if sh["start"] + 1.4 <= float(w[1]) <= sh["end"] - 1.4]
+        cut = min(gaps, key=lambda t: abs(t - mid)) - 0.05 if gaps else mid
+        a = dict(sh, end=round(cut, 3), duration=round(cut - sh["start"], 3), part="a")
+        b = dict(sh, start=round(cut, 3), duration=round(sh["end"] - cut, 3), part="b", motion="punch_in",
+                 transition_in="cut", transition_duration=0.0, intensity=0.04)
+        out += [a, b]
+    for k, sh in enumerate(out):
+        sh["index"] = k + 1
+    return out
+
+
+# ── sound design ─────────────────────────────────────────────────────────────
+def make_sfx(work):
+    """Synthesised, license-free whoosh / riser / impact (one family)."""
+    p = {k: os.path.join(work, k + ".wav") for k in ("whoosh", "riser", "impact")}
+    run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "anoisesrc=color=pink:d=0.6:a=0.6:r=48000",
+         "-af", "bandpass=f=1400:width_type=o:w=2.5,afade=t=in:d=0.32:curve=exp,afade=t=out:st=0.32:d=0.28,volume=1.6", "-ac", "2", p["whoosh"]])
+    run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "anoisesrc=color=white:d=2.4:a=0.25:r=48000",
+         "-f", "lavfi", "-i", "aevalsrc=0.22*sin(2*PI*(140*t+70*t*t)):d=2.4:s=48000",
+         "-filter_complex", "[0]highpass=f=900[n];[n][1]amix=inputs=2:normalize=0,afade=t=in:d=2.3:curve=exp", "-ac", "2", p["riser"]])
+    run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "aevalsrc=0.9*sin(2*PI*52*t)*exp(-4.5*t)+0.25*sin(2*PI*104*t)*exp(-7*t):d=1.0:s=48000",
+         "-ac", "2", p["impact"]])
+    return p
+
+
+def sfx_events(shots, arc_times):
+    ev = []
+    tp = arc_times.get("turn")
+    for sh in shots[1:]:
+        if sh["transition_in"] == "whip":
+            ev.append(("whoosh", max(0, sh["start"] - 0.3), 0.55))
+    if tp:
+        ev.append(("riser", max(0, tp - 2.4), 0.5))
+        ev.append(("impact", tp, 0.8))
+        if not any(abs(t + 0.3 - tp) < 0.2 for k, t, _ in ev if k == "whoosh"):
+            ev.append(("whoosh", max(0, tp - 0.3), 0.55))
+    # whooshes stay sparse: at most 5
+    wh = [e for e in ev if e[0] == "whoosh"][:5]
+    return sorted(wh + [e for e in ev if e[0] != "whoosh"], key=lambda e: e[1])
 
 
 # ── rendering ────────────────────────────────────────────────────────────────
@@ -452,8 +603,11 @@ def render_shot(src, kind, shot, W, H, out, frames):
         cd = media_duration(src) or dur
         speed = min(1.0, cd / dur) if cd < dur else 1.0
         speed = max(speed, 0.67)  # slow at most to 1.5x length, then hold the last frame
+        k = shot.get("intensity", 0.04) if shot.get("motion") == "push_in" else 0.0
+        push = (",zoompan=z='1+%.3f*on/%d':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d"
+                % (min(k, 0.06), max(1, frames - 1), W, H, FPS)) if k else ""
         vf = ("setpts=PTS/%.4f,fps=%d,scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
-              "tpad=stop_mode=clone:stop_duration=%.2f,setsar=1" % (speed, FPS, W, H, W, H, dur + 1))
+              "tpad=stop_mode=clone:stop_duration=%.2f,setsar=1%s" % (speed, FPS, W, H, W, H, dur + 1, push))
         run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
         return
     # still: Ken Burns on a 2x canvas for smooth sub-pixel motion
@@ -473,6 +627,10 @@ def render_shot(src, kind, shot, W, H, out, frames):
         z = "%.3f" % (1 + k)
         a = ease if m == "pan_down" else "(1-%s)" % ease
         x, y = "iw/2-(iw/zoom/2)", "(ih-ih/zoom)*%s" % a
+    elif m == "punch_in":
+        fx, fy = FOCI.get(shot.get("focus"), (0.5, 0.5))
+        z = "%.3f+%.3f*%s" % (PUNCH_ZOOM, k, ease)
+        x, y = "(iw-iw/zoom)*%.2f" % fx, "(ih-ih/zoom)*%.2f" % fy
     else:
         z, x, y = "1", "0", "0"
     vf = ("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1,"
@@ -551,15 +709,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             g_end = min(g_end, W_[groups[gi + 1][0]][1])
         disp = [disp_all[k] for k in g]
         em = emph[shot_of(g_start)]
-        txt = " ".join(("{\\c%s}%s{\\c&H00FFFFFF&}" % (hl, ass_esc(t))) if norm(W_[k][0]) in em else ass_esc(t)
+        txt = " ".join(("{\\c%s\\t(0,120,\\fscx118\\fscy118)\\t(120,260,\\fscx100\\fscy100)}%s{\\c&H00FFFFFF&}" % (hl, ass_esc(t))) if norm(W_[k][0]) in em else ass_esc(t)
                        for t, k in zip(disp, g))
-        ev.append("Dialogue: 1,%s,%s,Cap,,0,0,0,,{\\fad(200,200)}%s" % (ass_time(g_start), ass_time(g_end), txt))
+        pop = "{\\fad(80,120)\\fscx92\\fscy92\\t(0,110,\\fscx100\\fscy100)}" if cap["preset"] == "bold_pop" else "{\\fad(150,150)}"
+        ev.append("Dialogue: 1,%s,%s,Cap,,0,0,0,,%s%s" % (ass_time(g_start), ass_time(g_end), pop, txt))
         cues.append({"start": round(g_start, 3), "end": round(g_end, 3), "text": " ".join(disp)})
     tc, ec = edl["title_card"], edl["end_card"]
     if tc["enabled"]:
-        d = tc["duration"]
-        ev.append("Dialogue: 2,%s,%s,Title,,0,0,0,,{\\an5\\pos(%d,%d)\\fad(300,400)}%s" % (ass_time(0), ass_time(d), W // 2, int(H * 0.40), ass_esc(tc["text"])))
-        ev.append("Dialogue: 2,%s,%s,Sub,,0,0,0,,{\\an5\\pos(%d,%d)\\fad(300,400)}%s" % (ass_time(0.25), ass_time(d), W // 2, int(H * 0.40 + H * 0.085), ass_esc(tc.get("subtitle", ""))))
+        # cold open: the title lands right after the hook, never over it
+        t0 = min(edl.get("arc_times", {}).get("hook_end", 0.0), max(0.0, total - tc["duration"] - 1))
+        d = t0 + tc["duration"]
+        ev.append("Dialogue: 2,%s,%s,Title,,0,0,0,,{\\an5\\pos(%d,%d)\\fad(250,350)}%s" % (ass_time(t0), ass_time(d), W // 2, int(H * 0.30), ass_esc(tc["text"])))
+        ev.append("Dialogue: 2,%s,%s,Sub,,0,0,0,,{\\an5\\pos(%d,%d)\\fad(250,350)}%s" % (ass_time(t0 + 0.2), ass_time(d), W // 2, int(H * 0.30 + H * 0.085), ass_esc(tc.get("subtitle", ""))))
     if ec["enabled"]:
         d = min(ec["duration"], total / 3)
         ev.append("Dialogue: 2,%s,%s,Title,,0,0,0,,{\\an5\\pos(%d,%d)\\fad(400,300)}%s" % (ass_time(total - d), ass_time(total), W // 2, int(H * 0.38), ass_esc(ec["text"])))
@@ -572,20 +733,51 @@ def loudnorm_json(stderr):
     return json.loads(stderr[i:stderr.index("}", i) + 1])
 
 
-def build_audio(voice, music, total, out, work):
-    """Voice (+ optional music ducked with sidechaincompress), 2-pass loudnorm to -14 LUFS / -1 dBTP."""
+def build_sfx_track(events, total, work):
+    if not events:
+        return None
+    p = make_sfx(work)
+    ins, fc = [], []
+    for k, (kind, t, gain) in enumerate(events):
+        ins += ["-i", p[kind]]
+        ms = int(round(t * 1000))
+        fc.append("[%d:a]adelay=%d|%d,volume=%.2f[s%d]" % (k, ms, ms, gain, k))
+    fc.append("%samix=inputs=%d:normalize=0:duration=longest,apad,atrim=0:%.3f[o]" % ("".join("[s%d]" % k for k in range(len(events))), len(events), total))
+    out = os.path.join(work, "sfx.wav")
+    run(["ffmpeg", "-y", "-v", "error"] + ins + ["-filter_complex", ";".join(fc), "-map", "[o]", "-ar", "48000", "-ac", "2", out])
+    return out
+
+
+def music_gain_expr(total, tp):
+    """Music bed builds toward the turning point, peaks just after it, then settles (dB -> linear)."""
+    if not tp:
+        return "pow(10,-18/20)"
+    return ("pow(10,(if(lt(t,%.3f),-25+9*t/%.3f,if(lt(t,%.3f),-15,-20)))/20)" % (tp, max(tp, 0.1), tp + 6))
+
+
+def build_audio(voice, music, total, out, work, sfx=None, turn=None):
+    """Voice + music bed (builds to the turn, ducked under the voice) + sparse SFX; 2-pass loudnorm to -14 LUFS / -1 dBTP."""
     mix = os.path.join(work, "mix.wav")
+    ins = ["-i", voice]
+    fc = ["[0:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=0:%.3f,asplit=2[v][sc]" % total]
+    parts = ["[v]"]
     if music:
-        fc = ("[0:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=0:%.3f,asplit=2[v][sc];"
-              "[1:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=-16dB,aloop=loop=-1:size=2e9,atrim=0:%.3f,"
-              "afade=t=in:d=1.5,afade=t=out:st=%.3f:d=2[m];"
-              "[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=400:makeup=1[duck];"
-              "[v][duck]amix=inputs=2:duration=first:normalize=0[a]") % (total, total, max(0, total - 2))
-        run(["ffmpeg", "-y", "-v", "error", "-i", voice, "-stream_loop", "-1", "-i", music,
-             "-filter_complex", fc, "-map", "[a]", "-ar", "48000", mix])
+        ins += ["-stream_loop", "-1", "-i", music]
+        fc.append("[1:a]aformat=sample_rates=48000:channel_layouts=stereo,aloop=loop=-1:size=2e9,atrim=0:%.3f,"
+                  "volume='%s':eval=frame,afade=t=in:d=0.15,afade=t=out:st=%.3f:d=2[m]" % (total, music_gain_expr(total, turn), max(0, total - 2)))
+        fc.append("[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=400:makeup=1[duck]")
+        parts.append("[duck]")
     else:
-        run(["ffmpeg", "-y", "-v", "error", "-i", voice, "-af",
-             "aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=0:%.3f" % total, "-ar", "48000", mix])
+        fc[0] = fc[0].replace(",asplit=2[v][sc]", "[v]")
+    if sfx:
+        ins += ["-i", sfx]
+        fc.append("[%d:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=0.45[fx]" % (2 if music else 1))
+        parts.append("[fx]")
+    if len(parts) > 1:
+        fc.append("%samix=inputs=%d:duration=first:normalize=0[a]" % ("".join(parts), len(parts)))
+    else:
+        fc.append("[v]anull[a]")
+    run(["ffmpeg", "-y", "-v", "error"] + ins + ["-filter_complex", ";".join(fc), "-map", "[a]", "-ar", "48000", mix])
     r = subprocess.run(["ffmpeg", "-hide_banner", "-i", mix, "-af", "loudnorm=I=-14:TP=-1:LRA=11:print_format=json",
                         "-f", "null", "-"], capture_output=True, text=True)
     m = loudnorm_json(r.stderr)
@@ -653,6 +845,7 @@ def main():
     ap.add_argument("--beat-pause", type=float, default=0.6, help="min silence between beats, padded from timestamps (0 = off)")
     ap.add_argument("--sentence-pause", type=float, default=0.45, help="min silence after a sentence inside a beat (0 = off)")
     ap.add_argument("--no-title", action="store_true")
+    ap.add_argument("--no-sfx", action="store_true", help="skip whooshes / riser / impact")
     ap.add_argument("--no-end-card", action="store_true")
     ap.add_argument("--keep-work", action="store_true")
     a = ap.parse_args()
@@ -707,6 +900,11 @@ def main():
         edl["title_card"]["enabled"] = False
     if a.no_end_card:
         edl["end_card"]["enabled"] = False
+    edl["shots"] = split_punch_ins(edl["shots"], words)
+    tp_shot = next((x for x in edl["shots"] if x.get("role") == "turn"), None)
+    hook_last = [x for x in edl["shots"] if x.get("role") == "hook"]
+    edl["arc_times"] = {"hook_end": round(hook_last[-1]["end"], 3) if hook_last else 0.0,
+                        "turn": round(tp_shot["start"], 3) if tp_shot else None}
     edl["source"] = source
     edl["pauses_added"] = round(added, 3)
     json.dump(edl, open(os.path.join(a.out, "edl.json"), "w"), indent=1)
@@ -733,7 +931,7 @@ def main():
     # assemble: xfade chain (offset = next cut time) + captions
     ass = os.path.join(work, "captions.ass")
     cues = build_ass(words, segs, edl, W, H, total, ass)
-    inputs, fc, prev = [], [], "[0:v]"
+    inputs, fc, prev = [], ["[0:v]settb=1/%d[b0]" % FPS], "[b0]"
     for c in clips:
         inputs += ["-i", c]
     for i in range(1, len(clips)):
@@ -741,14 +939,17 @@ def main():
         tr = TRANSITIONS[shot["transition_in"]]
         lab = "[x%d]" % i
         if tr is None:
-            fc.append("%s[%d:v]concat=n=2:v=1:a=0%s" % (prev, i, lab))
+            fc.append("%s[%d:v]concat=n=2:v=1:a=0,settb=1/%d%s" % (prev, i, FPS, lab))
         else:
-            fc.append("%s[%d:v]xfade=transition=%s:duration=%.3f:offset=%.3f%s" % (prev, i, tr, shot["transition_duration"], round(shot["start"] * FPS) / FPS, lab))
+            fc.append("[%d:v]settb=1/%d[in%d]" % (i, FPS, i))
+            fc.append("%s[in%d]xfade=transition=%s:duration=%.3f:offset=%.3f%s" % (prev, i, tr, shot["transition_duration"], round(shot["start"] * FPS) / FPS, lab))
         prev = lab
     ass_esc_path = ass.replace("\\", "/").replace(":", "\\:")
     fc.append("%sfps=%d,trim=0:%.3f,setpts=PTS-STARTPTS,subtitles='%s'[v]" % (prev, FPS, total, ass_esc_path))
     audio = os.path.join(work, "audio.m4a")
-    build_audio(voice, a.music, total, audio, work)
+    events = [] if a.no_sfx else sfx_events(edl["shots"], edl["arc_times"])
+    sfx = build_sfx_track(events, total, work)
+    build_audio(voice, a.music, total, audio, work, sfx, edl["arc_times"].get("turn"))
     final = os.path.join(a.out, "final.mp4")
     fcs = os.path.join(work, "graph.txt")
     open(fcs, "w").write(";\n".join(fc))
@@ -772,8 +973,11 @@ def main():
               "edl_problems": problems, "grok_usage": usage, "beats": len(segs),
               "voice_raw_duration": voice_raw, "pauses_added": round(added, 3), "pause_count": len(pauses),
               "shots": [{"index": x["index"], "beats": x["beats"], "media": x["media"], "type": x["mediaType"],
-                         "start": x["start"], "duration": x["duration"], "motion": x["motion"],
-                         "transition": x["transition_in"], "xfade": x["transition_duration"]} for x in shots],
+                         "start": x["start"], "duration": x["duration"], "motion": x["motion"], "role": x.get("role"),
+                         "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"]} for x in shots],
+              "arc": edl.get("arc"), "arc_times": edl.get("arc_times"), "sfx_events": [list(e) for e in events],
+              "punch_ins": sum(1 for x in shots if x.get("part") == "b"),
+              "shot_lengths": sorted(round(x["duration"], 2) for x in shots),
               "avg_shot": round(total / len(shots), 3), "min_shot": min(x["duration"] for x in shots),
               "interpolated_beats": [s["index"] for s in segs if s.get("interpolated")],
               "caption_cues": cues, "padded_words": words, "render_seconds": round(time.time() - t0, 1)}

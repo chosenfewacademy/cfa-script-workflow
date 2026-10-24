@@ -95,12 +95,20 @@ def main():
     rep = json.load(open(os.path.join(d, "out_h", "report.json")))
     check(rep["pauses_added"] > 0.5 and abs(rep["duration"] - rep["voice_raw_duration"] - rep["pauses_added"]) < 0.15,
           "pauses padded into voice (+%.2fs) and video follows" % rep["pauses_added"])
-    check(rep["min_shot"] >= render.MIN_HOLD - 0.01, "minimum shot hold %.2fs >= %.2fs" % (rep["min_shot"], render.MIN_HOLD))
-    check(len(rep["shots"]) < 4 and sum(len(s["beats"]) for s in rep["shots"]) == 4, "short beats merged: 4 beats -> %d shots" % len(rep["shots"]))
-    check(all(s["xfade"] >= 0.8 for s in rep["shots"][1:]), "crossfades >= 0.8s")
+    check(rep["min_shot"] >= 1.3, "minimum shot hold %.2fs >= 1.3s" % rep["min_shot"])
+    check(sum(1 for s in rep["shots"] if s["part"] != "b") >= 3, "each beat keeps its own picture where it can (%d shots)" % len(rep["shots"]))
+    check(all(s["motion"] != "static" for s in rep["shots"]), "motion on every shot (videos push in)")
+    check(rep["arc"] and rep["arc"]["turning_point_shot"] > rep["arc"]["hook_end_shot"], "story arc: hook then turning point %r" % rep["arc"])
+    check(rep["shots"][0]["transition"] == "cut" and rep["shots"][0]["role"] == "hook", "cold open on a hook shot")
+    kinds = [e[0] for e in rep["sfx_events"]]
+    check("riser" in kinds and "impact" in kinds and kinds.count("whoosh") <= 5, "sound design: riser + impact on the turn, sparse whooshes %r" % kinds)
     cues = rep["caption_cues"]
-    avg = sum(c["end"] - c["start"] for c in cues) / len(cues)
-    check(len(cues) <= len(words) / 4 and avg >= 1.5, "phrase captions: %d cues for %d words, avg %.2fs on screen" % (len(cues), len(words), avg))
+    wpc = sum(len(c["text"].split()) for c in cues) / len(cues)
+    check(1.5 <= wpc <= 5, "punchy captions: %.1f words per cue" % wpc)
+    ass = open(os.path.join(d, "out_h", "captions.ass")).read()
+    check("\\fscx118" in ass, "keyword emphasis pops in captions")
+    title = [l for l in ass.splitlines() if ",Title," in l][0]
+    check(not title.split(",")[1].startswith("0:00:00.00"), "title card lands after the hook, not over it")
     ws = json.load(zipfile.ZipFile(z).open("bundle.json"))["words"]
     import shutil
     wk = tempfile.mkdtemp()
@@ -142,7 +150,22 @@ def main():
                                 "title_card": {"enabled": True, "text": "Crypto 101"}}, b, shots)
     check(all(s["motion"] in render.MOTIONS and s["transition_in"] in render.TRANSITIONS for s in e["shots"]), "bad motions/transitions coerced")
     check(all(s["intensity"] <= render.KB_MAX for s in e["shots"]), "Ken Burns intensity capped (subtle)")
-    check(all(s["transition_duration"] >= 0.8 for s in e["shots"][1:]), "short Grok crossfade raised to >= 0.8s")
+    check(all(s["transition_in"] == "cut" or s["transition_duration"] >= 0.2 for s in e["shots"][1:]), "transition durations clamped to their type")
+    # arc detection + punch-in split
+    sh = [{"index": i + 1, "start": i * 5.0, "end": i * 5.0 + 5.0, "text": t, "mediaType": "image", "media": "x.png", "beats": [i + 1]}
+          for i, t in enumerate(["Jordan froze.", "Dee said money.", "Banks failed.", "People worried.", "That's why Satoshi wrote it.", "He finally understood.", "Next time."])]
+    arc = render.detect_arc(sh)
+    check(arc["hook_end_shot"] == 1 and arc["turning_point_shot"] == 5 and arc["realization_shots"] == [6, 7], "turning point found from the line (%r)" % arc)
+    fb = render.fallback_edl({"title": "T"}, sh)
+    ev, _ = render.validate_edl(fb, {"title": "T"}, sh)
+    roles = [x["role"] for x in ev["shots"]]
+    check(roles == ["hook", "tension", "tension", "tension", "turn", "realization", "realization"], "roles %r" % roles)
+    check(ev["shots"][4]["transition_in"] == "whip" and ev["shots"][5]["transition_in"] == "dissolve" and not ev["shots"][5]["punch_in"], "turn whips in, realization dissolves and holds")
+    wds = [["w", 0.2 + 0.4 * k, 0.5 + 0.4 * k] for k in range(80)]
+    sp = render.split_punch_ins(ev["shots"], wds)
+    check(len(sp) > len(ev["shots"]) and any(x["motion"] == "punch_in" and x["transition_in"] == "cut" for x in sp), "long tension stills split into wide -> punch-in")
+    check(abs(sum(x["duration"] for x in sp) - 35.0) < 0.01, "splitting keeps total timing")
+    check(render.pick_emphasis("Marcus had underlined October 2008 on the printout.")[:1] == ["2008"], "emphasis picks numbers first")
     check(abs(sum(s["duration"] for s in e["shots"]) - 12.0) < 1e-6, "durations locked to voice, Grok durations ignored")
     check("crypto" not in e["title_card"]["text"].lower(), "card text rewritten to digital assets")
     print("\n%d failure(s)" % len(fails))
