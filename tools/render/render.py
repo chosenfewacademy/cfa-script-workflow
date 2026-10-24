@@ -357,6 +357,7 @@ Rules: exactly one entry per shot, same index. Durations are fixed by the voice;
 Motion on every shot (videos get "push_in"); alternate direction between consecutive stills; intensity 0.07-0.12 in tension, 0.04-0.06 in realization.
 punch_in=true splits a long still into wide then a tighter punch-in on "focus" (the face or the key object) — use it on long tension/hook stills, never in realization.
 Transitions: "cut" for tension, "whip" (0.2-0.35 s) only for a big scene change and the turn (it gets a whoosh, so use at most 4), "dissolve" 0.6-1.0 s for realization/resolve, "fadeblack" at most once. First shot is "cut".
+NARRATOR shots (wides, establishing, B-roll) get gentler motion and are good dissolve points; character lines cut on the speaker change (shot / reverse shot). Narrator captions are rendered in a separate quieter style automatically.
 Captions are punchy 2-4 word chunks; 1-2 emphasis words per shot (numbers, names, the key noun/verb of the line).
 The title card appears right after the hook, not over it. On-screen text must say "digital assets", never "crypto". No hype words."""
 
@@ -825,6 +826,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Cap,{FONT},{size},&H00FFFFFF,&H00FFFFFF,&H00101010,{back},1,0,0,0,100,100,0,0,{border_style},{outline},2,2,{int(W*0.08)},{int(W*0.08)},{margin_v},1
+Style: Narr,{FONT},{int(size*0.86)},&H00C8E8F5,&H00C8E8F5,&H00101010,&H96000000,0,1,0,0,100,100,0,0,1,{max(2, size // 16)},1,2,{int(W*0.1)},{int(W*0.1)},{margin_v},1
 Style: Title,{FONT},{int(H*0.075)},&H00FFFFFF,&H00FFFFFF,&H00101010,&H96000000,1,0,0,0,100,100,0,0,1,{max(3,int(H*0.005))},3,5,{int(W*0.08)},{int(W*0.08)},0,1
 Style: Ovl,{FONT},{int(H*0.045)},&H00FFFFFF,&H00FFFFFF,&H00101010,&H8C1A1A1A,1,0,0,0,100,100,1,0,3,{max(8,int(H*0.012))},0,8,{int(W*0.1)},{int(W*0.1)},{int(H*0.07)},1
 Style: Sub,{FONT},{int(H*0.035)},{hl},&H00FFFFFF,&H00101010,&H96000000,1,0,0,0,100,100,2,0,1,3,2,5,{int(W*0.08)},{int(W*0.08)},0,1
@@ -851,6 +853,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             cur = []
     if cur:
         groups.append(cur)
+    seg_spk = lambda t: next((str(sg.get("speaker") or "") for sg in segs if sg.get("start") is not None and float(sg["start"]) - 0.02 <= t < float(sg.get("end") or 1e9)), "")
     shot_of = lambda t: next((i for i, sh in enumerate(edl["shots"]) if sh["start"] <= t < sh["end"]), len(edl["shots"]) - 1)
     emph = [{norm(x) for x in sh.get("emphasis", [])} for sh in edl["shots"]]
     for gi, g in enumerate(groups):
@@ -866,8 +869,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         txt = " ".join(("{\\c%s\\t(0,120,\\fscx118\\fscy118)\\t(120,260,\\fscx100\\fscy100)}%s{\\c&H00FFFFFF&}" % (hl, ass_esc(t))) if norm(W_[k][0]) in em else ass_esc(t)
                        for t, k in zip(disp, g))
         pop = "{\\fad(80,120)\\fscx92\\fscy92\\t(0,110,\\fscx100\\fscy100)}" if cap["preset"] == "bold_pop" else "{\\fad(150,150)}"
-        ev.append("Dialogue: 1,%s,%s,Cap,,0,0,0,,%s%s" % (ass_time(g_start), ass_time(g_end), pop, txt))
-        cues.append({"start": round(g_start, 3), "end": round(g_end, 3), "text": " ".join(disp)})
+        spk = seg_spk(g_start).upper()
+        if spk == "NARRATOR":
+            # narrator: quieter italic warm-white captions, no pop or highlight, so viewers can tell Bill from the characters
+            ev.append("Dialogue: 1,%s,%s,Narr,,0,0,0,,{\\fad(200,200)}%s" % (ass_time(g_start), ass_time(g_end), " ".join(ass_esc(t) for t in disp)))
+        else:
+            ev.append("Dialogue: 1,%s,%s,Cap,,0,0,0,,%s%s" % (ass_time(g_start), ass_time(g_end), pop, txt))
+        cues.append({"start": round(g_start, 3), "end": round(g_end, 3), "text": " ".join(disp), "speaker": spk or None})
     # overlay words planned per beat (the image itself carries no text)
     for sg in segs:
         ov = screen_text(str(sg.get("overlay") or "")).strip()
@@ -1102,6 +1110,75 @@ def smooth_transitions(shots):
     return shots
 
 
+AUDIO_TAG_RE = re.compile(r"\[[^\]\n]{1,30}\]")
+
+
+def strip_tag_words(words):
+    """Drop ElevenLabs v4 audio tags ([sighs], [short pause]) from word lists so they never reach captions or alignment."""
+    out, inside = [], False
+    for w in words:
+        t = str(w[0])
+        if inside:
+            inside = "]" not in t
+            continue
+        if t.startswith("["):
+            inside = "]" not in t
+            continue
+        out.append(w)
+    return out
+
+
+MOTION_MIN = 0.6        # mean |frame difference| (0-255, 64-px gray) below this = near-frozen shot
+CUT_COLOR_MAX = 70.0    # mean |RGB| jump across a cut (0-255) above this = jarring colour jump
+CUT_POS_MAX = 0.30      # brightness-centroid shift across a cut (fraction of the frame) above this = jarring position jump
+
+
+def _thumb(path, t, n=16):
+    r = subprocess.run(["ffmpeg", "-v", "error", "-ss", "%.3f" % max(0.0, t), "-i", path, "-frames:v", "1", "-vf", "scale=%d:%d" % (n, n),
+                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True)
+    b = r.stdout
+    return [(b[i], b[i + 1], b[i + 2]) for i in range(0, len(b) - 2, 3)] if len(b) >= n * n * 3 else None
+
+
+def _centroid(px, n=16):
+    lum = [(0.299 * r + 0.587 * g + 0.114 * b) for r, g, b in px]
+    tot = sum(lum) or 1.0
+    return (sum(v * (k % n) for k, v in enumerate(lum)) / tot / n, sum(v * (k // n) for k, v in enumerate(lum)) / tot / n)
+
+
+def shot_motion(path, start, dur):
+    """Mean absolute frame-to-frame difference inside one shot (0-255 on a 64-px grey proxy)."""
+    r = subprocess.run(["ffmpeg", "-v", "info", "-ss", "%.3f" % start, "-t", "%.3f" % max(0.2, dur), "-i", path,
+                        "-vf", "scale=64:-2,format=gray,tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG",
+                        "-f", "null", "-"], capture_output=True, text=True)
+    vals = [float(x) for x in re.findall(r"YAVG=([\d.]+)", r.stderr)][1:]
+    return round(sum(vals) / len(vals), 3) if vals else 0.0
+
+
+def motion_qa(path, shots):
+    """Flag near-frozen shots and jarring cuts (colour or position jump) in the final video."""
+    out = {"frozen": [], "jarring_cuts": [], "motion": []}
+    for i, sh in enumerate(shots):
+        a = float(sh["start"]) + float(sh.get("transition_duration") or 0) + 0.05
+        b = float(sh["start"]) + float(sh["duration"]) - 0.05
+        m = shot_motion(path, a, max(0.3, b - a))
+        out["motion"].append(m)
+        if m < MOTION_MIN:
+            out["frozen"].append({"shot": sh.get("index", i), "motion": m, "type": sh.get("mediaType"),
+                                  "fix": "animate this beat (image-to-video) or give the still parallax/idle motion"})
+        if i + 1 < len(shots):
+            nx = shots[i + 1]
+            x0 = _thumb(path, float(nx["start"]) - 0.08)
+            x1 = _thumb(path, float(nx["start"]) + float(nx.get("transition_duration") or 0) + 0.08)
+            if x0 and x1 and len(x0) == len(x1):
+                col = sum(abs(p[0] - q[0]) + abs(p[1] - q[1]) + abs(p[2] - q[2]) for p, q in zip(x0, x1)) / (3.0 * len(x0))
+                c0, c1 = _centroid(x0), _centroid(x1)
+                pos = ((c0[0] - c1[0]) ** 2 + (c0[1] - c1[1]) ** 2) ** 0.5
+                if col > CUT_COLOR_MAX or pos > CUT_POS_MAX:
+                    out["jarring_cuts"].append({"after_shot": sh.get("index", i), "colour_jump": round(col, 1), "position_jump": round(pos, 3)})
+    return out
+
+
 def _tok(t):
     t = t.lower().replace("’", "'")
     t = re.sub(r"[^a-z0-9'%$]+", "", t)
@@ -1142,7 +1219,7 @@ def whisper_check(segs, words, wwords):
     import difflib
     script = []
     for si, s in enumerate(segs):
-        for t in s["text"].split():
+        for t in AUDIO_TAG_RE.sub(" ", s["text"]).split():
             if _tok(t):
                 script.append((_tok(t), si))
     heard = [(_tok(w[0]), w[1], w[2]) for w in wwords if _tok(w[0])]
@@ -1363,7 +1440,7 @@ def main():
     total = media_duration(voice)
     if total <= 0:
         raise SystemExit("voiceover missing or unreadable")
-    words = [w for w in (b.get("words") or []) if isinstance(w, list) and len(w) == 3]
+    words = strip_tag_words([w for w in (b.get("words") or []) if isinstance(w, list) and len(w) == 3])
     segs = sorted(b["segments"], key=lambda s: s["index"])
     for s in segs:
         if s.get("media") and not os.path.exists(os.path.join(d, s["media"])):
@@ -1590,7 +1667,13 @@ def main():
         lipsync_check = lip_offsets(shots, d, voice, work)
     except Exception as e:
         lipsync_check = [{"error": str(e)[:160]}]
-    report = {"final": final, "whisper": whisper, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
+    try:
+        mqa = motion_qa(final, shots)
+        if mqa["frozen"] or mqa["jarring_cuts"]:
+            log("motion QA: %d near-frozen shot(s), %d jarring cut(s)" % (len(mqa["frozen"]), len(mqa["jarring_cuts"])))
+    except Exception as e:
+        mqa = {"error": str(e)[:160]}
+    report = {"final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
               "audio_streams": len(au), "lufs": measure_lufs(final), "edl_source": source,
               "edl_problems": problems, "grok_usage": usage, "beats": len(segs),

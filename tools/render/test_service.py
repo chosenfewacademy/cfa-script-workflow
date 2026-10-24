@@ -83,6 +83,9 @@ def main():
         ch = J("/feedback?since=%f" % t0)[1]
         check([x["id"] for x in ch["items"]] == [tid] and ch["memory"] == mem, "feedback: ?since returns only changed items + memory")
         check(J("/feedback/" + fid)[1]["history"][-1]["status"] == "in_progress", "feedback: item history kept")
+        c, it = J("/feedback/%s/status" % fid, "POST", {"status": "reverted", "resolution": "Reverted to the previous version."})
+        check(c == 200 and it["status"] == "reverted", "feedback: an applied-now change can be reverted")
+        c, it = J("/feedback/%s/status" % fid, "POST", {"status": "in_progress", "resolution": "working"})
         r = subprocess.run([sys.executable, os.path.join(HERE, "fb.py"), "set", fid, "ready", "--resolution", "done by routine"], env=env, capture_output=True, text=True)
         r2 = subprocess.run([sys.executable, os.path.join(HERE, "fb.py"), "inbox"], env=env, capture_output=True, text=True)
         check(r.returncode == 0 and J("/feedback/" + fid)[1]["status"] == "ready" and fid not in r2.stdout and len(r2.stdout.strip().splitlines()) == 9, "feedback: routine CLI marks ready; inbox lists only open items")
