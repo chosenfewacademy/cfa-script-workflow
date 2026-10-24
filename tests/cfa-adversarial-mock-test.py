@@ -34,7 +34,10 @@ async def xai_route(route):
     if 'art-direction QA' in sysmsg:
         cnt['vision']=cnt.get('vision',0)+1
         q=SC.get('vision') or []
+        intro=user[0]['text'] if isinstance(user,list) else ''
+        mm=re.search(r'must appear: ([^.]*)\.',intro); names=[x.strip() for x in mm.group(1).split(',')] if mm else []
         v=q.pop(0) if q else {'style_score':9,'style_match':True,'problems':'','has_text':False,'text':[],'text_garbled':False}
+        if 'identity' not in v: v=dict(v,identity=[{'name':n,'visible':True,'score':9} for n in names])
         return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'choices':[{'message':{'content':json.dumps(v)},'finish_reason':'stop'}],'usage':{}}))
     if 'story editor' in sysmsg and 'senior' not in sysmsg:
         cnt['plan']=cnt.get('plan',0)+1
@@ -465,8 +468,12 @@ async def main():
         if want('pace'):
             for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,SC[k]) if k in('xai','fal','el') else SC[k]
             ctx,pg,errs=await newpage(b)
-            check('pace: Slow is the default', await J(pg,"()=>document.getElementById('el-pace').value")=='slow')
+            check('pace: Calm + expressive is the default', await J(pg,"()=>document.getElementById('el-pace').value")=='expressive')
             await J(pg,"()=>{finalScript='Hello there. Calm now.';selId='v01';goVO();generateVO();}"); await pg.wait_for_timeout(900)
+            vs=(SC.get('elBody') or {}).get('voice_settings',{})
+            check('pace: expressive = unhurried 0.93, looser stability, more style', vs.get('speed')==0.93 and abs(vs.get('stability',0)-0.38)<1e-9 and abs(vs.get('style',0)-0.55)<1e-9, vs)
+            check('pace: expressive recorded', await J(pg,"()=>voPace")=='expressive')
+            await J(pg,"()=>{document.getElementById('el-pace').value='slow';generateVO();}"); await pg.wait_for_timeout(900)
             vs=(SC.get('elBody') or {}).get('voice_settings',{})
             check('pace: slow sends speed 0.9 and +0.1 stability', vs.get('speed')==0.9 and abs(vs.get('stability',0)-0.6)<1e-9, vs)
             check('pace: recorded with the timestamps', await J(pg,"()=>voPace")=='slow' and await J(pg,"()=>voWords.length")>0)
@@ -516,23 +523,45 @@ async def main():
             SC['falLog']=[]; SC['vision']=[dict(bad),{'style_score':9,'style_match':True,'problems':'','has_text':False,'text':[]}]
             await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
             check('style: stops as soon as the check passes', len([u for u,b in SC['falLog'] if 'upload' not in u])==2 and await J(pg,"()=>sceneData[0].styleQA.attempts")==2)
-            # GPT text cleanup — default on, runs when OCR finds writing
+            # No writing unless the beat needs it; GPT cleanup only on those beats
             await J(pg,"()=>{sessionStorage.setItem('cfa_openai_key','oai-test');sceneData[0].resultURL='';}")
-            o0=cnt.get('oai',0); SC['vision']=[{'style_score':9,'style_match':True,'problems':'','has_text':True,'text':['BANK OF AMERCIA'],'text_garbled':True}]
+            o0=cnt.get('oai',0); SC['falLog']=[]; SC['vision']=[{'style_score':9,'style_match':True,'has_text':True,'text':['BANK OF AMERCIA']},{'style_score':9,'style_match':True,'has_text':False,'text':[]}]
             await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
-            st=await J(pg,"()=>({m:sceneData[0].resultModel,u:sceneData[0].resultURL,g:sceneData[0].styleQA.gptText,box:document.getElementById('qa-gpt-text').checked})")
+            gl=[json.loads(b)['prompt'] for u,b in SC['falLog'] if 'upload' not in u]
+            st=await J(pg,"()=>({m:sceneData[0].resultModel,qa:sceneData[0].styleQA,box:document.getElementById('qa-gpt-text').checked})")
+            check('no-text: plain beat forbids writing in the prompt', gl and 'NO WRITING ANYWHERE' in gl[0], gl[:1])
+            check('no-text: stray writing on a plain beat triggers a redo, not a GPT pass', len(gl)==2 and 'remove ALL text' in gl[1] and cnt.get('oai',0)==o0 and '+ GPT' not in st['m'] and st['box'], (len(gl),st))
+            await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].line='1. Jordan writes \"October 2008\" in the notebook.';sceneData[0].prompt='Jordan writing in a notebook';}")
+            o0=cnt.get('oai',0); SC['falLog']=[]; SC['vision']=[{'style_score':9,'style_match':True,'has_text':True,'text':['Octobr 2008'],'identity':[{'name':'Jordan','visible':True,'score':9}]}]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            gl=[json.loads(b)['prompt'] for u,b in SC['falLog'] if 'upload' not in u]
             body=SC.get('oaiBody',b'').decode('latin1')
-            check('gpt text: auto cleanup on by default when OCR finds writing; result replaces the still', cnt.get('oai',0)==o0+1 and st['g'] and '+ GPT' in st['m'] and '/up_' in st['u'] and st['box'], st)
-            check('gpt text: edit keeps style/characters and gets the seen words', 'BANK OF AMERCIA' in body and 'flat 2D cartoon' in body and 'gpt-image' in body, body[:200])
-            await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].prompt='A newspaper headline about the bailout';}")
-            o0=cnt.get('oai',0); SC['vision']=[]
-            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
-            check('gpt text: also runs when the prompt implies text', cnt.get('oai',0)==o0+1)
+            check('gpt text: beat that needs words allows them and gets the GPT cleanup', gl and 'NO WRITING' not in gl[0] and 'Only the specific words' in gl[0] and cnt.get('oai',0)==o0+1 and '+ GPT' in await J(pg,"()=>sceneData[0].resultModel"), gl[:1])
+            check('gpt text: edit keeps style/characters and gets the seen words', 'Octobr 2008' in body and 'flat 2D cartoon' in body and 'gpt-image' in body, body[:200])
             await J(pg,"()=>{setQaToggle('cfa_gpt_text',false);sceneData[0].resultURL='';}")
-            o0=cnt.get('oai',0); SC['vision']=[{'style_score':9,'style_match':True,'has_text':True,'text':['X']}]
+            o0=cnt.get('oai',0); SC['vision']=[{'style_score':9,'style_match':True,'has_text':True,'text':['X'],'identity':[{'name':'Jordan','visible':True,'score':9}]}]
             await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
             check('gpt text: toggle off skips it', cnt.get('oai',0)==o0)
             await J(pg,"()=>{setQaToggle('cfa_gpt_text',true);sessionStorage.removeItem('cfa_openai_key');}")
+            # Identity check
+            r=await J(pg,"()=>[beatNeedsText({line:'Jordan almost nodded.'}),beatNeedsText({line:'Marcus had underlined October 2008.'}),beatNeedsText({line:'\"People made money on this.\"'})]")
+            check('no-text: needs-text detector', r==[False,True,True], r)
+            await J(pg,"()=>{sceneData[0]={line:'1. Jordan sits at the desk.',tag:'IMAGE',characters:'JORDAN',prompt:'Jordan at desk',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''};}")
+            SC['falLog']=[]; v0=cnt.get('vision',0)
+            off={'style_score':9,'style_match':True,'has_text':False,'text':[],'identity':[{'name':'Jordan','visible':True,'score':3,'problems':'older, darker hair, heavier build'}]}
+            SC['vision']=[dict(off),{'style_score':9,'style_match':True,'has_text':False,'text':[],'identity':[{'name':'Jordan','visible':True,'score':9}]}]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            gl=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
+            qa=await J(pg,"()=>sceneData[0].styleQA")
+            check('identity: off-identity Jordan is regenerated with the named problems, then passes', len(gl)==2 and 'wrong look for Jordan' in gl[1]['prompt'] and 'heavier build' in gl[1]['prompt'] and qa['identityMatch'] is True and qa['attempts']==2, (len(gl),qa))
+            jref=await J(pg,"async()=>await getCharacterUrl('Jordan',JORDAN_B64)")
+            mref=await J(pg,"async()=>await getCharacterUrl('Marcus',MARCUS_B64)")
+            check('identity: a Jordan still gets only his own sheet (no Marcus style ref pulling the face)', jref in gl[0]['image_urls'] and mref not in gl[0]['image_urls'], gl[0]['image_urls'])
+            await J(pg,"()=>{sceneData[0].resultURL='';}")
+            SC['falLog']=[]; SC['vision']=[dict(off),dict(off),dict(off)]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            check('identity: retry cap holds (3 tries) and the miss is recorded', len([u for u,b in SC['falLog'] if 'upload' not in u])==3 and await J(pg,"()=>sceneData[0].styleQA.identityMatch")==False)
+            SC['vision']=[]
             r=await J(pg,"()=>[Object.keys(RECURRING_CAST).join(','),!!RECURRING_CAST.Priya.b64,castInScene({line:'Priya hands over the package.'}).join(',')]")
             check('cast: Priya is a regular with a same-style reference sheet', r==['Dee,Okafor,Priya',True,'Priya'], r)
             await J(pg,"()=>{sceneData=window.__sd;}")
@@ -577,7 +606,7 @@ async def main():
             check('export: zip valid (CRCs ok)', z.testzip() is None, names)
             check('export: zip contents', all(n in names for n in ['bundle.json','media/scene_001.png','media/scene_002.mp4','voiceover.mp3','script.txt','segments.txt','beats.srt']), names)
             bj=json.loads(z.read('bundle.json'))
-            check('export: bundle metadata', bj['format']=='cfa-final-edit-bundle' and bj['episode']==7 and bj['title'] and len(bj['segments'])==3 and bj['voicePace']['pace'] in ('slow','normal') and bj['segments'][1]['start']==1.2 and bj['segments'][2]['media'] is None, bj['segments'])
+            check('export: bundle metadata', bj['format']=='cfa-final-edit-bundle' and bj['episode']==7 and bj['title'] and len(bj['segments'])==3 and bj['voicePace']['pace'] in ('slow','normal','expressive') and bj['segments'][1]['start']==1.2 and bj['segments'][2]['media'] is None, bj['segments'])
             check('export: srt has timed beats', '00:00:01,200 --> 00:00:03,300' in z.read('beats.srt').decode())
             check('export: filename', d.suggested_filename.startswith('CFA_FinalEdit_EP07_'), d.suggested_filename)
             check('export: status reports missing media', 'scenes without media: 3' in await J(pg,"()=>document.getElementById('fe-status').textContent"))
