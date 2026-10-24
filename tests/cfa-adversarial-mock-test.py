@@ -666,7 +666,8 @@ async def main():
             await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(4000)
             log=[u for u,b in SC['falLog'] if 'upload' not in u]
             e6=await J(pg,"()=>document.getElementById('e6').textContent")
-            check('clip: a concept clip with no earlier still gets a style-anchored start frame, then Kling O1 (no 5/10 s text-to-video error)', len(log)==2 and 'kling-image/o1' in log[0] and 'o1/image-to-video' in log[1] and 'Duration' not in e6, (log, e6))
+            bd=[json.loads(b) for u,b in SC['falLog'] if 'o1/image-to-video' in u]
+            check('clip: a concept clip with no earlier still gets a style-anchored start frame, then Kling O1 at 5 s (start-only clips must be 5/10 s)', len(log)==2 and 'kling-image/o1' in log[0] and 'o1/image-to-video' in log[1] and 'Duration' not in e6 and bd and bd[0]['duration']=='5' and 'end_image_url' not in bd[0], (log, e6, bd))
             await J(pg,"()=>{sceneData[2].characters='MARCUS'; sceneData.forEach((x,k)=>{ if(k<2) x.resultURL=x._r; });}")
             # ── scene logic ──
             r=await J(pg,"()=>composeScenePrompt({line:'Jordan trues a wheel at the Spoke & Chain workbench.',characters:'JORDAN'},'Jordan at the workbench')")
