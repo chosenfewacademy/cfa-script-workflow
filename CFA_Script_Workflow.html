@@ -5847,7 +5847,7 @@ function sceneIdentityRefs(s){
   return out;
 }
 async function styleRefUrls(){ return [await getCharacterUrl('Marcus',MARCUS_B64), await getCharacterUrl('Jordan',JORDAN_B64)]; }
-const STYLE_QA_SYS='You are a strict art-direction QA checker for a cartoon series. Images 1 and 2 are the LOCKED style references (the show\'s character art). The LAST image is a candidate frame for the same show.\nJudge ONLY rendering style, not content: it must be the same flat 2D cartoon illustration — bold clean dark outlines, flat cel colour with at most one simple shadow tone, simplified cartoon faces/anatomy, no painterly or photographic texture, no realistic lighting/depth-of-field, no 3D render look. Every person in the candidate (including new characters and extras) must be drawn in that same cartoon style.\nAlso list every piece of legible-looking writing (letters, words, numbers, labels — not abstract lines or shapes) in the candidate, and say whether any of it is garbled or misspelled.\nIDENTITY: after the two style references come the reference sheets of the characters who must appear (named in the user message). For EACH named character, find them in the candidate and score identity 0-10 against THEIR sheet: same face shape and features, skin tone, hair style/colour/length, facial hair, glasses, apparent age, body build and outfit colours. A different-looking person of the same gender is a 2-4, not a pass. visible=false if they are not in the frame.\nSCENE LOGIC (judge content here): the user message gives the narration line, the setting, the props that belong there and things that must never appear. Fail scene logic (logic_ok=false) if ANY object does not belong in that setting (e.g. car tyres in a bicycle repair shop — bike shops have thin bicycle wheels, never car tyres), is at an impossible scale or placement (floating, giant, on the wrong surface), is random or nonsensical for the moment, contradicts the narration line, or if the place does not look like the named setting. The listed props are typical, not exhaustive: ordinary items for the moment (papers, notebooks, a laptop, a mug, a phone) are fine — fail only for things that clearly do not belong. Name each problem concretely ("car tyre on the workbench — should be a bicycle wheel").\nReturn JSON only: {"style_score":0-10,"style_match":bool (true only if score>=7),"problems":"short","has_text":bool,"text":["..."],"text_garbled":bool,"identity":[{"name":"...","visible":bool,"score":0-10,"problems":"short"}],"logic_ok":bool,"logic_problems":["..."]}';
+const STYLE_QA_SYS='You are a strict art-direction QA checker for a cartoon series. Images 1 and 2 are the LOCKED style references (the show\'s character art). The LAST image is a candidate frame for the same show.\nJudge ONLY rendering style, not content: it must be the same flat 2D cartoon illustration — bold clean dark outlines, flat cel colour with at most one simple shadow tone, simplified cartoon faces/anatomy, no painterly or photographic texture, no realistic lighting/depth-of-field, no 3D render look. Every person in the candidate (including new characters and extras) must be drawn in that same cartoon style.\nAlso list every piece of legible-looking writing (letters, words, numbers, labels — not abstract lines or shapes) in the candidate, and say whether any of it is garbled or misspelled.\nIDENTITY: after the two style references come the reference sheets of the characters who must appear (named in the user message). For EACH named character, find them in the candidate and score identity 0-10 against THEIR sheet: same face shape and features, skin tone, hair style/colour/length, facial hair, glasses, apparent age, body build and outfit colours. A different-looking person of the same gender is a 2-4, not a pass. visible=false if they are not in the frame.\nSCENE LOGIC (judge content here): the user message gives the narration line, the setting, the props that belong there and things that must never appear. Fail scene logic (logic_ok=false) if ANY object does not belong in that setting (e.g. car tyres in a bicycle repair shop — bike shops have thin bicycle wheels, never car tyres), is at an impossible scale or placement (floating, giant, on the wrong surface), is random or nonsensical for the moment, contradicts the narration line, or if the place does not look like the named setting. The listed props are typical, not exhaustive: ordinary items for the moment (papers, notebooks, a laptop, a mug, a phone) are fine — fail only for things that clearly do not belong. BICYCLE PARTS ARE NOT CAR PARTS: in a bike shop, bicycle wheels and bike tyres belong — singly, hung on hooks, leaning, or in a stack/pile/rack on the floor or bench, plus inner tubes and rims with spokes. Knobby or treaded mountain-bike tyres, and stacks of them, are bicycle tyres too — tread alone never makes a car tyre. Only call something a car tyre if it is car-sized (much wider and taller-walled than the bicycle wheels around it) or mounted on a solid car rim/hubcap; if unsure (small, blurry or dark), treat it as a bicycle tyre and do NOT fail logic for it. Name each problem concretely ("car tyre on the workbench — should be a bicycle wheel").\nReturn JSON only: {"style_score":0-10,"style_match":bool (true only if score>=7),"problems":"short","has_text":bool,"text":["..."],"text_garbled":bool,"identity":[{"name":"...","visible":bool,"score":0-10,"problems":"short"}],"logic_ok":bool,"logic_problems":["..."]}';
 const IDENTITY_MIN=7;
 // Dedicated one-character continuity check (model sheet vs candidate). The combined style call is lenient on faces,
 // so each named character also gets this focused comparison; the lower of the two scores counts.
@@ -6179,7 +6179,13 @@ async function visionClipCheck(url, people, stillUrl, ctx){
   const identity=Object.values(ids);
   return {frames:per, score:Math.min(...per.map(f=>f.style)), match:per.every(f=>f.styleMatch), identity,
     identityMatch:people.length?per.every(f=>f.identityMatch!==false):null,
-    identityScore:identity.length?Math.min(...identity.map(x=>x.score)):null, logicOk:per.every(f=>f.logicOk), logicProblems:[...new Set(per.flatMap(f=>f.logicProblems))], strayText:per.some(f=>f.text.length), text:[...new Set(per.flatMap(f=>f.text))]};
+    identityScore:identity.length?Math.min(...identity.map(x=>x.score)):null, logicOk:per.filter(f=>!f.logicOk).length<Math.min(2,per.length) /* one odd frame is often a misread: fail only when 2+ frames agree */, logicProblems:[...new Set(per.flatMap(f=>f.logicProblems))], strayText:per.some(f=>f.text.length), text:[...new Set(per.flatMap(f=>f.text))]};
+}
+// Words a text beat may legitimately show (from its own script line; fuzzy so OCR slips still match)
+function clipScriptWords(s){
+  const lw=[...new Set(String(s?.line||'').replace(/^\s*\d+\.\s*/,'').toLowerCase().match(/[a-z0-9']+/g)||[])];
+  const near=(x,y)=>{ if(Math.abs(x.length-y.length)>2) return false; const d=[...Array(y.length+1).keys()]; for(let i=1;i<=x.length;i++){ let p=d[0]; d[0]=i; for(let j=1;j<=y.length;j++){ const t=d[j]; d[j]=Math.min(d[j]+1,d[j-1]+1,p+(x[i-1]===y[j-1]?0:1)); p=t; } } return d[y.length]<=(y.length>5?2:1); };
+  return t=>{ const w=String(t).toLowerCase().match(/[a-z0-9']+/g)||[]; return w.length>0 && w.every(x=>lw.some(y=>x===y||near(x,y))); };
 }
 const clipRank=q=>!q?-1:(q.logicOk!==false?3:0)+(q.match?4:0)+(q.identityMatch!==false?4:0)+(q.strayText?0:1)+(Number(q.score)||0)/10+(q.identityScore==null?1:q.identityScore/10);
 function clipFixNote(q){ const n=[];
@@ -6326,21 +6332,30 @@ async function generateScene(){
       return {url:resultURL,label:modelLabel};
       };
       const people=sceneIdentityRefs(s);
+      const clipStray=q=>{ if(!q) return q; const keep=beatNeedsText(s)?clipScriptWords(s):null;
+        q.strayText=(q.text||[]).some(t=>!keep||!keep(t)); return q; };
+      let cleanedStart=false;
       let best=null, attempts=0, clipErr='';
       for(let a=0;a<=VIDEO_RETRY_CAP;a++){
         attempts=a+1;
         if(a){ if(!budgetPreflight('fal',getEstimatedCost(),'a clip redo')) break; trackSpend(getEstimatedCost()); }
+        // Writing in the clip usually comes from the start still: clean it with GPT once, then regenerate from it.
+        if(a && best?.qa?.strayText && startFrameURL && !cleanedStart && autoGptTextOn() && sessionStorage.getItem('cfa_openai_key')){
+          document.getElementById('s6-gen-label').textContent='Clip had stray writing — cleaning the start frame with GPT, then regenerating…';
+          try{ const cu=await gptTextFixUrl(startFrameURL, best.qa.text||[], finalPrompt, 'remove'); trackSpend(GPT_TEXT_COST);
+            startFrameURL=cu; cleanedStart=true; s.cleanStartFrameURL=cu; }catch(e){ clipErr='start-frame clean: '+e.message; }
+        }
         const r=await callVideo(vp0+(a&&best?.qa?clipFixNote(best.qa):''));
         if(!r) return;
         if(!r.url) throw new Error('No result returned — try again.');
         document.getElementById('s6-gen-label').textContent='Checking clip frames (start / middle / end) against the character sheets and the start still…';
-        let qa=null; try{ qa=await visionClipCheck(r.url, people, startFrameURL, sceneLogicCtx(idx, finalPrompt)); }catch(e){ clipErr=e.message; }
+        let qa=null; try{ qa=clipStray(await visionClipCheck(r.url, people, startFrameURL, sceneLogicCtx(idx, finalPrompt))); }catch(e){ clipErr=e.message; }
         if(!best || clipRank(qa)>clipRank(best.qa)) best={r,qa};
-        if(!qa || (qa.match && qa.identityMatch!==false && qa.logicOk!==false)) break;
+        if(!qa || (qa.match && qa.identityMatch!==false && qa.logicOk!==false && !qa.strayText)) break;
         if(sceneData[idx]!==s) break;
       }
       resultURL=best.r.url; modelLabel=best.r.label+(best.qa?' · clip check '+(best.qa.match&&best.qa.identityMatch!==false&&best.qa.logicOk!==false?'✓':'✗')+(best.qa.identityScore!=null?' id '+best.qa.identityScore+'/10':'')+(attempts>1?' ('+attempts+' tries)':''):'');
-      s.clipQA=best.qa?Object.assign({attempts, checkErr:clipErr}, best.qa):{attempts, checkErr:clipErr||'check off'};
+      s.clipQA=best.qa?Object.assign({attempts, checkErr:clipErr, cleanedStart}, best.qa):{attempts, checkErr:clipErr||'check off'};
       resultType='video';
     }
 
