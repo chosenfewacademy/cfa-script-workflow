@@ -1559,6 +1559,7 @@ select option{background:var(--surface2)}
     <!-- Scene dot navigator — click any scene to jump there -->
     <div class="scene-dots" id="scene-dots-row"></div>
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin:-4px 0 10px;font-size:11px">
+      <label title="Video format. 9:16 makes stills and clips natively vertical (no cropping in the final edit). Set it before generating."><span style="opacity:.8">Format</span> <select id="fmt-aspect" class="inp" style="width:auto;padding:3px 6px;font-size:11px" onchange="setVideoFormat(this.value)"><option value="landscape">16:9</option><option value="vertical">9:16 vertical</option></select></label>
       <label title="Grok vision compares every new image with the Marcus/Jordan art and regenerates off-style results (max 2 redos, ~$0.003 per check)"><input type="checkbox" id="qa-style-check" checked onchange="setQaToggle('cfa_style_check',this.checked)"> Style check</label>
       <label title="When an image has visible writing (or the prompt asks for text), GPT image fixes garbled text automatically, keeping style and characters (~$0.06, needs an OpenAI key)"><input type="checkbox" id="qa-gpt-text" checked onchange="setQaToggle('cfa_gpt_text',this.checked)"> GPT text cleanup</label>
       <button class="btn bsec" id="btn-gen-all" onclick="generateAllImages()" style="padding:7px 14px;font-size:11px" title="Generate every image scene that has a prompt but no result yet, 3 at a time">&#x26A1; Generate all remaining images</button>
@@ -5611,6 +5612,15 @@ function blobToPng(blob){
   });
 }
 
+// Project video format: 'vertical' generates stills/clips natively at 9:16 and preselects the vertical render.
+function videoFormat(){ try{ return localStorage.getItem('cfa_video_format')==='vertical'?'vertical':'landscape'; }catch(e){ return 'landscape'; } }
+function frameAR(){ return videoFormat()==='vertical'?'9:16':'16:9'; }
+function setVideoFormat(v){
+  try{ localStorage.setItem('cfa_video_format', v==='vertical'?'vertical':'landscape'); }catch(e){}
+  const a=document.getElementById('fmt-aspect'); if(a) a.value=videoFormat();
+  const r=document.getElementById('rs-aspect'); if(r) r.value=videoFormat();
+}
+document.addEventListener('DOMContentLoaded',()=>setVideoFormat(videoFormat()));
 const GPT_TEXT_COST=0.06; // gpt-image edit, medium quality, 1536x1024 (estimate)
 const GPT_TEXT_PROMPT='TEXT AND LANGUAGE CORRECTION ONLY. This is a finished flat 2D cartoon frame from an illustrated educational series. Your ONLY task is to find and fix any text, words, letters, numbers, labels, or written language in the image that are misspelled, garbled, illegible, wrong characters, hieroglyphic-looking, or unclear. Correct them to proper readable English (or remove stray pseudo-text if no sensible word fits) while keeping the font style, size, colour, and position. DO NOT change anything else — not the characters, their faces, skin tones, hair, expressions, clothing, or positions; not the colours, composition, background, lighting, or the flat 2D cartoon art style with bold outlines and flat colour. Do not add realism, texture or new elements. Do not add new paragraphs or extra text blocks; keep wording short and clearly readable. If there is no text, output the image unchanged.';
 const GPT_TEXT_REMOVE_PROMPT='REMOVE ALL WRITING ONLY. This is a finished flat 2D cartoon frame from an illustrated educational series. Erase every word, letter, number, label, logo text and pseudo-text from the image (screens, papers, signs, books, notes, clothing) and paint over it with the surrounding blank surface, plain lines or simple shapes so nothing readable remains. DO NOT change anything else — not the characters, their faces, skin tones, hair, expressions, clothing, or positions; not the colours, composition, background, lighting, or the flat 2D cartoon art style with bold outlines and flat colour. Do not add realism, texture or new elements.';
@@ -5619,7 +5629,7 @@ async function gptTextEditDataUrl(pngBlob, openAIKey, words, sceneHint, mode){
   formData.append('image', pngBlob, 'scene.png');
   formData.append('model', 'gpt-image-2');
   formData.append('n', '1');
-  formData.append('size', '1536x1024');
+  formData.append('size', videoFormat()==='vertical'?'1024x1536':'1536x1024');
   formData.append('quality', 'medium');
   if(mode==='remove') formData.append('prompt', GPT_TEXT_REMOVE_PROMPT); else
   formData.append('prompt', GPT_TEXT_PROMPT + (words&&words.length ? ' Text currently visible (may be garbled — fix the spelling, do not keep typos): ' + words.slice(0,12).map(w=>'"'+String(w).slice(0,60)+'"').join(', ') + '.' : '') + (sceneHint ? ' What the scene shows (use it to pick the right words): ' + String(sceneHint).split(/ Setting: | ART STYLE| \[Reference| Recurring character/)[0].slice(0,400) : ''));
@@ -6023,13 +6033,13 @@ async function falPost(endpoint, body){
 async function falImageRequest(model, prompt, refImages){
   let data;
   if(model==='kling-o1'){
-    data=await falPost('fal-ai/kling-image/o1',{prompt,aspect_ratio:'16:9',num_images:1,image_urls:refImages});
+    data=await falPost('fal-ai/kling-image/o1',{prompt,aspect_ratio:frameAR(),num_images:1,image_urls:refImages});
   } else if(model==='gemini-3pro'){
-    data=await falPost('fal-ai/gemini-3-pro-image-preview/edit',{prompt,aspect_ratio:'16:9',num_images:1,image_urls:refImages,resolution:'2K',
+    data=await falPost('fal-ai/gemini-3-pro-image-preview/edit',{prompt,aspect_ratio:frameAR(),num_images:1,image_urls:refImages,resolution:'2K',
       system_prompt:'2D illustrated style. Bold clean outlines, flat color shading, consistent line weight throughout. No photorealism.'});
   } else {
     // Nano Banana text-to-image (replaces fal-ai/imagen4, retired by fal; internal id stays 'imagen4')
-    data=await falPost('fal-ai/nano-banana',{prompt:prompt+'  2D illustrated style. Bold clean outlines, flat color shading. No photorealism.',aspect_ratio:'16:9',num_images:1});
+    data=await falPost('fal-ai/nano-banana',{prompt:prompt+'  2D illustrated style. Bold clean outlines, flat color shading. No photorealism.',aspect_ratio:frameAR(),num_images:1});
   }
   const url=data.images?.[0]?.url||data.image?.url||'';
   if(!url) throw new Error('No result returned — try again.');
@@ -6300,7 +6310,7 @@ async function generateScene(){
         modelLabel='Kling O1';
       }else if(selectedVideoModel==='kling-v16' || selectedVideoModel==='kling-o1v'){
         // ── Kling v1.6 Pro ───────────────────────────────────────────────────
-        const body={prompt:vp,duration:String(sceneDuration>=8?10:5),aspect_ratio:'16:9'};
+        const body={prompt:vp,duration:String(sceneDuration>=8?10:5),aspect_ratio:frameAR()};
         if(startFrameURL) body.image_url=startFrameURL;
         if(body.image_url&&sceneRefs['subject']?.url?.startsWith('https://'))
           body.subject_reference_image_url=sceneRefs['subject'].url;
@@ -6323,7 +6333,7 @@ async function generateScene(){
           return null;
         }
         const veoDur=veoDurationStr(sceneDuration);
-        const body={prompt:vp,image_url:startFrameURL,duration:veoDur,aspect_ratio:'16:9',generate_audio:false};
+        const body={prompt:vp,image_url:startFrameURL,duration:veoDur,aspect_ratio:frameAR(),generate_audio:false};
         document.getElementById('s6-gen-label').textContent='Generating video with Veo 3.1… (~60-90 seconds)';
         const data=await falPost('fal-ai/veo3.1/image-to-video', body);
         resultURL=data.video?.url||'';
