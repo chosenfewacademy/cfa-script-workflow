@@ -31,7 +31,22 @@ async def xai_route(route):
         st=int(mode); payload={'error':'Incorrect API key provided.'} if st==401 else ({} if st in(429,500) else {'error':'bad request'})
         return await route.fulfill(status=st,content_type='application/json',body=json.dumps(payload))
     if mode=='html500': return await route.fulfill(status=502,content_type='text/html',body='<html>Bad gateway</html>')
+    if req.url.endswith('/v1/responses'):
+        cnt['research']=cnt.get('research',0)+1
+        if SC.get('researchFail'): return await route.fulfill(status=500,content_type='application/json',body='{}')
+        txt=SC.get('researchOut') or ('KEY CONCEPTS: a wallet holds keys, not coins. '*6+'REAL-WORLD ANCHORS: Bitcoin white paper, 31 Oct 2008 (bitcoin.org). Genesis block 3 Jan 2009.')
+        return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'output':[{'type':'web_search_call'},{'type':'message','content':[{'type':'output_text','text':txt}]}],'usage':{'cost_in_usd_ticks':0}}))
     sysmsg=body['messages'][0]['content']; user=body['messages'][1]['content']
+    if 'script doctor who reads scripts ALOUD' in sysmsg:
+        cnt['readaloud']=cnt.get('readaloud',0)+1
+        SC['lastReadAloud']=user
+        q=SC.get('raq') or []
+        if q: v=q.pop(0)
+        else:
+            sc_=user.split('SCRIPT:\n',1)[1] if 'SCRIPT:\n' in user else ''
+            v={'scores':{'flow':9,'cohesion':9,'logic':9,'human':9,'story_pull':9,'accuracy':9},'problems':[],'script':sc_}
+        content=v if isinstance(v,str) else json.dumps(v)
+        return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'choices':[{'message':{'content':content},'finish_reason':'stop'}],'usage':{}}))
     if 'character-continuity supervisor' in sysmsg:
         cnt['idcheck']=cnt.get('idcheck',0)+1
         q=SC.get('idq') or []
@@ -58,7 +73,7 @@ async def xai_route(route):
         SC['lastRevise']=user
         draft=user.split('DRAFT SCRIPT:\n',1)[1] if 'DRAFT SCRIPT:\n' in user else ''
         text=SC.get('reviseOut') if SC.get('reviseOut') is not None else draft+'\n\nRevised.'
-    elif 'narrative architect' in sysmsg:
+    elif 'narrative architect' in sysmsg or 'head writer' in sysmsg:
         SC['lastDraftUser']=user
         text=SC['script'] or DEFAULT_SCRIPT
     elif 'segmentation tool' in sysmsg:
@@ -161,6 +176,10 @@ async def main():
             for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
             ctx,pg,errs=await newpage(b)
             await go_review(pg); check('happy: review reached', await J(pg,'()=>curScreen')==3)
+            check('story: research brief ran and is shown in review', cnt.get('research',0)>=1 and 'white paper' in await J(pg,"()=>document.getElementById('research-panel').textContent") )
+            check('story: research brief fed into plan+draft', 'RESEARCH BRIEF' in SC.get('lastDraftUser',''))
+            check('story: read-aloud critic ran once when scores are high', cnt.get('readaloud',0)==1, cnt.get('readaloud'))
+            check('story: read-aloud scores shown', 'flow 9/10' in await J(pg,"()=>document.getElementById('research-panel').textContent"))
             check('happy: text spend tracked (plan 0.0005 + draft + revise + length-fit 0.005 each)', abs(await J(pg,'()=>textSpend')-0.0155)<1e-6, await J(pg,'()=>textSpend'))
             await go_seg(pg); check('happy: segments', await J(pg,"()=>(segScript.match(/^\\d+\\./gm)||[]).length")>=3)
             await go_scenes(pg)
@@ -449,7 +468,7 @@ async def main():
             await go_review(pg)
             st=await J(pg,"()=>({g:genScript,cur:curScreen})")
             check('writing: plan + revise ran, revised text used', cnt.get('plan',0)-p0==1 and cnt.get('revise',0)-r0==1 and st['g'].endswith('Revised.'), st)
-            check('writing: plan passed to draft privately', 'PRIVATE BEAT PLAN' in SC.get('lastDraftUser','') and '$212.40' in SC['lastDraftUser'])
+            check('writing: plan passed to draft privately', 'PRIVATE STORY PLAN' in SC.get('lastDraftUser','') and '$212.40' in SC['lastDraftUser'])
             check('writing: plan not in output', 'PREMISE' not in st['g'])
             # short/empty revision → keep draft
             SC['reviseOut']='Too short.'
@@ -600,6 +619,28 @@ async def main():
               const seg=segScript; segScript='1. Jordan locks the box.\\n2. Marcus nods.'; await enterSceneGeneration(); const r=[sceneData.length, sceneData[0].tag, sceneData[0].resultURL, sceneData[0].prompt, !!sceneData[0].locked, !!sceneData[1].locked];
               segScript=seg; sceneData=keep; return r; }""")
             check('resume: unchanged beats with media keep their tag, prompt and result (no re-classify spend)', lk==[2,'IMAGE','https://v3b.fal.media/files/k.png','kept prompt',True,False], lk)
+            # ── storyteller pipeline stress ──
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
+            ctx2,pg2,errs2=await newpage(b)
+            good=' '.join(['"Hang on," Jordan said, because the transfer had not arrived and rent was due Friday.']*50)
+            SC['raq']=['not json at all {{{']
+            cnt['readaloud']=0
+            await go_review(pg2)
+            v_=await J(pg2,"()=>[curScreen,document.getElementById('txed').value.length,document.getElementById('e1').textContent]")
+            check('stress: junk read-aloud JSON keeps the script', v_[0]==3 and v_[1]>20, v_)
+            SC['raq']=[{'scores':{'flow':5},'problems':['x'],'script':'crypto '+good}]
+            await J(pg2,"()=>goTo(1,'left')"); await go_review(pg2)
+            check('stress: read-aloud rewrite with "crypto" is rejected', 'crypto' not in (await J(pg2,"()=>document.getElementById('txed').value")).lower())
+            SC['raq']=[{'scores':{'flow':6,'cohesion':6,'logic':9,'human':9,'story_pull':9,'accuracy':9},'problems':['jumpy'],'script':good},{'scores':{'flow':9,'cohesion':9,'logic':9,'human':9,'story_pull':9,'accuracy':9},'problems':[],'script':good}]
+            cnt['readaloud']=0; await J(pg2,"()=>goTo(1,'left')"); await go_review(pg2)
+            check('stress: low read-aloud scores trigger a second round', cnt.get('readaloud')==2, cnt.get('readaloud'))
+            check('stress: accepted rewrite lands in the editor', (await J(pg2,"()=>document.getElementById('txed').value")).startswith('"Hang on,"'))
+            SC['researchFail']=True; cnt['research']=0; await J(pg2,"()=>goTo(1,'left')"); await go_review(pg2)
+            check('stress: web research failure falls back and still reaches review', await J(pg2,'()=>curScreen')==3)
+            SC['researchFail']=None
+            check('lint: leaked planning labels are flagged', await J(pg2,"()=>scriptLint('Jordan hit his trigger moment. The decision point came. '.repeat(3)).issues.some(x=>/labels leaked/.test(x))"))
+            check('stress: no page errors', not [e for e in errs2 if 'pageerror' in e], errs2[:3])
+            await ctx2.close()
             # ── audit fixes ──
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sessionStorage.setItem('cfa_openai_key','sk-test');}")
             SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
