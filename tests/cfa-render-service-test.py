@@ -41,7 +41,7 @@ async def main():
     b64 = lambda f: base64.b64encode(open(os.path.join(d, f), "rb").read()).decode()
     try:
         async with async_playwright() as p:
-            br = await p.chromium.launch(executable_path=os.environ.get("CHROME", "/usr/bin/google-chrome"), headless=True)
+            br = await p.chromium.launch(executable_path=os.environ.get("CHROME", "/usr/bin/google-chrome"), headless=True, args=["--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights"])  # https Pages -> http loopback test service only
             pg = await br.new_page(accept_downloads=True)
             errs = []; pg.on("pageerror", lambda e: errs.append(str(e)))
             await pg.goto(tool_url, wait_until="load")
@@ -65,7 +65,7 @@ async def main():
             check(await pg.evaluate("sessionStorage.getItem('cfa_render_url')") == base and await pg.evaluate("localStorage.getItem('cfa_render_token')") is None, "URL + token saved to the session only (not localStorage)")
             await pg.evaluate("closeSettings()")
             await pg.evaluate("document.getElementById('btn-send-grok').click()"); await asyncio.sleep(2.5)
-            check("access token" in (await pg.text_content("#fe-status")), "wrong token -> clear message")
+            _m=await pg.text_content("#fe-status"); check("access token" in _m, "wrong token -> clear message"+("" if "access token" in _m else " GOT: "+_m[:300]+" ERRS:"+str(errs)[:300]))
             await pg.evaluate("(t)=>{sessionStorage.setItem('cfa_render_token',t)}", tok)
             await pg.select_option("#rs-aspect", "landscape")
             await pg.evaluate("document.getElementById('btn-send-grok').click()")
