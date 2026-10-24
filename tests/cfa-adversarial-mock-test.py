@@ -31,6 +31,11 @@ async def xai_route(route):
         return await route.fulfill(status=st,content_type='application/json',body=json.dumps(payload))
     if mode=='html500': return await route.fulfill(status=502,content_type='text/html',body='<html>Bad gateway</html>')
     sysmsg=body['messages'][0]['content']; user=body['messages'][1]['content']
+    if 'character-continuity supervisor' in sysmsg:
+        cnt['idcheck']=cnt.get('idcheck',0)+1
+        q=SC.get('idq') or []
+        v=q.pop(0) if q else {'differences':[],'visible':True,'score':10,'verdict':'same'}
+        return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'choices':[{'message':{'content':json.dumps(v)},'finish_reason':'stop'}],'usage':{}}))
     if 'art-direction QA' in sysmsg:
         cnt['vision']=cnt.get('vision',0)+1
         q=SC.get('vision') or []
@@ -557,6 +562,13 @@ async def main():
             jref=await J(pg,"async()=>await getCharacterUrl('Jordan',JORDAN_B64)")
             mref=await J(pg,"async()=>await getCharacterUrl('Marcus',MARCUS_B64)")
             check('identity: a Jordan still gets only his own sheet (no Marcus style ref pulling the face)', jref in gl[0]['image_urls'] and mref not in gl[0]['image_urls'], gl[0]['image_urls'])
+            await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;}")
+            SC['falLog']=[]; i0=cnt.get('idcheck',0)
+            SC['vision']=[]; SC['idq']=[{'differences':['rounder face','much larger eyes'],'visible':True,'score':5,'verdict':'off-model'}]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            gl=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
+            qa=await J(pg,"()=>sceneData[0].styleQA")
+            check('identity: strict model-sheet check catches an off-model face the combined check passed', len(gl)==2 and 'larger eyes' in gl[1]['prompt'] and qa['identityMatch'] is True and cnt.get('idcheck',0)-i0>=2, (len(gl),qa))
             await J(pg,"()=>{sceneData[0].resultURL='';}")
             SC['falLog']=[]; SC['vision']=[dict(off),dict(off),dict(off)]
             await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
