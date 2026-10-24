@@ -2013,6 +2013,7 @@ select option{background:var(--surface2)}
     <h2 style="margin:6px 0 10px">Your finished video</h2>
     <video id="rs-video" controls playsinline style="width:100%;max-height:70vh;background:#000;border-radius:10px"></video>
     <div style="font-size:12px;color:var(--muted);margin:8px 0" id="rs-meta"></div>
+    <div id="rs-whisper" style="display:none;font-size:12px;margin:6px 0 10px;padding:10px;border:1px solid #f59e0b;border-radius:8px"></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 18px">
       <a class="btn bprim" id="rs-download" download="final.mp4" style="text-decoration:none">&#x2B07; Download MP4</a>
       <a class="btn bsec" id="rs-thumb-dl" download="thumbnail.jpg" style="text-decoration:none">&#x1F5BC; Thumbnail</a>
@@ -3568,6 +3569,7 @@ async function generateDialogueVO(){
     trackVoiceSpend(chars*m.perChar);
     setVOProgress(93,'Stitching lines with natural pauses…');
     const st=await stitchLines(res, lines);
+    dlgLast={res, lines, settings};
     voWords=st.words; voLines=st.lines; voPace=pace;
     if(voAudioURL){ try{URL.revokeObjectURL(voAudioURL);}catch(e){} }
     voAudioURL=URL.createObjectURL(st.blob);
@@ -3657,6 +3659,68 @@ function loadFormatUI(){
 }
 function flashOk(id){ const e=document.getElementById(id); if(!e) return; e.style.display='block'; setTimeout(()=>{e.style.display='';},1600); }
 
+
+
+// ═══ Whisper QA → re-voice flagged lines ══════════════════════════════════════
+// The renderer's Whisper pass flags lines it could not hear clearly (matched < 0.85).
+// Those lines (only) are re-voiced with the same locked voice and settings, then re-stitched.
+let dlgLast=null;   // {res, lines, settings} from the last dialogue voiceover (memory only)
+function whisperFlagged(report){
+  const fp=report&&report.whisper&&report.whisper.final_pass; const L=(fp&&Array.isArray(fp.lines))?fp.lines:[];
+  return L.filter(x=>x&&x.flag);
+}
+function flaggedVOIndexes(flags){
+  if(!dlgLast) return [];
+  const norm=t=>String(t||'').toLowerCase().replace(/[^a-z0-9 ]/g,'').replace(/\s+/g,' ').trim();
+  const out=[];
+  flags.forEach(f=>{
+    const sc=sceneData[(f.index|0)-1]; if(!sc) return;
+    const t=norm(stripTags(String(sc.line||'').replace(/^\d+\.\s*/,'')));
+    const j=dlgLast.lines.findIndex((l,k)=>!out.includes(k)&&norm(l.text)===t);
+    if(j>=0) out.push(j);
+  });
+  return out;
+}
+function showWhisperFlags(report){
+  const el=document.getElementById('rs-whisper'); if(!el) return;
+  const flags=whisperFlagged(report);
+  if(!flags.length){ el.style.display='none'; el.innerHTML=''; return; }
+  const idx=flaggedVOIndexes(flags);
+  el.innerHTML='<b>Whisper QA flagged '+flags.length+' line(s)</b> that were hard to hear:'+
+    '<ul style="margin:6px 0 6px 18px;padding:0">'+flags.map(f=>'<li>Line '+(f.index|0)+' ('+escHtml(String(f.speaker||''))+') — '+Math.round(100*(+f.matched||0))+'% heard'+(Array.isArray(f.missing)&&f.missing.length?', missing: '+escHtml(f.missing.slice(0,6).join(', ')):'')+'</li>').join('')+'</ul>'+
+    (idx.length?'<button class="btn bsec" id="btn-revoice" style="padding:6px 14px;font-size:12px" onclick="revoiceFlagged()">&#x1F3A4; Re-voice '+idx.length+' flagged line'+(idx.length>1?'s':'')+'</button> <span id="revoice-status" style="color:var(--muted)"></span>'
+      :'<span style="color:var(--muted)">Re-voicing needs the dialogue voiceover from this session — regenerate the voiceover in Step 5.</span>');
+  el.style.display='';
+  el.dataset.idx=JSON.stringify(idx);
+}
+async function revoiceFlagged(idxArg){
+  const el=document.getElementById('rs-whisper');
+  const idx=Array.isArray(idxArg)?idxArg:JSON.parse((el&&el.dataset.idx)||'[]');
+  const status=document.getElementById('revoice-status'), btn=document.getElementById('btn-revoice');
+  const say=t=>{ if(status) status.textContent=t; };
+  if(!dlgLast||!idx.length){ say('Nothing to re-voice.'); return 0; }
+  const elKey=sessionStorage.getItem('cfa_el_key');
+  const m=EL_MODELS[CHARACTER_REGISTRY.model]||EL_MODELS.eleven_multilingual_v2;
+  const chars=idx.reduce((a,i)=>a+String(dlgLast.lines[i].text).length,0);
+  if(!budgetPreflight('eleven',{usd:chars*m.perChar,chars},'re-voicing '+idx.length+' flagged line(s)')) return 0;
+  if(btn) btn.disabled=true;
+  try{
+    const res=dlgLast.res.slice();
+    for(const i of idx){ say('Re-voicing line '+(i+1)+'…'); res[i]=await ttsLine(elKey, dlgLast.lines[i].speaker, dlgLast.lines[i].text, dlgLast.settings); }
+    trackVoiceSpend(chars*m.perChar);
+    const st=await stitchLines(res, dlgLast.lines);
+    dlgLast={res, lines:dlgLast.lines, settings:dlgLast.settings};
+    voWords=st.words; voLines=st.lines;
+    if(voAudioURL){ try{URL.revokeObjectURL(voAudioURL);}catch(e){} }
+    voAudioURL=URL.createObjectURL(st.blob);
+    const audio=document.getElementById('vo-audio'); if(audio) audio.src=voAudioURL;
+    const dl=document.getElementById('vo-download'); if(dl) dl.href=voAudioURL;
+    if(sceneData.length){ assignBeatTimes(); saveWorkflowState(); }
+    say('Re-voiced '+idx.length+' line(s) ✓ — export for final edit again and send it for a new render.');
+    return idx.length;
+  }catch(e){ say('Re-voice failed: '+(e.message||e)); return 0; }
+  finally{ if(btn) btn.disabled=false; }
+}
 
 // ═══ REVIEWER FEEDBACK (Chris) ═══════════════════════════════════════════════
 // Every step has a feedback box. Items go to the render service (POST /feedback,
@@ -4941,6 +5005,7 @@ async function showRenderResult(j){
   try{ const th=await (await renderFetch('/jobs/'+j.id+'/thumbnail')).blob(); const tu=URL.createObjectURL(th); vid.poster=tu; const a=document.getElementById('rs-thumb-dl'); a.href=tu; a.download=t+'_thumbnail.jpg'; }catch(e){}
   const r=j.report||{};
   document.getElementById('rs-meta').textContent=[(r.duration?r.duration.toFixed(1)+'s':''),r.resolution,(r.lufs!=null?r.lufs+' LUFS':''),'rendered in '+fmtClock(j.elapsed||0),(r.edl_source?'edit plan: '+r.edl_source:'')].filter(Boolean).join(' · ');
+  showWhisperFlags(r);
   document.getElementById('rs-aspect2').value=j.aspect||'landscape';
   renderJob=j; showRenderScreen('review');
 }

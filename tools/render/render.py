@@ -895,15 +895,67 @@ def loudnorm_json(stderr):
     return json.loads(stderr[i:stderr.index("}", i) + 1])
 
 
-def build_sfx_track(events, total, work):
-    if not events:
+AMBIENCE_GAIN = 0.14   # per-scene ElevenLabs ambience, well under the voice (~-17 dB before the mix bus)
+
+
+def scene_ambience(shots, segs, key, work, cache=None):
+    """ElevenLabs sound effects per scene from the director's sfx text (room tone, street, shop bell...).
+    One sound per distinct description (cached), trimmed to the shot with short fades. Returns
+    ([(path, start, gain, dur)], info). Any failure just skips that scene - ambience is never required."""
+    import urllib.request
+    by_idx = {sg["index"]: sg for sg in segs}
+    cache = {} if cache is None else cache
+    out, info = [], {"scenes": 0, "generated": 0, "errors": []}
+    for sh in shots:
+        txt = next((str(by_idx[i].get("sfx") or "").strip() for i in sh["beats"] if i in by_idx and str(by_idx[i].get("sfx") or "").strip()), "")
+        if not txt or not key:
+            continue
+        txt = re.sub(r"\b(music|song|singing|voices?|speech|talking)\b", "", txt, flags=re.I)
+        txt = re.sub(r"^(?:\W|and|with|or|no)+|(?:\W|and|with|or|no)+$", "", re.sub(r"\s+", " ", txt), flags=re.I)[:200]
+        if len(re.sub(r"[^a-z]", "", txt.lower())) < 3:
+            continue
+        info["scenes"] += 1
+        dur = round(min(22.0, max(1.0, sh["duration"] + 0.4)), 2)
+        ck = (txt.lower(), dur if dur < 22 else 22)
+        if ck not in cache:
+            path = os.path.join(work, "amb_%02d.mp3" % len(cache))
+            body = json.dumps({"text": txt + ", ambient background, no music, no voices", "duration_seconds": dur, "prompt_influence": 0.35}).encode()
+            req = urllib.request.Request("https://api.elevenlabs.io/v1/sound-generation", data=body, method="POST",
+                                         headers={"xi-api-key": key, "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=90) as r:
+                    data = r.read()
+                if len(data) < 500:
+                    raise ValueError("empty audio")
+                open(path, "wb").write(data)
+                cache[ck] = path
+                info["generated"] += 1
+            except Exception as e:
+                cache[ck] = None
+                info["errors"].append("%s: %s" % (txt[:40], str(e)[:120]))
+        if cache[ck]:
+            out.append((cache[ck], sh["start"], AMBIENCE_GAIN, sh["duration"]))
+    return out, info
+
+
+def build_sfx_track(events, total, work, ambience=None):
+    ambience = ambience or []
+    if not events and not ambience:
         return None
-    p = make_sfx(work)
+    p = make_sfx(work) if events else {}
     ins, fc = [], []
     for k, (kind, t, gain) in enumerate(events):
         ins += ["-i", p[kind]]
         ms = int(round(t * 1000))
         fc.append("[%d:a]adelay=%d|%d,volume=%.2f[s%d]" % (k, ms, ms, gain, k))
+    for j, (path, t, gain, dur) in enumerate(ambience):
+        k = len(events) + j
+        ins += ["-i", path]
+        ms = int(round(t * 1000))
+        fd = min(0.3, dur / 4)
+        fc.append("[%d:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=0:%.3f,afade=t=in:d=%.3f,afade=t=out:st=%.3f:d=%.3f,adelay=%d|%d,volume=%.2f[s%d]"
+                  % (k, dur, fd, max(0, dur - fd), fd, ms, ms, gain, k))
+    events = list(events) + list(ambience)
     fc.append("%samix=inputs=%d:normalize=0:duration=longest,apad,atrim=0:%.3f[o]" % ("".join("[s%d]" % k for k in range(len(events))), len(events), total))
     out = os.path.join(work, "sfx.wav")
     run(["ffmpeg", "-y", "-v", "error"] + ins + ["-filter_complex", ";".join(fc), "-map", "[o]", "-ar", "48000", "-ac", "2", out])
@@ -1292,6 +1344,7 @@ def main():
     ap.add_argument("--grok-title", action="store_true", help="let Grok write the title/thumbnail text (default: bundle title only)")
     ap.add_argument("--notes", default="", help="re-edit notes passed to Grok's edit plan")
     ap.add_argument("--no-sfx", action="store_true", help="skip whooshes / riser / impact")
+    ap.add_argument("--no-ambience", action="store_true", help="skip per-scene ElevenLabs ambience from the director's sfx text")
     ap.add_argument("--no-end-card", action="store_true")
     ap.add_argument("--keep-work", action="store_true")
     a = ap.parse_args()
@@ -1434,7 +1487,14 @@ def main():
     audio = os.path.join(work, "audio.m4a")
     log("stage: mixing")
     events = [] if a.no_sfx else sfx_events(edl["shots"], edl["arc_times"])
-    sfx = build_sfx_track(events, total, work)
+    amb, amb_info = [], {"scenes": 0, "generated": 0, "errors": [], "skipped": "off" if a.no_ambience else ""}
+    if not a.no_ambience:
+        try:
+            amb, inf = scene_ambience(shots, segs, env_key("ELEVENLABS_API_KEY", a.keys_env), work)
+            amb_info.update(inf)
+        except Exception as e:
+            amb_info["errors"].append(str(e)[:160])
+    sfx = build_sfx_track(events, total, work, amb)
     music_info = {"source": None}
     bmus = b.get("music")
     style = (b.get("musicStyle") or a.music_style or "cinematic").lower()
@@ -1538,7 +1598,7 @@ def main():
               "shots": [{"index": x["index"], "beats": x["beats"], "media": x["media"], "type": x["mediaType"],
                          "start": x["start"], "duration": x["duration"], "motion": x["motion"], "role": x.get("role"),
                          "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"]} for x in shots],
-              "arc": edl.get("arc"), "arc_times": edl.get("arc_times"), "sfx_events": [list(e) for e in events],
+              "arc": edl.get("arc"), "arc_times": edl.get("arc_times"), "sfx_events": [list(e) for e in events], "ambience": dict(amb_info, placed=len(amb)),
               "punch_ins": sum(1 for x in shots if x.get("part") == "b"),
               "shot_lengths": sorted(round(x["duration"], 2) for x in shots),
               "avg_shot": round(total / len(shots), 3), "min_shot": min(x["duration"] for x in shots),
