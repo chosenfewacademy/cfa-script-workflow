@@ -596,6 +596,10 @@ async def main():
             await J(pg,"async()=>{ await falImageRequest('kling-o1','SCENE '+'y '.repeat(2000),['https://v3b.fal.media/files/r.png']); }")
             body=[json.loads(b or '{}') for u,b in SC['falLog'] if 'kling-image/o1' in u]
             check('image prompt: over-long still prompts trimmed under the fal limit', body and len(body[-1]['prompt'])<=2450, body and len(body[-1]['prompt']))
+            lk=await J(pg,"""async()=>{ const keep=sceneData; sceneData=[{line:'1. Jordan locks the box.',tag:'IMAGE',characters:'JORDAN',prompt:'kept prompt',resultURL:'https://v3b.fal.media/files/k.png',resultType:'image'}];
+              const seg=segScript; segScript='1. Jordan locks the box.\\n2. Marcus nods.'; await enterSceneGeneration(); const r=[sceneData.length, sceneData[0].tag, sceneData[0].resultURL, sceneData[0].prompt, !!sceneData[0].locked, !!sceneData[1].locked];
+              segScript=seg; sceneData=keep; return r; }""")
+            check('resume: unchanged beats with media keep their tag, prompt and result (no re-classify spend)', lk==[2,'IMAGE','https://v3b.fal.media/files/k.png','kept prompt',True,False], lk)
             # ── audit fixes ──
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sessionStorage.setItem('cfa_openai_key','sk-test');}")
             SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
