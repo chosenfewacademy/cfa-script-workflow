@@ -4454,13 +4454,31 @@ async function generateAllPrompts(){
   }
 }
 
+// Story context for per-beat prompts. Each beat used to be prompted in isolation, so settings
+// jumped (study, server room, coffee shop) and Marcus appeared in beats he is not in. The writer
+// gets the episode, the neighbouring beats, who is on screen and the setting to keep.
+function sceneContextNote(i){
+  const s=sceneData[i]; if(!s) return '';
+  const who=s.characters==='BOTH'||s.characters==='BOTH_JM'?'Marcus and Jordan':s.characters==='MARCUS'?'Marcus only (Jordan is not in this shot)':s.characters==='JORDAN'?'Jordan only (Marcus is not in this shot)':'no Marcus and no Jordan — show objects, screens, hands, a place, or other people only';
+  const cast=castInScene(s);
+  const story=String(finalScript||'').replace(/\s+/g,' ').trim();
+  const prev=sceneData[i-1]?.line||'(start of episode)', next=sceneData[i+1]?.line||'(end of episode)';
+  const firstSetting=(sceneData.find(x=>x.sceneDesc)||{}).sceneDesc||'';
+  return '\n\n[Story context — for continuity only; describe ONLY the beat above.]'+
+    (V[selId]?'\nEpisode: '+V[selId].title:'')+
+    '\nStory: '+(story.length>2400?story.slice(0,2400)+'…':story)+
+    '\nPrevious beat: '+prev+'\nNext beat: '+next+
+    '\nOn screen in this beat: '+who+(cast.length?'; also '+cast.join(', '):'')+'.'+
+    '\nSetting: keep the place the story is in (use the story text'+(firstSetting?'; established so far: '+firstSetting:'')+'). Only change location if this beat says so. Same time of day and props (e.g. the green notebook) as the story.'+
+    '\nNever introduce a person who is not in the story text.';
+}
 async function generatePromptForScene(i){
   const s=sceneData[i];
   const sys=s.tag==='IMAGE' ? SYS_KLING_IMAGE : SYS_KLING_VIDEO;
 
   // Build the user message — add a Character Note when a secondary person is in the scene
   // so the AI knows to describe them as a distinct new individual, not a variation of Marcus/Jordan
-  let userMsg = s.line;
+  let userMsg = s.line + sceneContextNote(i);
   const secondary = detectSecondaryChar(s.line);
   if(secondary){
     const mainChar =
@@ -4484,6 +4502,12 @@ async function generatePromptForScene(i){
     const sceneMatch=rawText.match(/\nSCENE:\s*(.+)/i);
     s.sceneDesc=sceneMatch?sceneMatch[1].trim():'';
     s.prompt=rawText.replace(/\n?SCENE:\s*.+/i,'').trim();
+    // Cast guard: a concept beat whose prompt still puts Marcus/Jordan on screen must use their
+    // reference sheets, or a text-only model draws strangers under their names.
+    if(s.characters==='NONE'){
+      const pc=detectCharacters(s.prompt);
+      if(pc!=='NONE'){ s.characters=pc; s.castFromPrompt=true; }
+    }
     s.promptFailed=false;
     const readyEl=document.getElementById('prompt-ready-'+i);
     if(readyEl){readyEl.textContent='✓ prompt';readyEl.style.display='';}
