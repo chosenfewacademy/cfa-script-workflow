@@ -585,12 +585,27 @@ async def main():
             SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
             good={'style_score':9,'style_match':True,'has_text':True,'text':['Dromaasra'],'identity':[{'name':'Jordan','visible':True,'score':9}]}
             bad={'style_score':2,'style_match':False,'has_text':True,'text':['x'],'identity':[{'name':'Jordan','visible':False,'score':0,'problems':'photoreal'}]}
-            SC['vision']=[dict(good),dict(bad),dict(bad),dict(bad)]
+            SC['vision']=[dict(good),dict(bad),dict(bad)]
             await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
             gl=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
             r=await J(pg,"()=>[sceneData[0].styleQA, sceneData[0].resultModel]")
             check('audit: when every retry fails, the closest-to-model attempt is kept (not the last)', len(gl)>=2 and r[0]['match'] is True and r[0]['identityMatch'] is True, (len(gl),r[0]))
             check('audit: stray writing left on a no-text beat is removed with GPT (remove prompt)', cnt.get('oai',0)-o0==1 and b'REMOVE ALL WRITING' in SC.get('oaiBody',b'') and r[0]['strayText'] is False and 'GPT clean' in (r[1] or ''), (cnt.get('oai',0)-o0, r))
+            await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sceneData[0].line='1. Jordan sits at the desk.';}")
+            o0=cnt.get('oai',0); SC['idq']=[]
+            txt={'style_score':9,'style_match':True,'has_text':True,'text':['EXAM PREPARATION'],'identity':[{'name':'Jordan','visible':True,'score':9}]}
+            SC['vision']=[dict(txt),dict(txt),dict(txt),dict(txt),dict(txt),dict(txt)]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            r=await J(pg,"()=>[sceneData[0].styleQA, sceneData[0].resultModel]")
+            check('audit2: GPT clean is re-checked; text that survives two passes stays flagged', cnt.get('oai',0)-o0==2 and r[0]['strayText'] is True and 'text remains' in (r[1] or ''), (cnt.get('oai',0)-o0, r))
+            r=await J(pg,"()=>{sceneData[0].line='1. Jordan nearly typed the shop password into the exchange.'; return beatNeedsText(sceneData[0])}")
+            await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;}")
+            o0=cnt.get('oai',0)
+            SC['vision']=[{'style_score':9,'style_match':True,'has_text':True,'text':['Jorialam','pasword'],'identity':[{'name':'Jordan','visible':True,'score':9}]},{'style_score':9,'style_match':True,'has_text':True,'text':['password'],'identity':[{'name':'Jordan','visible':True,'score':9}]}]
+            await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+            body=SC.get('oaiBody',b'').decode('latin1')
+            q=await J(pg,"()=>sceneData[0].styleQA")
+            check('audit2: on a words beat, gibberish beyond the script line is treated as stray and GPT keeps only script words', (not r or cnt.get('oai',0)-o0==1) and 'ONLY words from this script line' in body and q['strayText'] is False, (r, cnt.get('oai',0)-o0, q, body[:300]))
             r=await J(pg,"()=>deRealize('A dimly lit, cinematic room at night, laptop glowing')")
             check('audit: realism/darkness words are neutralised in still prompts', 'cinematic' not in r and 'dimly' not in r and 'night' not in r and 'glow' not in r, r)
             r=await J(pg,"()=>{const keep=currentScene; sceneData[keep].prompt=sceneData[keep].prompt||'A test prompt'; document.getElementById('s6-prompt').value=''; jumpToScene(keep); return document.getElementById('s6-prompt').value}")
