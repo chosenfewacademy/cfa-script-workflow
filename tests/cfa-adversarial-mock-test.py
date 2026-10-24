@@ -54,7 +54,7 @@ async def xai_route(route):
         n=len([l for l in user.split('\n') if l.strip()])
         text=SC['cls'] if SC['cls'] is not None else '\n'.join(f'[{i+1}] '+('VIDEO' if i%2 else 'IMAGE') for i in range(n))
     else:
-        if mode=='promptfail' and 'Marcus' in user: return await route.fulfill(status=500,content_type='application/json',body='{}')
+        if mode=='promptfail' and 'Marcus' in user.split('\n')[0]: return await route.fulfill(status=500,content_type='application/json',body='{}')
         text='A flat scene with an orange mug. <b>bold</b> "quotes"\nSCENE: desk, lamp, night'
     finish='length' if mode=='trunc' else 'stop'
     if body.get('stream'):
@@ -494,6 +494,15 @@ async def main():
             ok=len(log)==2 and 'kling-image/o1' in log[0][0] and log[0][1].get('image_urls') and 'image-to-video' in log[1][0]
             check('continuity: Marcus clip with no Marcus still gets a reference start frame, then image-to-video', ok, [u[-40:] for u,_ in log])
             check('continuity: video result stored', await J(pg,"()=>!!sceneData[2].resultURL && sceneData[2].autoStartFrame"))
+            r=await J(pg,"""async()=>{finalScript='Jordan sat in the bike shop. Marcus brought a printout.';selId='v02';
+              sceneData=[{line:'1. Jordan sat in the bike shop.',tag:'IMAGE',characters:'JORDAN',prompt:'',sceneDesc:'bike shop workbench'},{line:'2. A chart.',tag:'IMAGE',characters:'NONE',prompt:'',sceneDesc:''},{line:'3. Dee laughs.',tag:'IMAGE',characters:'NONE',prompt:'',sceneDesc:''}];
+              const n=sceneContextNote(1); const keep=llmComplete; let sent='';
+              llmComplete=async(o)=>{sent=o.user; return {text:'Marcus points at a chart on the shop laptop.\\nSCENE: bike shop'}};
+              await generatePromptForScene(1); llmComplete=keep;
+              return {n, sent, ch:sceneData[1].characters, d:sceneContextNote(2)}}""")
+            check('prompts: story context, neighbours, setting and on-screen cast sent with each beat', all(k in r['sent'] for k in ['Story: Jordan sat in the bike shop','Previous beat: 1. Jordan','Next beat: 3. Dee','no Marcus and no Jordan','bike shop workbench']), r['n'])
+            check('prompts: concept beat whose prompt shows Marcus switches to his reference', r['ch']=='MARCUS', r['ch'])
+            check('prompts: recurring cast named in context', 'also Dee' in r['d'], r['d'][-200:])
             check('pace: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
 
