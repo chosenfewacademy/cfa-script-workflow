@@ -586,6 +586,10 @@ async def main():
             lu=await J(pg,"""async()=>{ const mk=c=>{ const k=document.createElement('canvas'); k.width=k.height=8; const x=k.getContext('2d'); x.fillStyle=c; x.fillRect(0,0,8,8); return k.toDataURL(); };
               return [await imageLuma(mk('#0a0a0a')), await imageLuma(mk('#e0e0e0')), DARK_LUMA]; }""")
             check('darkness: canvas luma measures dark vs bright stills', lu[0] < lu[2] < lu[1], lu)
+            SC['falLog']=[]
+            fv=await J(pg,"""async()=>{ setVideoFormat('vertical'); await falImageRequest('kling-o1','p',['https://v3b.fal.media/files/r.png']); const v=[frameAR(), document.getElementById('rs-aspect').value, document.getElementById('fmt-aspect').value]; setVideoFormat('landscape'); return v.concat([frameAR()]); }""")
+            body=[json.loads(b or '{}') for u,b in SC['falLog'] if 'kling-image/o1' in u]
+            check('format: 9:16 chosen -> stills requested natively vertical and the vertical render preselected', fv==['9:16','vertical','vertical','16:9'] and body and body[-1].get('aspect_ratio')=='9:16', (fv, body[-1:] and body[-1].get('aspect_ratio')))
             # ── audit fixes ──
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sessionStorage.setItem('cfa_openai_key','sk-test');}")
             SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
