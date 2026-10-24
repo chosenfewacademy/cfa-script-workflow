@@ -1015,6 +1015,7 @@ select option{background:var(--surface2)}
   .rbtn{padding:6px 8px}
   .tl-dot:not(.active) .tl-label{opacity:0!important}
 }
+.research-panel{margin:0 0 10px;font-size:13px}.research-panel summary{cursor:pointer;color:var(--accent)}.research-brief{white-space:pre-wrap;max-height:260px;overflow:auto;background:rgba(0,0,0,.25);padding:10px;border-radius:8px;font-size:12px}.ra-scores{margin-top:6px;opacity:.8}
 </style>
 </head>
 <body>
@@ -1312,6 +1313,7 @@ select option{background:var(--surface2)}
 <div class="screen hr" id="s3">
   <div class="sh"><h2>Review &amp; Edit Script</h2><p>Read through the generated script and make any changes directly below.</p></div>
   <div class="rmt"><span class="chip" id="rwc">&mdash;</span><span class="chip" id="rvid"></span><span class="dbg dbu" id="rdb">&middot; No changes</span></div>
+  <div id="research-panel" class="research-panel" style="display:none"></div>
   <textarea class="txed" id="txed" spellcheck="true" aria-label="Script editor" oninput="onEd()"></textarea>
   <div class="edf">
     <div class="wcw"><span>Words:</span><span class="wcn" id="wcn">0</span><div class="wbr"><div class="wb" id="wb"></div></div><span class="wcw">650&ndash;900</span></div>
@@ -2250,204 +2252,38 @@ const V={
 };
 
 // ═══ SYSTEM PROMPTS ═══
-const SYS_GEN=`You are the official cinematic narrative architect for Chosen Few Academy (CFA) — a trust-first digital asset education brand built for beginners.
+const SYS_GEN=`You are the head writer of "Chosen Few Academy" (CFA), a calm, trust-first story series that teaches beginners about digital assets. You write ONE episode: a spoken story, told by a warm narrator, about Jordan (a relatable beginner) and Marcus (his patient friend who has a system). It will be read aloud as a voiceover over cinematic images.
 
-EDUCATION IS THE SPINE (overrides everything below)
-This channel teaches digital assets. Every script is built around the video topic's core concept(s), explained accurately and clearly: how it actually works (the real mechanics), the real terms defined in plain English the first time they appear, and accurate real-world facts or examples. Marcus and Jordan exist to demonstrate the concept: their scenes show the concept working, or show a common mistake and why the mechanics make it a mistake. The story never wanders away from the topic, and there is no invented melodrama (no sob-story backstories, family emergencies, overtime money, or emotional detours unrelated to the concept). A viewer who finishes the video must be able to explain the concept correctly in their own words.
+HOW TO WRITE IT (read this twice; it matters more than anything else)
+You are a storyteller, not a form-filler. The notes below are ingredients, never a checklist: never name or echo them ("trigger moment", "decision point", "the gap", "lesson", "takeaway", "framework", "step one"). Write like a gifted friend telling a true story out loud:
+- Every sentence follows from the one before it. Use cause-and-effect bridges a listener can hear: so, because, which meant, that's when, by the time, but, then. A newcomer must never wonder "wait, how did we get here?"
+- Rhythm like speech: mostly flowing sentences of 8–20 words, with a short one (2–6 words) now and then for weight. Never stack fragments.
+- Dialogue does the heavy lifting. Put spoken lines in quotation marks with contractions, interruptions and plain words ("Hang on. Who sent that?"). Marcus talks like a friend at a workbench, not a teacher at a whiteboard. Jordan asks what a real beginner would ask, including the slightly embarrassing questions.
+- Explain the concept INSIDE the action: Marcus shows something on Jordan's phone, or at the bench, or in the green notebook, and explains it in four to six short causal sentences, using a bike-shop comparison where it really fits. Then the story moves on and the explanation is immediately put to use. No textbook paragraphs and no definitions read out like a glossary.
+- Plain English. Past tense. Concrete sensory details from the series world (the bell on the shop door, grease on Marcus's thumb, the green notebook).
 
-STORY IS HOW IT TEACHES (equally important)
-This must be compelling storytelling, not a lecture. Every script has a real, believable story arc for Marcus and Jordan: a clear everyday situation; a relatable goal or problem tied directly to the topic (setting up a first wallet, sending money to a friend, a message that looks like support); rising tension and curiosity that grow out of the concept itself (almost making the common mistake, a moment of doubt, a question they cannot answer yet); a turning point where the concept clicks; and a satisfying payoff where understanding changes what Jordan does. Vivid, concrete on-topic scenes and natural dialogue carry the explanation; the concept is woven into the plot, not delivered beside it. Emotion and stakes are real but come from the topic, never from random backstory or melodrama.
+STORY SHAPE (the "story pull" formula, adapted from the best first-person story channels; keep it grounded, no melodrama)
+1. Hook: the first sentence (at most 12 words) drops us into an everyday-money moment that already hurts or worries: a payment that hasn't arrived, a fee that ate the tip jar, a message that looks like support, rent due Friday. Sentence two makes the stakes and the clock explicit (what could be lost, and by when).
+2. Relatable stakes: why it matters to Jordan this week, in money terms any viewer recognises.
+3. The obvious fixes fail: Jordan tries what most people would try (refresh the app, call the bank, ask the cousin who hypes coins) and it doesn't work, because he's misunderstanding the concept. Each failure raises the pressure a notch.
+4. The reveal: Marcus reframes the problem by naming the real mechanism, and the digital-asset concept is the NATURAL answer to Jordan's everyday problem, explained accurately in dialogue.
+5. A small, concrete, safe action Jordan takes himself (write it in the green notebook, send a $5 test, check the first and last characters of the address), with visible progress.
+6. Payoff: the deadline moment arrives and goes right, calmly. A small ripple (a customer, Dee or Priya notices). The last lines call back to the hook image.
+7. Hand-off: Marcus says the one thing Jordan now understands in plain words (not a moral); Jordan asks the specific question that the NEXT VIDEO title answers; the narrator closes with one line that leaves that question open. Never say "next time", "stay tuned" or "coming up". Nobody says goodbye.
+Pace for retention: the hook poses one question the viewer needs answered; every paragraph visibly moves Jordan closer to the answer or knocks him back (counted milestones help); a light B-plot (Dee, Priya, a waiting customer) adds a second small stake; the outcome stays uncertain until the deadline beat, then is answered in one or two clean sentences. If a line doesn't move toward the answer, raise the conflict, or explain the mechanism, cut it.
+Keep stakes honest for a money topic: worry, embarrassment and near-misses, not tragedy, revenge or shaming.
 
-TERMINOLOGY (hard rule): always say "digital assets" (or "digital asset" as an adjective: digital asset wallet, digital asset exchange). Never write "crypto", "cryptocurrency" or "cryptocurrencies" in any form, including "crypto wallet" or "crypto exchange". Specific names like Bitcoin and Ethereum are fine. Avoid "cryptography"/"cryptographic" too; prefer plain wording (e.g. "a one-way maths function", "a digital signature").
+CONTENT RULES (hard)
+- TERMINOLOGY: always "digital assets" (or "digital asset" as an adjective). Never "crypto", "cryptocurrency" or "cryptocurrencies" in any form. Bitcoin and Ethereum are fine. Avoid "cryptography"/"cryptographic"; say "a one-way maths function" or "a digital signature".
+- ACCURACY ESSENTIALS: a wallet holds keys, not coins; balances live on the blockchain. A private key is a secret number. The public key is derived from it with a one-way function (secp256k1 elliptic-curve multiplication on Bitcoin and Ethereum). The address is derived from the public key by HASHING (Bitcoin: SHA-256 then RIPEMD-160, then encoding; Ethereum: last 20 bytes of the Keccak-256 hash), not by the curve. Signing proves control without revealing the private key. A seed phrase (usually 12 or 24 words) can regenerate the private keys. Confirmed transactions cannot be reversed by the network. Fees: Bitcoin fees go to miners; on Ethereum the base fee is burned and the tip goes to validators, so say "network fee" unless you name the chain correctly; exchanges may add their own fee. Use the RESEARCH BRIEF for facts and real-world anchors; never invent statistics, history, products or odd precise numbers. Example amounts are round and clearly hypothetical ($50, $100).
+- Brand: calm, no hype, no price predictions, no buy/sell commands, no urgency pressure on the viewer. Jordan is human, never foolish; Marcus is never smug.
+- Series continuity: a quick, specific callback to the last episode within the first ~80 words; Jordan never relearns what he already knows (CONTINUITY NOTE); use the people, places and objects from the SERIES STORY BIBLE / REGISTRY exactly as described, and name the place of each scene so a listener always knows where we are.
+- Not generic: banned stock scenarios are coffee-shop chats, "a friend told him", vague group chats, "everyone online", late-night kitchen-table screen staring. No line that could sit in any episode. No line from LINES ALREADY USED IN OTHER EPISODES.
+- BANNED phrases (and close variants): "Here's the thing", "Here's the kicker", "Here's the catch", "But here's what", "Let's dive in", "dive into", "delve", "In a world where", "Picture this", "Imagine this", "Fast forward", "little did he know", "the truth is", "the reality is", "turns out", "spoiler", "game-changer", "journey", "navigate", "landscape", "realm", "tapestry", "unlock", "empower", "seamless", "crucial", "vital", "pivotal", "ever-evolving", "in today's digital age", "it's worth noting", "at the end of the day", "the bottom line", "That's the point", "That's the difference", "That changes everything", "It's not X, it's Y", "a testament to", "the power of", "peace of mind", "knowledge is power". Also: no stacked rhetorical questions, no three-item rhythm lists, no motivational-poster lines, no tidy morals, no three sentences in a row starting the same way. No stock filler such as "Jordan looked at the closed box/screen/notebook" or "the question stayed on the desk".
 
-ACCURACY ESSENTIALS (state these correctly whenever they come up): a wallet holds keys, not coins; the balances live on the blockchain. A private key is a secret number. The public key is derived from the private key with a one-way function (on Bitcoin and Ethereum, elliptic-curve multiplication on the secp256k1 curve). The address is NOT produced by that curve; it is derived from the public key by hashing (Bitcoin: SHA-256 then RIPEMD-160, then encoding; Ethereum: the last 20 bytes of the Keccak-256 hash of the public key). Signing proves control without revealing the private key. A seed phrase (usually 12 or 24 words) can regenerate the private keys. Confirmed blockchain transactions cannot be reversed by the network. Network fees: on Bitcoin they go to miners; on Ethereum the base fee is burned (destroyed) and only the priority tip goes to validators, so say "network fee" without claiming where all of it goes unless you name the chain correctly (an exchange may add its own fee on top). Never state a fact you are not sure of.
+LENGTH (hard): 650–900 words of spoken narration (about 5 minutes). Aim for about 800.
 
-THE CFA VOICE
-Write as one calm, experienced founder speaking directly to one overwhelmed beginner. Clear without condescending. Warm without soft. Strategic without technical. Honest without alarming. Never a hype man, guru, or salesperson.
-
-FIVE BRAND PILLARS — embed through story, never state as headers:
-1. Education over hype
-2. Security before opportunity
-3. Structure over noise
-4. Long-term thinking over urgency
-5. Transformation: overwhelmed → calm → confident → structured
-
-STORY ARCHITECTURE — apply all rules before writing:
-
-Rule 1 — Title-Locked Storytelling (non-negotiable)
-Derive the story directly from the video title — not a generic digital asset narrative. Extract the specific mistake or scenario, the exact asset/market context, the emotional hook, and the manipulation angle. Use 3-5 title-specific details woven across the full script. If the title is broad, pick one narrow scenario and keep it consistent end-to-end.
-
-Rule 2 — The Character Pair (fixed across every script)
-Two characters appear in every script. Their names and roles never change:
-
-MARCUS — the structured, patient one. The viewer's goal state.
-Marcus pauses before acting. He checks details, asks questions, and moves only when he understands what he is doing. He is not smarter than Jordan — he simply has a system. Show him feeling the same pull Jordan feels, but making a different choice. Marcus is never smug or superior. He is just one step ahead.
-
-JORDAN — the reactive one. Where the viewer currently is.
-Jordan moves fast on emotion, urgency, or borrowed confidence. He is not reckless or foolish — he is human. He feels what the viewer feels. Show his inner thoughts: the excitement, the hesitation he overrides, the moment he commits without full understanding. Jordan is the character the viewer recognises as themselves.
-
-Rules for both characters in every script:
-- Same starting situation — the contrast comes entirely from their different choices, not different circumstances
-- Give each: a Starting Belief, a Trigger Moment, a Decision Point, and a Consequence (short-term feeling + long-term outcome)
-- Include 1-2 concrete setting details (where they are, what they're looking at, what they're doing)
-- Include 2-4 short inner-dialogue lines from Jordan — realistic, not dramatic — that make the psychology feel human
-- Never use generic references: always Marcus or Jordan, never "the first person," "the second person," "the structured one," or "the lost one"
-- Never reuse the same scene setup, decision point, or twist from a prior script
-
-Rule 3 — Psychological Forces (show, don't explain)
-Weave in 2-4 of these without naming them directly: FOMO/urgency loops, social proof ("everyone is winning but me"), authority mimicry (influencers performing expertise), loss aversion and panic decisions, recency bias ("it went up yesterday"), overconfidence from early wins. Show the manipulation in-scene (comment sections, DMs, screenshot gains, countdown timers, algorithmic feeds) before explaining the lesson.
-
-Rule 4 — Numbers as Plot
-Use concrete simple numbers to create clarity without hype. Always translate numbers into meaning. No price predictions. No implied guarantees. Define any technical term in plain English the first time.
-
-Rule 5 — Story Beat Pattern (run at least once per segment)
-Observation → Tension → Choice → Result → Lesson
-
-Rule 5b — The Widening Gap (non-negotiable)
-
-The distance between Marcus and Jordan must visibly increase before it closes.
-
-This gap is not background detail — it is the engine of every script. The viewer must feel the gap widen (Marcus moves, Jordan stays still, or Jordan moves backward) before they feel it close. Without the widening, the closing has no weight.
-
-The gap must be shown in at least one of three forms per script:
-
-Form A — Knowledge Gap
-Marcus understands something concrete that Jordan does not yet understand. The script must name what Marcus knows, not just imply it.
-Example pattern: "Marcus had read the whitepaper. Jordan had read the price chart. Those are not the same document."
-
-Form B — Behaviour Gap
-Marcus has already taken an action that Jordan has not taken. The gap is in what was done, not in what was said.
-Example pattern: "Marcus had already set the alert. Jordan was still watching the screen."
-
-Form C — Consequence Gap
-The gap has already produced a different outcome for each character. The script opens after the divergence has happened, not before.
-Example pattern: "Marcus's position was hedged. Jordan's wasn't. The correction hit them differently."
-
-HARD RULES:
-- The gap must appear before the 40% mark of the script. Never introduce it in the second half.
-- Marcus must never explain the gap to Jordan in the form of a lecture. The gap is revealed through action, result, or contrast — not dialogue instruction.
-- Jordan must not be made to look foolish. The gap must be relatable, not humiliating. The viewer must see themselves in Jordan, not laugh at him.
-- The closing of the gap must be earned by a specific action or decision Jordan makes — not by Marcus handing him the answer.
-- If the script has more than one segment, the gap must reopen slightly at the start of each new segment before it closes again. Each close must feel harder-won than the last.
-
-Rule 6 — Transformation Arc (traceable across full script)
-Overwhelmed → Clear → Calm → Structured Next Step
-
-Rule 6b — The Two-Second Hook (non-negotiable)
-
-The first spoken sentence of every script must drop the viewer into a moment they have already lived. Not a topic introduction. Not a question about digital assets. A specific, recognisable human moment that makes the viewer think "that was me" before the second sentence arrives.
-
-The hook must work in one of three ways:
-
-Type A — The Mistake Already Made
-Jordan has already done the thing. Past tense. The viewer has too. The script opens on the aftermath, not the setup.
-Example pattern: "Jordan sent the transfer before he checked the address. He knew the second he hit confirm."
-
-Type B — The Feeling Before the Knowledge
-The emotional state arrives before any information does.
-Open on what it feels like to not know — the anxiety, the confusion, the quiet embarrassment of nodding along when someone talks about digital assets and understanding nothing.
-Example pattern: "Jordan had been nodding for six months. He had no idea what a wallet actually was."
-
-Type C — The Contrast Already Visible
-Marcus and Jordan are already in different positions by the time the first sentence ends. The viewer can see the gap before it's explained.
-Example pattern: "Marcus had his hardware wallet. Jordan still had his coins on the exchange where he bought them two years ago."
-
-HARD RULES for the hook:
-- No topic announcements ("Today we're covering...")
-- No questions directed at the viewer ("Have you ever...?")
-- No definitions ("A blockchain is...")
-- The first sentence must be about a person doing something or feeling something — not about a concept
-- The emotional trigger must land before the 10-word mark
-- The first sentence is at most 12 words (it must be spoken in about 3 seconds) and creates TENSION: a stake, a near-mistake or an open question the viewer needs answered
-- By the end of sentence two, the open loop is explicit (what is at risk, or what Jordan cannot explain yet) and it is only paid off at the turning point — never in the first 20 seconds
-- Do not open on a description of a calm scene or a recap; open on the moment of friction
-- If the hook could appear on any digital asset channel, rewrite it — it must be specific to Marcus or Jordan's exact situation in this video
-
-CINEMATIC FLOW + RETENTION SYSTEM
-- Every 60-90 seconds deliver one of: a clearer understanding, a calmer perspective, or a structured next step
-- Place one pattern interrupt per segment — a tone shift, surprising comparison, or rhetorical question
-- In each segment include one Marcus/Jordan contrast moment, shown as two concrete actions side by side (never a formula like "The Lost did X — got Y"; vary the wording every time)
-- Every paragraph must advance understanding, reduce anxiety, or increase clarity. If it does none, cut it.
-- By the final segment, Marcus's path must produce a simple repeatable 3-step framework, shown as three things Marcus actually does (on screen, in order, with the objects involved), not read out as a numbered list or a slogan
-
-CRAFT — ENGAGING BECAUSE IT TEACHES (apply all of these)
-
-- Curiosity about how it works is the hook. Open on a moment where the concept matters (Jordan about to do something that depends on it), and raise a real question about the mechanics that the video answers (e.g. "If the coins aren't in the wallet, what is the wallet actually holding?").
-- Explain the mechanics accurately. Name the real parts (blockchain, address, private key, seed phrase, network fee, exchange, custody, confirmation, etc. as relevant), say what each does, and show the sequence of what actually happens. Never invent mechanics, statistics, rules, products or history. If unsure of a figure, leave it out; never make up odd precise numbers.
-- Numbers only when they are accurate and teach something (e.g. Bitcoin's 21 million supply cap, a 12- or 24-word seed phrase, roughly ten-minute Bitcoin blocks, the 2008 financial crisis). Keep example amounts simple and round ($100, $50) and clearly hypothetical.
-- One clear everyday analogy for the core idea (a house key vs the house, a mailbox address vs the key that opens it), stated once, then mapped back to the real mechanics so it doesn't mislead.
-- Use a common misconception or mistake on purpose: show Jordan believing it, show why the mechanics make it wrong, then the correct model.
-- Surprising true facts are welcome when they are genuinely true and on-topic.
-- Experience, then understand: a short moment of Marcus or Jordan doing something, then a plain explanation of what is happening underneath, then back to the scene to show the explanation in use. Scenes are short and serve the explanation.
-- The practical takeaway is real and safe: specific actions a beginner can take (e.g. write the seed phrase on paper and store it offline; send a small test amount first; check the first and last characters of an address), shown as what Marcus does.
-- Dialogue sounds like real people: short and natural. Marcus explains like a friend, not a lecturer; Jordan asks the questions a beginner would actually ask.
-- Rhythm for voiceover: vary sentence length. Most sentences are complete, flowing spoken sentences; short lines are seasoning for emphasis, never more than two in a row, never telegraph-style fragments. Vary paragraph length. Past tense for the story. Every sentence must be easy to say in one breath and easy to follow on first hearing. Clear beats clever.
-- Endings are not tidy morals. The lesson lands as one sharp, accurate line about the concept.
-- One analogy at a time, set up clearly and tied to the scene; no mixed or abstract metaphors. Break dense technical passages into short spoken steps with a beat of action between them.
-- Not generic: each episode has a distinctive setting and situation from the series world (see the SERIES STORY BIBLE) and one memorable, specific moment that only fits this topic and this point in Jordan's journey. Banned stock scenarios: coffee-shop or café chats, "a friend told him", vague group chats or "everyone online", staring at a screen late at night at the kitchen table, generic "he scrolled social media". No interchangeable lines that could sit in any episode. No cliché arcs (instant epiphany, the lecture that fixes everything).
-- Series continuity: open with a quick, specific callback to the last episode (in the first ~80 words), keep Jordan's knowledge consistent with what he has already learned, and hand off to the next video at the end.
-
-BANNED (AI tells and clichés; never use these or close variants):
-"Here's the thing", "Here's the kicker", "Here's the catch", "But here's what", "Let's dive in", "dive into", "delve", "In a world where", "Picture this", "Imagine this", "Enter:", "Fast forward", "little did he know", "the truth is", "the reality is", "turns out", "spoiler", "game-changer", "journey", "navigate", "landscape", "realm", "tapestry", "unlock", "empower", "seamless", "crucial", "vital", "pivotal", "ever-evolving", "in today's digital age", "it's worth noting", "at the end of the day", "the bottom line", "And that's the point", "That's the difference", "That changes everything", "It's not about X, it's about Y", "It's not X. It's Y.", "Not X, not Y, but Z", "a testament to", "the power of", "peace of mind", "knowledge is power". Also banned: stacked rhetorical questions, three-item lists used for rhythm ("fast, cheap, and easy"), sentences ending in ", reminding us that…", motivational-poster lines, and starting three sentences in a row the same way.
-
-LANGUAGE GUARDRAILS
-Always use: plain English, story-based analogies, beginner-safe vocabulary, reflective grounded pacing, educational framing ("here's how to think about this" / "what to consider").
-Never use: "You need to act now" / "This is your chance" / "Most people don't know this" / hype language / price predictions / guaranteed outcomes / direct buy/sell commands / commands implying certainty.
-
-STRUCTURE — write as five continuous prose sections, no headers or labels:
-- Hook (0:00-0:25): Belief challenge + emotional entry point
-- Segment 1 (0:25-1:45): Story setup, core misunderstanding introduced
-- Segment 2 (1:45-3:00): Tension, manipulation forces at play
-- Segment 3 (3:00-4:15): The guided path revealed, contrast shown
-- Final Segment (4:15-5:00): Transformation payoff, 3-step framework, sequential overlap ending
-
-Rule 7 — Sequential Overlap Ending (non-negotiable)
-
-Every script ends with a hard, specific handoff into the next video. Marcus and Jordan do not wrap up and sign off — they walk directly into the next problem.
-
-The ending must work in three beats:
-
-Beat 1 — Land the lesson (1-2 sentences)
-Marcus states the one thing he now knows that he didn't before. Concrete. Specific to this video's topic. No summarising, no repeating — just the single sharpest takeaway stated plainly.
-
-Beat 2 — Jordan surfaces the next problem (1-2 sentences)
-Jordan — still one beat behind Marcus — asks the exact question this lesson naturally produces. Not a vague "what's next" question. A specific question that comes directly from the NEXT VIDEO title provided in the user prompt. The question should feel like something the viewer is already forming in their own head.
-
-Beat 3 — The narrator closes on the hook (1 sentence)
-One single closing line. It does not answer Jordan's question. It confirms the question is the right one. It should make stopping feel like leaving mid-sentence. The viewer must feel the next video is already waiting.
-
-HARD RULES for the ending:
-- The NEXT VIDEO title must directly seed Beat 2 and Beat 3
-- Do not use the words: "next time", "in our next video", "coming up", "stay tuned", "make sure to watch"
-- Do not summarise the whole video in the closing
-- Do not let Marcus or Jordan say goodbye
-- The final line belongs to the narrator — not the characters
-- If no NEXT VIDEO is provided, Beat 2 becomes Jordan realising there is an entire layer beneath what they just learned — and Beat 3 leaves that layer unnamed but felt
-
-PRE-OUTPUT SELF-AUDIT (run silently before writing):
-□ Story is derived from the title — not generic
-□ 3-5 title-specific details woven across the script
-□ Both characters have all 4 required elements
-□ 2+ psychological forces shown through story (not labeled)
-□ One primary manipulation tactic shown in-scene
-□ No hype language, price predictions, or urgency manipulation
-□ Transformation arc is traceable
-□ Every paragraph advances understanding, reduces anxiety, or increases clarity
-□ The topic's core concept is explained accurately: real mechanics, real terms defined plainly, no invented facts or numbers
-□ Every scene demonstrates the concept; nothing off-topic, no melodrama
-□ A common misconception is corrected; a practical, safe takeaway is shown
-□ The hook raises a real question about how it works, answered by the end
-□ Length is 650-900 words
-□ A real story arc (situation → goal/problem → rising tension → turning point → payoff) carries the concept
-□ The words "crypto", "cryptocurrency" and "cryptocurrencies" never appear
-□ No banned phrase, no stacked questions, no tidy moral; sentence and paragraph lengths vary
-□ Overlap ending leads to continued learning — not pressure
-If any box fails, revise before outputting.
-
-TARGET LENGTH (hard requirement): 650-900 words of spoken narration — about 5 minutes of voiceover. Plan the sections to fit (hook ~60 words, segments ~150-200 each, final ~120-150). Count before you output; if outside 650-900, trim or expand the explanation until it fits.
-
-OUTPUT: Raw spoken words only. One continuous block of plain paragraphs. No section labels, headers, timestamps, metadata, dopamine levels, visual directions, or BINGE elements in the output. No preamble. No commentary. Write the first word of the script immediately.
-NO STOCK FILLER (hard rule): never write "Jordan looked at the closed box/screen/notebook", "the question stayed on the desk", "the question is the one that matters now", "and it was the right one", or any line from LINES ALREADY USED IN OTHER EPISODES. Each episode has its own opening image and its own closing image and line.`;
+OUTPUT: only the spoken script as plain paragraphs (vary their length; one-line paragraphs are welcome). No title, headings, labels, stage directions or notes. Start with the first spoken word.`;
 
 const SYS_SEG=`You are a script segmentation tool. Your only job is to split a spoken script into numbered lines — one natural spoken beat per line, each 4-6 seconds when read aloud.
 
@@ -2938,27 +2774,86 @@ async function saveEpisodeRecap(id, script){
 }
 
 // Hidden planning pass: the writer commits to specifics BEFORE drafting (never shown to the viewer)
-const SYS_PLAN=`You are the lead educator and story editor for Chosen Few Academy (CFA), a trust-first beginner digital asset education channel. Before the script is written, you plan WHAT will be taught and the story that will teach it. You do not write the script. Output a compact private plan for the writer.
+const SYS_PLAN=`You are the lead educator and story editor for Chosen Few Academy (CFA), a trust-first beginner series about digital assets. Before the script is written you design ONE cohesive episode. You do not write the script. Output a compact private plan for the writer.
 
-Education is the spine and story is how it teaches: the concept must be explained accurately, inside a compelling, believable Marcus/Jordan story arc whose tension grows out of the concept itself. No random backstory, melodrama or odd made-up numbers.
-TERMINOLOGY (hard rule): always say "digital assets" (or "digital asset" as an adjective: digital asset wallet, digital asset exchange). Never write "crypto", "cryptocurrency" or "cryptocurrencies" in any form, including "crypto wallet" or "crypto exchange". Specific names like Bitcoin and Ethereum are fine. Avoid "cryptography"/"cryptographic" too; prefer plain wording (e.g. "a one-way maths function", "a digital signature").
-ACCURACY ESSENTIALS (state these correctly whenever they come up): a wallet holds keys, not coins; the balances live on the blockchain. A private key is a secret number. The public key is derived from the private key with a one-way function (on Bitcoin and Ethereum, elliptic-curve multiplication on the secp256k1 curve). The address is NOT produced by that curve; it is derived from the public key by hashing (Bitcoin: SHA-256 then RIPEMD-160, then encoding; Ethereum: the last 20 bytes of the Keccak-256 hash of the public key). Signing proves control without revealing the private key. A seed phrase (usually 12 or 24 words) can regenerate the private keys. Confirmed blockchain transactions cannot be reversed by the network. Network fees: on Bitcoin they go to miners; on Ethereum the base fee is burned (destroyed) and only the priority tip goes to validators, so say "network fee" without claiming where all of it goes unless you name the chain correctly (an exchange may add its own fee on top). Never state a fact you are not sure of. Keep CFA rules: calm, no hype, no price predictions, no buy/sell commands; Marcus structured and kind, Jordan a relatable beginner.
+Use the RESEARCH BRIEF for facts and real-world anchors (only facts it supports), and the SERIES STORY BIBLE / REGISTRY for people, places and objects (use their IDs). Always say "digital assets", never "crypto"/"cryptocurrency". Calm brand: no hype, predictions or buy/sell advice. ACCURACY ESSENTIALS: a wallet holds keys, not coins; balances live on the blockchain; the public key comes from the private key by a one-way function (secp256k1 on Bitcoin/Ethereum) and the address from the public key by hashing; a seed phrase (12 or 24 words) regenerates the keys; confirmed transactions can't be reversed by the network; Bitcoin fees go to miners, Ethereum's base fee is burned.
+
+Story formula (keep it honest for a money topic, no melodrama): an everyday-money problem with a clock → Jordan tries the obvious fixes and they fail because of a misconception → Marcus's reveal names the real mechanism, and the digital-asset concept is the NATURAL resolution of that everyday problem → a small, safe action Jordan takes himself → a calm payoff at the deadline that answers the hook → a hand-off question into the next video. Also (Jenny Hoyos's short-story rules): open on a question the viewer needs answered; give constant, visible progress toward the answer; add conflict and a light B-plot; keep the outcome uncertain until late, then answer it quickly; cut every beat that does not move toward the answer.
 
 Output exactly these headed sections, terse:
-CORE CONCEPT: one plain-English sentence a beginner should be able to repeat after the video
-KEY POINTS: 3-5 accurate points explaining how it actually works (real mechanics, in order)
-TERMS: each technical term used, with a one-line plain definition
-MISCONCEPTION: the most common wrong belief about this topic, and why the mechanics make it wrong
-ANALOGY: one everyday analogy, and exactly where it stops being accurate
-TRUE FACTS: 1-3 genuinely true, verifiable facts or numbers relevant to the topic (omit if unsure)
-PRACTICAL TAKEAWAY: the 3 safe, concrete steps a beginner can take (the 3-step framework)
-ACCURACY CHECK: list any claim in this plan that could be wrong or oversimplified, and the correct version
-STORY ARC: situation (same everyday on-topic starting point for both) → goal or problem tied to the topic → rising tension from the concept (Jordan acting on the misconception, a near-mistake) → the gap shown before 40% → turning point where the concept clicks → payoff (Jordan's own decision, and what changes because he understands)
-HOOK: the first two spoken sentences (a person in an on-topic moment + a real question about how it works)
-BEATS with WORD BUDGET: 8-11 numbered beats, each with its job (EXPERIENCE or UNDERSTAND) and a word budget, totalling 700-850 words
-SETTING & MEMORABLE MOMENT: the distinctive series location and situation for this episode (not a used one, no stock scenarios) and the one specific moment viewers will remember, tied to this topic
-CONTINUITY: the callback to the last episode (one line), what Jordan already knows and must not relearn, and where this episode leaves him in his journey
-ENDING: Marcus's one accurate takeaway; Jordan's question seeded by the NEXT VIDEO title; the narrator's last line`;
+CORE CONCEPT: one plain sentence a beginner could repeat after the video
+KEY POINTS: 3-5 accurate mechanics, in order
+MISCONCEPTION: the wrong belief Jordan acts on, and why the mechanics make it wrong
+ANALOGY: one bike-shop or everyday comparison, and exactly where it breaks
+ANCHORS: 1-2 real, verifiable facts from the brief worth saying aloud (omit if none)
+THROUGHLINE QUESTION: the single question the hook raises and the payoff answers
+PROGRESS MARKERS: the visible milestones that show Jordan getting closer to (or knocked back from) the answer, scene by scene
+B-PLOT: one light second thread with small stakes of its own (e.g. Dee needs the supplier paid; a customer is waiting), resolved in the same payoff
+CUT LIST: any idea, scene or detail you considered that does not move toward the answer (the writer must leave it out)
+EVERYDAY STAKES & CLOCK: what Jordan could lose (in ordinary money terms) and by when
+HOOK: the first two spoken sentences (sentence one at most 12 words, a person in a moment of friction)
+SCENE CHAIN: 6-9 numbered scenes. For each: WHERE=<place id> WHO=<person ids> WHAT=<object ids> | what happens | why it causes the next scene ("so…"/"which means…"). Every scene must be caused by the previous one. Name each scene's place so a listener can follow.
+REVEAL: the exact moment and the spoken words (gist) where Marcus reframes the problem
+ACTION & PROGRESS: the small safe steps Jordan takes and the visible sign each one worked
+PAYOFF: how the deadline goes, the small ripple, and the image that calls back to the hook
+CONTINUITY: the callback to the last episode (one line); what Jordan already knows and must not relearn
+ENDING: Marcus's one-sentence understanding; Jordan's question seeded by the NEXT VIDEO title; the narrator's last line (no "next time")
+WORD BUDGET: words per scene, totalling about 800`;
+
+// Research pass: xAI Responses API with live web search builds a fact brief before planning
+const SYS_RESEARCH=`You are the research desk for Chosen Few Academy, a calm beginner series about digital assets (always say "digital assets", never "crypto" or "cryptocurrency"). Use web search to check facts. Write a compact FACT BRIEF for the writer on the video topic below, in plain English, with these headed sections:
+KEY CONCEPTS: 3-6 concepts with accurate one-to-three-sentence explanations of how they actually work
+REAL-WORLD ANCHORS: 2-5 real, verifiable events, dates, numbers or examples relevant to the topic (e.g. the Bitcoin white paper published 31 Oct 2008; the genesis block of 3 Jan 2009 quoting The Times headline "Chancellor on brink of second bailout for banks"; Lehman Brothers' collapse in Sept 2008), each with a short source name. Only include what you verified.
+COMMON MISCONCEPTIONS: 2-4, each with the correction
+BIKE-SHOP ANALOGY: one comparison set in a small bike repair shop, and where it breaks down
+SAFE PRACTICAL STEPS: 2-3 things a beginner can safely do
+CAUTIONS: any claim that is often stated wrongly, with the correct version
+No hype, no price predictions, no buy/sell advice. At most 450 words.`;
+async function researchBrief(title, cq, signal){
+  const key=llmKey(); if(!key) return {text:'',cost:0,source:'none'};
+  const prompt=SYS_RESEARCH+'\n\nVIDEO TOPIC: '+title+(cq?'\nCORE QUESTION: '+cq:'');
+  try{
+    const r=await fetch('https://api.x.ai/v1/responses',{method:'POST',signal,headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
+      body:JSON.stringify({model:llmModel('fast'),input:[{role:'user',content:prompt}],tools:[{type:'web_search'}],max_output_tokens:3000})});
+    if(!r.ok) throw new Error('research HTTP '+r.status);
+    const d=await r.json();
+    const text=(d.output||[]).filter(o=>o&&o.type==='message').flatMap(o=>o.content||[]).map(c=>c&&c.text||'').join('\n').trim();
+    const cost=(d.usage&&d.usage.cost_in_usd_ticks!=null)? d.usage.cost_in_usd_ticks/1e10 : 0.02;
+    try{ trackTextSpend(cost); }catch(e){}
+    if(text.split(/\s+/).length<40) throw new Error('research brief too short');
+    return {text:text.replace(FORBIDDEN_TERM_RE,'digital assets'),cost,source:'web'};
+  }catch(e){
+    if(e.name==='AbortError') throw e;
+    console.warn('Web research failed, falling back to model knowledge:',e.message);
+    try{
+      const f=await llmComplete({role:'fast',system:SYS_RESEARCH+'\n(Web search is unavailable: include only facts you are certain of.)',user:'VIDEO TOPIC: '+title+(cq?'\nCORE QUESTION: '+cq:''),maxTokens:3000,signal});
+      return {text:(f.text||'').trim().replace(FORBIDDEN_TERM_RE,'digital assets'),cost:0,source:'model'};
+    }catch(e2){ if(e2.name==='AbortError') throw e2; return {text:'',cost:0,source:'none'}; }
+  }
+}
+
+// Read-aloud naturalness + coherence critic: scores, finds weak spots, rewrites them
+const SYS_READALOUD=`You are a script doctor who reads scripts ALOUD for a living. You receive a narrated story script for Chosen Few Academy (a calm beginner series about digital assets, featuring Jordan and Marcus). Read it as a first-time listener who knows nothing about digital assets.
+
+Score 1-10 (10 = a gifted human storyteller; be strict, 8 means genuinely good):
+flow (each sentence leads naturally into the next; audible cause-and-effect transitions; no jumps),
+cohesion (one throughline question from hook to payoff; every scene caused by the previous one),
+logic (a newcomer always knows where we are, who is talking and why things happen; nothing unexplained),
+human (sounds like a person telling a story, not a template: natural dialogue in quotes with contractions, varied rhythm, no list or textbook phrasing, no labels such as "trigger" or "lesson"),
+story_pull (a hook that poses one question the viewer needs answered and hurts a little, stakes with a clock, constant visible progress, failed obvious fixes or a light B-plot as conflict, an outcome uncertain until late then answered quickly, a calm payoff that answers the hook; any line that doesn't move toward the answer counts against this — cut it),
+accuracy (every digital-asset claim is correct; nothing invented).
+Then list the weakest lines (quote them) and fix them. Rewrite ONLY what needs it: smooth transitions, make dialogue sound spoken, turn textbook passages into Marcus explaining in the moment, fix any logic gap, fix any factual error. Keep the story, the characters, the facts, the hook and the ending. Keep 650-900 words. Always "digital assets", never "crypto". No banned clichés ("here's the thing", "journey", "navigate", "game-changer", "turns out", "the truth is", "next time", "stay tuned").
+
+Return ONLY JSON: {"scores":{"flow":n,"cohesion":n,"logic":n,"human":n,"story_pull":n,"accuracy":n},"problems":["..."],"script":"<the full improved script as plain paragraphs separated by \\n\\n>"}`;
+function parseReadAloud(t){
+  try{
+    const m=String(t||'').match(/\{[\s\S]*\}/); if(!m) return null;
+    const j=JSON.parse(m[0]);
+    if(!j||typeof j.script!=='string'||!j.scores) return null;
+    return j;
+  }catch(e){ return null; }
+}
+const READALOUD_MIN=8;
 
 // Critique + revise pass: an editor fixes what makes drafts feel generic, without changing the story or the brand rules
 const SYS_REVISE=`You are a senior script editor and fact-checker for Chosen Few Academy (CFA), a calm, trust-first beginner digital asset education channel. You receive a narrated Marcus/Jordan script draft. Silently critique it, then output the improved full script.
@@ -2973,8 +2868,8 @@ ACCURACY ESSENTIALS (state these correctly whenever they come up): a wallet hold
 3c. Series continuity: a quick, specific callback to the last episode near the start; Jordan's knowledge consistent with the CONTINUITY NOTE (he never relearns something he already knows); recurring cast, places and objects used consistently with the SERIES STORY BIBLE.
 3b. Story engagement: is there a real, believable arc (situation → topic-tied goal or problem → rising tension from the concept → turning point where it clicks → satisfying payoff) with vivid on-topic scenes and natural dialogue? If the draft reads like a lecture, dramatise the explanation through what Marcus and Jordan do and say, without losing accuracy.
 4. Hook: does the opening put us in an on-topic moment and raise a real question about how it works?
-5. Rhythm for voiceover: flowing, natural spoken sentences in the past tense; vary length; no stacked fragments or telegraph style.
-6. Dialogue: natural and short; Marcus explains like a friend, not a lecturer.
+5. Flow and rhythm for voiceover: every sentence must follow from the one before (audible cause-and-effect bridges: so, because, which meant, that's when); a newcomer always knows where we are and why; flowing natural spoken sentences in the past tense; vary length; no stacked fragments, telegraph style, list phrasing or textbook definition paragraphs. Remove any leaked planning labels ("trigger moment", "decision point", "the gap", "lesson", "framework", "step one").
+6. Dialogue: natural and short, in quotation marks, with contractions; Marcus explains like a friend at the workbench, not a lecturer. Story pull: the hook hurts a little, the stakes have a clock, the obvious fixes fail, the reveal reframes the problem, the payoff answers the hook calmly.
 7. Cut AI tells and clichés: banned phrases from the writer brief, stacked rhetorical questions, three-item rhythm lists, "It's not X, it's Y", motivational-poster lines, tidy moral summaries.
 8. Brand: no hype, predictions or buy/sell commands; Jordan relatable not foolish; Marcus never smug; the 3-step framework shown as Marcus's actions; ending with Marcus's takeaway, Jordan's next-video question and the narrator's last line; none of "next time", "stay tuned", "coming up".
 9. LENGTH (hard requirement): the final script must be 650-900 words. If the draft is outside that range, trim (cut repetition and scene padding first, never the explanation) or expand (deepen the explanation, not the melodrama) until it fits.
@@ -3018,6 +2913,8 @@ function scriptLint(text){
     const w=k=>(sents[k].split(/\s+/)[0]||'').toLowerCase();
     if(w(i)&&w(i)===w(i-1)&&w(i)===w(i-2)&&!['marcus','jordan'].includes(w(i))){ issues.push('Three sentences in a row start with "'+w(i)+'"'); break; }
   }
+  const leak=(text.match(/\b(trigger moment|decision point|starting belief|the gap (?:widened|closed)|step (?:one|two|three):|the lesson|takeaway|framework)\b/gi)||[]);
+  if(leak.length) issues.push('Planning labels leaked into the story: '+[...new Set(leak.map(x=>x.toLowerCase()))].map(x=>'"'+x+'"').join(', ')+' — show it, never name it');
   const ft=forbiddenTerms(text);
   if(ft.length) issues.push('Forbidden terms (say "digital assets" instead): '+ft.map(x=>'"'+x.term+'" ×'+x.count).join(', '));
   const wc=wordCount(text);
@@ -3114,6 +3011,7 @@ function allStagesDone(){
   }
 }
 
+let genResearch='', genReadAloud=null;
 async function startGen(){
   if(!llmKey()){showErr('e1',LLM_MISSING_KEY);return;}
   if(!selId){showErr('e1','Select a video first.');return;}
@@ -3156,11 +3054,17 @@ async function startGen(){
     document.getElementById('s2-stat').textContent=label;
   };
   try{
-    const brief=buildPrompt(selId);
+    let brief=buildPrompt(selId);
     let plan='';
+    genResearch=''; genReadAloud=null;
     if(fullPasses){
       setGStage(0);
-      document.getElementById('s2-stat').textContent='Planning beats, stakes and details…';
+      document.getElementById('s2-stat').textContent='Researching facts (web search)…';
+      const rb=await researchBrief(V[selId].title, V[selId].cq, ctrl.signal);
+      if(genAbort!==ctrl)return;
+      genResearch=rb.text||'';
+      if(genResearch) brief+='\n\nRESEARCH BRIEF (verified facts; use only these for real-world anchors):\n'+genResearch;
+      document.getElementById('s2-stat').textContent='Planning the story arc…';
       const p=await llmComplete({role:'writer', system:SYS_PLAN, user:brief, maxTokens:5000, effort:'low', signal:ctrl.signal});
       if(genAbort!==ctrl)return;
       plan=(p.text||'').trim();
@@ -3168,7 +3072,7 @@ async function startGen(){
     setGStage(1);
     const draftRes=await llmComplete({
       role:'writer', system:SYS_GEN,
-      user: plan ? brief+'\n\nPRIVATE BEAT PLAN (follow it closely; never mention or output it):\n'+plan : brief,
+      user: plan ? brief+'\n\nPRIVATE STORY PLAN (follow its scene chain and throughline; never mention, label or output it):\n'+plan : brief,
       maxTokens:8000, signal: ctrl.signal,
       onDelta: t=>{ showStream(t,'Drafting…'); if(stage<2&&t.length>300){stage=2;setGStage(2);} }
     });
@@ -3197,6 +3101,26 @@ async function startGen(){
           const fw=wordCount(fit.text);
           if(fit.text.trim() && !fit.truncated && Math.abs(fw-800)<Math.abs(wc-800)) text=fit.text;
         }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Fit pass failed:',e.message); }
+      }
+    }
+    // Read-aloud naturalness + coherence critic (up to 2 rounds while any score is below the bar)
+    if(fullPasses && text.trim() && !truncated){
+      for(let round=0; round<2; round++){
+        if(genAbort!==ctrl)return;
+        document.getElementById('s2-stat').textContent='Reading aloud: flow, logic & naturalness check'+(round?' (round 2)':'')+'…';
+        let ra=null;
+        try{
+          const r=await llmComplete({role:'writer', system:SYS_READALOUD, maxTokens:9000, effort:'medium', signal:ctrl.signal,
+            user:(genResearch?'RESEARCH BRIEF (facts):\n'+genResearch+'\n\n':'')+'NEXT VIDEO / CONTINUITY CONTEXT:\n'+brief.slice(0,1500)+'\n\nSCRIPT:\n'+text.trim()});
+          if(!r.truncated) ra=parseReadAloud(r.text);
+        }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Read-aloud pass failed:',e.message); }
+        if(!ra) break;
+        const sc=ra.scores||{}; genReadAloud={scores:sc,problems:ra.problems||[],round:round+1};
+        const cand=String(ra.script||'').trim(), cw=wordCount(cand);
+        const ok=cand && cw>=SCRIPT_WORDS.min && cw<=SCRIPT_WORDS.max && !forbiddenTerms(cand).length && scriptLint(cand).banned.length<=scriptLint(text).banned.length;
+        if(ok) text=cand;
+        const low=Object.values(sc).some(v=>Number(v)<READALOUD_MIN);
+        if(!low) break;
       }
     }
     if(genAbort!==ctrl)return; // cancelled or superseded
@@ -3244,6 +3168,12 @@ function openReview(){
   const wc=genScript.trim().split(/\s+/).length;
   document.getElementById('txed').value=genScript;
   document.getElementById('rwc').textContent='~'+wc+' words';
+  const rp=document.getElementById('research-panel');
+  if(rp){
+    const ra=genReadAloud&&genReadAloud.scores?('<div class="ra-scores">Read-aloud check: '+Object.entries(genReadAloud.scores).map(([k,v])=>escHtml(k)+' '+escHtml(String(v))+'/10').join(' · ')+'</div>'):'';
+    rp.innerHTML = genResearch ? ('<details><summary>Research brief (fact-checked with web search) — review before continuing</summary><pre class="research-brief">'+escHtml(genResearch)+'</pre></details>'+ra) : ra;
+    rp.style.display = (genResearch||ra)?'':'none';
+  }
   const t=V[selId].title;
   document.getElementById('rvid').textContent=t.length>44?t.slice(0,44)+'…':t;
   setDiff(false);onEd();goTo(3);
