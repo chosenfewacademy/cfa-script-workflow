@@ -592,6 +592,10 @@ async def main():
             check('format: 9:16 chosen -> stills requested natively vertical and the vertical render preselected', fv==['9:16','vertical','vertical','16:9'] and body and body[-1].get('aspect_ratio')=='9:16', (fv, body[-1:] and body[-1].get('aspect_ratio')))
             fp=await J(pg,"""()=>{ const p='SCENE '+'x '.repeat(1800)+CLIP_IDENTITY_GUARD+' STRICT, previous clip failed: writing appeared — no text at all.'; const r=fitClipPrompt(p); return [r.length, r.startsWith('SCENE'), r.includes('IDENTITY LOCK'), r.includes('no text at all'), fitClipPrompt('short')]; }""")
             check('clip prompt: over-long prompts trimmed under the 2500 limit, keeping scene start, identity guard and redo note', fp[0]<=2450 and fp[1] and fp[2] and fp[3] and fp[4]=='short', fp)
+            SC['falLog']=[]
+            await J(pg,"async()=>{ await falImageRequest('kling-o1','SCENE '+'y '.repeat(2000),['https://v3b.fal.media/files/r.png']); }")
+            body=[json.loads(b or '{}') for u,b in SC['falLog'] if 'kling-image/o1' in u]
+            check('image prompt: over-long still prompts trimmed under the fal limit', body and len(body[-1]['prompt'])<=2450, body and len(body[-1]['prompt']))
             # ── audit fixes ──
             await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;sessionStorage.setItem('cfa_openai_key','sk-test');}")
             SC['falLog']=[]; SC['idq']=[]; o0=cnt.get('oai',0)
