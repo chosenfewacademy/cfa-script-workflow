@@ -5413,7 +5413,32 @@ function composeScenePrompt(s, prompt, {sceneText, styleText, camera}={}){
   if(sceneText) p+=' Setting: '+sceneText+'.';
   if(styleText) p+=' Style: '+styleText+'.';
   if(camera && CAMERA_PRESETS[camera]) p+=' '+CAMERA_PRESETS[camera];
-  return p+secondaryGuardText(s);
+  return p+secondaryGuardText(s)+castLookText(s);
+}
+// ═══ RECURRING CAST — keep series regulars (Dee, Mr. Okafor) looking the same ═══
+// Marcus and Jordan have fixed reference sheets. The other regulars do not, so every scene
+// used to invent a new Dee. Each regular gets a fixed look in the prompt, and the first image
+// generated of them becomes their reference for every later still (sent to Kling O1).
+const RECURRING_CAST={
+  Dee:{re:/\bdee\b/i, look:"Dee (Jordan's cousin and co-worker): young woman in her early 20s, warm brown skin, curly dark hair in a high puff, mustard-yellow bike-shop work shirt over a black tee, small gold hoop earrings, phone usually in hand."},
+  Okafor:{re:/\b(mr\.?\s*)?okafor\b/i, look:"Mr. Okafor (the bike shop owner): Nigerian man in his late 50s, short grey hair and trimmed grey beard, wire-rim glasses, navy shop apron over a checked shirt."}
+};
+function castInScene(s){ const t=String(s?.line||''); return Object.keys(RECURRING_CAST).filter(n=>RECURRING_CAST[n].re.test(t)); }
+function castLookText(s){ const c=castInScene(s); return c.length?' Recurring character, keep exactly this look: '+c.map(n=>RECURRING_CAST[n].look).join(' '):''; }
+// Earliest generated still of this regular (alone in the cast list) becomes the reference.
+function castRefUrl(name, exceptIdx){
+  for(let k=0;k<sceneData.length;k++){
+    const x=sceneData[k];
+    if(k!==exceptIdx && x.resultType==='image' && x.resultURL && castInScene(x).includes(name)) return x.resultURL;
+  }
+  return '';
+}
+// Adds regulars' reference images; a concept-model scene that has a reference moves to Kling O1.
+function withCastRefs(idx, model, refs){
+  const s=sceneData[idx], out=refs.slice(), used=[];
+  for(const n of castInScene(s)){ const u=castRefUrl(n, idx); if(u && !out.includes(u)){ out.push(u); used.push(n); } }
+  if(used.length && model==='imagen4') model='kling-o1';
+  return {model, refs:out.slice(0,4), used};
 }
 async function falPost(endpoint, body){
   const falKey=sessionStorage.getItem('cfa_fal_key');
@@ -5494,7 +5519,14 @@ async function generateAllImages(){
   const data=sceneData;
   showErr('e6','');
   updateBatchButton();
-  const queue=targets.slice();
+  // Recurring cast: a regular's first still must exist before the others, so it can be their reference.
+  const firsts=[];
+  for(const n of Object.keys(RECURRING_CAST)){
+    if(castRefUrl(n,-1)) continue;
+    const t=targets.find(t=>castInScene(t.s).includes(n));
+    if(t && !firsts.includes(t)) firsts.push(t);
+  }
+  let queue=firsts.slice();
   const worker=async()=>{
     while(queue.length && !run.cancel && sceneData===data){
       const {s,i}=queue.shift();
@@ -5508,10 +5540,11 @@ async function generateAllImages(){
           for(const [n,b64] of order) refs.push(await getCharacterUrl(n,b64));
         } else if(s.characters==='MARCUS') refs.push(await getCharacterUrl('Marcus',MARCUS_B64));
         else if(s.characters==='JORDAN') refs.push(await getCharacterUrl('Jordan',JORDAN_B64));
-        const model = s.characters==='NONE' ? 'imagen4' : (userImageModel==='imagen4'?'kling-o1':userImageModel);
+        const cast=withCastRefs(i, s.characters==='NONE' ? 'imagen4' : (userImageModel==='imagen4'?'kling-o1':userImageModel), refs);
+        const model=cast.model;
         const prompt=composeScenePrompt(s, s.prompt, {sceneText:s.sceneDesc, styleText:s.styleDesc});
         const cost=MODEL_COSTS.image[model];
-        const r=await falImageRequest(model, prompt, refs);
+        const r=await falImageRequest(model, prompt, cast.refs);
         trackSpend(cost);
         if(sceneData!==data) return;
         applyImageResult(i, r.url, r.label);
@@ -5526,6 +5559,8 @@ async function generateAllImages(){
       }
     }
   };
+  await Promise.all(Array.from({length:BATCH_CONCURRENCY},worker));
+  queue=targets.filter(t=>!firsts.includes(t));
   await Promise.all(Array.from({length:BATCH_CONCURRENCY},worker));
   if(batchRun===run) batchRun=null;
   updateBatchButton(); renderSceneDots();
@@ -5598,7 +5633,11 @@ async function generateScene(){
         }
       }
       genCost=getEstimatedCost();
-      const model=selectedImageModel;
+      const cast=withCastRefs(idx, selectedImageModel, refImages);
+      if(cast.model!==selectedImageModel) setImageModel(cast.model, true);
+      refImages.splice(0, refImages.length, ...cast.refs);
+      genCost=getEstimatedCost();
+      const model=cast.model;
       document.getElementById('s6-gen-label').textContent='Generating with '+IMAGE_MODEL_LABELS[model]+(model!=='imagen4'?' ('+refImages.length+' ref'+(refImages.length>1?'s':'')+')':'')+'…';
       const r=await falImageRequest(model, finalPrompt, refImages);
       resultURL=r.url; modelLabel=r.label;
@@ -5606,17 +5645,22 @@ async function generateScene(){
 
     } else {
       // ── VIDEO dispatch ───────────────────────────────────────────────────
-      const startFrameURL=sceneRefs['startframe']?.url?.startsWith('https://')?sceneRefs['startframe'].url:'';
+      let startFrameURL=sceneRefs['startframe']?.url?.startsWith('https://')?sceneRefs['startframe'].url:'';
       genCost=getEstimatedCost();
+      // A clip of Marcus/Jordan with no earlier still of them: make an opening frame from
+      // their reference sheets first, so image-to-video keeps their look.
+      if(!startFrameURL && s.characters!=='NONE'){
+        document.getElementById('s6-gen-label').textContent='Making a start frame from the character references (Kling O1)…';
+        const order=s.characters==='BOTH_JM'?[['Jordan',JORDAN_B64],['Marcus',MARCUS_B64]]:s.characters==='BOTH'?[['Marcus',MARCUS_B64],['Jordan',JORDAN_B64]]:s.characters==='MARCUS'?[['Marcus',MARCUS_B64]]:[['Jordan',JORDAN_B64]];
+        const refs=[]; for(const [n,b64] of order) refs.push(await getCharacterUrl(n,b64));
+        const sf=await falImageRequest('kling-o1', finalPrompt+' Opening frame of this shot, characters clearly visible.', withCastRefs(idx,'kling-o1',refs).refs);
+        trackSpend(MODEL_COSTS.image['kling-o1']);
+        startFrameURL=sf.url; s.savedStartFrameURL=sf.url; s.startFrameManual=false; s.autoStartFrame=true;
+        sceneRefs['startframe']={url:sf.url};
+      }
 
       if(selectedVideoModel==='kling-v16'){
         // ── Kling v1.6 Pro ───────────────────────────────────────────────────
-        if(!startFrameURL && s.characters!=='NONE'){
-          showErr('e6','⚠ This clip shows '+(s.characters==='JORDAN'?'Jordan':s.characters==='MARCUS'?'Marcus':'Marcus and Jordan')+'. Text-to-video has no character reference, so they would look like strangers. Generate an earlier image scene with them (or upload a start frame) first.');
-          s6ShowPanel('startframe');
-          genBtn.disabled=false;
-          return;
-        }
         const body={prompt:finalPrompt,duration:sceneDuration,aspect_ratio:'16:9'};
         if(startFrameURL) body.image_url=startFrameURL;
         if(body.image_url&&sceneRefs['subject']?.url?.startsWith('https://'))

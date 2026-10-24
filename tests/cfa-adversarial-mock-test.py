@@ -73,6 +73,7 @@ async def fal_route(route):
     if 'upload.mock' in u: return await route.fulfill(status=200,body='')
     if 'fal.media' in u: return await route.fulfill(status=200,content_type='image/png',body=PNG)
     cnt['falgen']+=1
+    SC.setdefault('falLog',[]).append((u,route.request.post_data or ''))
     if SC['delay']: await asyncio.sleep(SC['delay'])
     m=SC['fal']
     if m in('429','500','422','401'):
@@ -270,9 +271,9 @@ async def main():
             check('switch mid-gen: result on scene 1 only + start frame for scene 2', st['r0'] and not st['r2'] and st['sf1'] and not st['shown'], st)
             SC['delay']=0
             # Veo without start frame
-            await J(pg,"()=>{sceneData[1].savedStartFrameURL='';sceneData[0].resultURL='';jumpToScene(1);setVideoModel('veo31');}")
+            await J(pg,"()=>{sceneData[1].savedStartFrameURL='';sceneData[1].characters='NONE';sceneData[1].startFrameManual=true;sceneData[0].resultURL='';jumpToScene(1);setVideoModel('veo31');}")
             await pg.wait_for_timeout(300); await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(200)
-            check('veo without start frame: blocked', 'start frame' in (await J(pg,"()=>document.getElementById('e6').textContent")).lower())
+            check('veo concept clip without start frame: blocked', 'start frame' in (await J(pg,"()=>document.getElementById('e6').textContent")).lower())
             check('fal: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
 
@@ -472,6 +473,27 @@ async def main():
               applyImageResult(0,'https://x/c.png','m'); const a=sceneData[3].savedStartFrameURL||''; applyImageResult(2,'https://x/j.png','m');
               return [sceneData[1].savedStartFrameURL,a,sceneData[3].savedStartFrameURL];}""")
             check('continuity: new images update start frames of later clips by character', r==['https://x/c.png','','https://x/j.png'], r)
+            await J(pg,"""()=>{sceneData=[{line:'1. Dee has the laptop open.',tag:'IMAGE',characters:'NONE',prompt:'Dee at laptop',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
+              {line:'2. A chart.',tag:'IMAGE',characters:'NONE',prompt:'chart',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
+              {line:'3. Marcus walks in.',tag:'VIDEO',characters:'MARCUS',prompt:'Marcus walks in',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
+              {line:'4. Dee laughs.',tag:'IMAGE',characters:'NONE',prompt:'Dee laughs',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''}];
+              window.confirm=()=>true;}""")
+            SC['falLog']=[]
+            await J(pg,"async()=>{await generateAllImages();}")
+            await pg.wait_for_timeout(500)
+            log=[(u,json.loads(b or '{}')) for u,b in SC['falLog'] if 'upload' not in u]
+            dee=[x for x in log if 'Dee (' in x[1].get('prompt','')]
+            chart=[x for x in log if x[1].get('prompt','').startswith('chart')]
+            first=await J(pg,"()=>sceneData[0].resultURL")
+            check('cast: Dee scenes carry her fixed look, the chart does not', len(dee)==2 and chart and 'Dee (' not in chart[0][1]['prompt'], [x[1].get('prompt','')[:40] for x in log])
+            check('cast: later Dee still uses the first Dee image as reference (Kling O1)', any('kling-image/o1' in u and first in b.get('image_urls',[]) for u,b in dee), [(u[-30:],b.get('image_urls')) for u,b in dee])
+            SC['falLog']=[]
+            await J(pg,"()=>{currentScene=2;loadScene(2);}"); await pg.wait_for_timeout(1500)
+            await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(1500)
+            log=[(u,json.loads(b or '{}')) for u,b in SC['falLog'] if 'upload' not in u]
+            ok=len(log)==2 and 'kling-image/o1' in log[0][0] and log[0][1].get('image_urls') and 'image-to-video' in log[1][0]
+            check('continuity: Marcus clip with no Marcus still gets a reference start frame, then image-to-video', ok, [u[-40:] for u,_ in log])
+            check('continuity: video result stored', await J(pg,"()=>!!sceneData[2].resultURL && sceneData[2].autoStartFrame"))
             check('pace: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
 
