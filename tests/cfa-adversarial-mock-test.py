@@ -451,6 +451,33 @@ async def main():
             check('writing: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
 
+        if want('export'):
+            ctx,pg,errs=await newpage(b)
+            await J(pg,"""()=>{selId='v07';finalScript='Jordan waits. Marcus says crypto is a ledger.';
+              segScript='1. Jordan waits.\\n2. Marcus says crypto is a ledger.\\n3. Done.';
+              voWords=[['Jordan',0,0.4],['waits.',0.45,0.9],['Marcus',1.2,1.6],['says',1.65,1.9],['crypto',1.95,2.4],['is',2.45,2.6],['a',2.62,2.7],['ledger.',2.75,3.3],['Done.',3.6,4.0]];
+              sceneData=[{line:'1. Jordan waits.',tag:'IMAGE',characters:'JORDAN',resultURL:'https://v3b.fal.media/files/a.png',resultType:'image',resultModel:'Kling o1',done:true},
+                         {line:'2. Marcus says crypto is a ledger.',tag:'VIDEO',characters:'MARCUS',resultURL:'https://v3b.fal.media/files/b.mp4',resultType:'video',resultModel:'Kling v1.6 Pro',done:true},
+                         {line:'3. Done.',tag:'IMAGE',characters:'NONE',resultURL:'',resultType:'',done:false}];
+              voAudioURL=null; document.getElementById('settings-modal').classList.remove('open');}""")
+            await J(pg,"()=>exportFinalEditBundle()")
+            check('export: no voiceover in memory asks for the MP3', 'voiceover' in await J(pg,"()=>document.getElementById('fe-status').textContent") and await J(pg,"()=>document.getElementById('fe-vo-pick').style.display")=='')
+            await J(pg,"()=>{voAudioURL=URL.createObjectURL(new Blob([new Uint8Array([73,68,51,4,0,0,0,0,0,0])],{type:'audio/mpeg'}));}")
+            async with pg.expect_download(timeout=15000) as dl:
+                await J(pg,"()=>exportFinalEditBundle()")
+            d=await dl.value; zp=await d.path()
+            import zipfile as _zf
+            z=_zf.ZipFile(zp); names=z.namelist()
+            check('export: zip valid (CRCs ok)', z.testzip() is None, names)
+            check('export: zip contents', all(n in names for n in ['bundle.json','media/scene_001.png','media/scene_002.mp4','voiceover.mp3','script.txt','segments.txt','beats.srt']), names)
+            bj=json.loads(z.read('bundle.json'))
+            check('export: bundle metadata', bj['format']=='cfa-final-edit-bundle' and bj['episode']==7 and bj['title'] and len(bj['segments'])==3 and bj['segments'][1]['start']==1.2 and bj['segments'][2]['media'] is None, bj['segments'])
+            check('export: srt has timed beats', '00:00:01,200 --> 00:00:03,300' in z.read('beats.srt').decode())
+            check('export: filename', d.suggested_filename.startswith('CFA_FinalEdit_EP07_'), d.suggested_filename)
+            check('export: status reports missing media', 'scenes without media: 3' in await J(pg,"()=>document.getElementById('fe-status').textContent"))
+            check('export: no page errors', not [e for e in errs if 'pageerror' in e], errs)
+            await ctx.close()
+
         await b.close()
         f=[r for r in results if not r[1]]
         print(f'\n{len(results)-len(f)}/{len(results)} passed')

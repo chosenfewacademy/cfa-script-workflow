@@ -19,7 +19,7 @@ test means Chris won't hit a schema mismatch or dead endpoint during real work.
 | `cfa-live-sim.mjs` | End-to-end simulation of a full scene run | varies |
 | `cfa-character-isolation-test.mjs` | Character isolation: Marcus/Jordan refs used correctly, secondary chars distinct, NONE→Nano Banana (6 live generations) | ~$0.60 |
 | `cfa-grok-pipeline-test.mjs` | Full Grok (xAI) pipeline: script (grok-4.7) → segment → classify → prompts (grok-4.3), no-consec enforcement, secondary-char note injection (9 checks) | ~$0.03 |
-| `cfa-adversarial-mock-test.py` | Headless browser test of the real HTML with **every API mocked** (Playwright): API errors (401/429/500/network/mid-stream), aborts, rapid clicks, XSS, huge/empty input, scene switching mid-generation, corrupt/old saved state, full storage, VO timestamps + SRT, auto video length, Generate-all batch | $0 |
+| `cfa-adversarial-mock-test.py` | Headless browser test of the real HTML with **every API mocked** (Playwright): API errors (401/429/500/network/mid-stream), aborts, rapid clicks, XSS, huge/empty input, scene switching mid-generation, corrupt/old saved state, full storage, VO timestamps + SRT, auto video length, Generate-all batch, Export-for-final-edit zip | $0 |
 
 ## Usage
 
@@ -57,3 +57,5 @@ saved under `test-output/` (gitignored).
 - **Grok** text — `https://api.x.ai/v1/chat/completions` (`grok-4.7` writer, `grok-4.3` fast)
 - **ElevenLabs** voiceover — `POST /v1/text-to-speech/{voice}/with-timestamps` (audio + character timing)
 - **GPT Image 2** text fix — `https://api.openai.com/v1/images/edits` (model `gpt-image-2`)
+
+Renderer test (no API spend): `python3 ../tools/render/test_render.py` — see `tools/render/README.md`.
