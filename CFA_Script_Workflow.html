@@ -3488,7 +3488,7 @@ function splitTag(line){
 function stripTags(t){ return String(t||'').split('\n').map(l=>l.replace(SPK_TAG_RE,'')).join('\n'); }
 function scriptFormat(){ return safeGetItem('cfa_format')==='narration'?'narration':'dialogue'; }
 function dialogueOn(){ return scriptFormat()==='dialogue'; }
-const NARR_DEFAULT='sparse';
+const NARR_DEFAULT='hybrid';
 function narrMode(){ const m=safeGetItem('cfa_narr_mode'); return m==='hybrid'||m==='sparse'?m:NARR_DEFAULT; }
 function narrRange(){ return narrMode()==='hybrid'?[0.22,0.38]:[0,0.35]; }
 function talkMode(){ return safeGetItem('cfa_talk_mode')==='off'?'off':'all'; }
