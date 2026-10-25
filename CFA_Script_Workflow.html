@@ -2865,6 +2865,7 @@ BIKE-SHOP ANALOGY: one comparison set in a small bike repair shop, and where it 
 SAFE PRACTICAL STEPS: 2-3 things a beginner can safely do
 CAUTIONS: any claim that is often stated wrongly, with the correct version
 No hype, no price predictions, no buy/sell advice. At most 450 words.`;
+let RESEARCH_TIMEOUT_MS=120000;
 async function researchBrief(title, cq, signal){
   const key=llmKey(); if(!key) return {text:'',cost:0,source:'none'};
   const prompt=SYS_RESEARCH+'\n\nVIDEO TOPIC: '+title+(cq?'\nCORE QUESTION: '+cq:'');
@@ -3136,7 +3137,13 @@ async function startGen(){
     if(fullPasses){
       setGStage(0);
       document.getElementById('s2-stat').textContent='Researching facts (web search)…';
-      const rb=await researchBrief(V[selId].title, V[selId].cq, ctrl.signal);
+      const rbc=new AbortController(); const rbStop=()=>rbc.abort(); ctrl.signal.addEventListener('abort',rbStop);
+      const rb=await Promise.race([
+        researchBrief(V[selId].title, V[selId].cq, rbc.signal).catch(e=>{ if(ctrl.signal.aborted) throw e; return {text:''}; }),
+        new Promise(r=>setTimeout(()=>{ rbc.abort(); r({text:'',timedOut:true}); }, RESEARCH_TIMEOUT_MS))
+      ]);
+      ctrl.signal.removeEventListener('abort',rbStop);
+      if(rb.timedOut) document.getElementById('s2-stat').textContent='Research timed out — using the verified primer only…';
       if(genAbort!==ctrl)return;
       const primer=primerFor(selId);
       genResearch=(primer?'VERIFIED PRIMER (authoritative; if the web brief disagrees, the primer wins):\n'+primer+'\n\n':'')+(rb.text||'');
@@ -3501,7 +3508,8 @@ ${personaRules()}
 - SOUNDS LIKE REAL PEOPLE (conversation analysis + screen dialogue craft): people react before they reply ("Wait—", "Hold on.", "Huh."); they interrupt (end the cut-off line with an em dash and let the other finish or redirect); they start a sentence, stop and correct themselves ("It's in the— no, the other app."); they answer a question with a question when unsure; they say less than they mean (subtext: fear shows as a joke, pride as a shrug); they call back to an earlier line. Use each character's own slang and rhythm. Line lengths are uneven: one-word reactions next to a three-sentence thought.
 - Light performance tags for the voice model, at most one per 5 lines, character lines only: [sighs], [laughs], [chuckles], [exhales], [short pause]. Light filler only ("wait", "hold on", "okay so"); never "um" more than once per episode.
 - NEVER: two characters explaining what both already know ("As you know…"); a monologue over three sentences; perfectly tidy question→answer→thanks turn-taking; everyone speaking in complete, grammatical paragraphs.
-- HOOK & PULL: line 1 is a concrete surprise or loss happening right now (a number, an object, a deadline), never a question about the topic; by line 6 the viewer knows what is lost if it fails. Plant one object or detail early and pay it off at the end (continuity). Keep the same room, objects and time-of-day consistent; mention time moving only when it moves.
+- HOOK & PULL: line 1 is a concrete surprise or loss happening right now (a number, an object, a deadline), never a question about the topic; by line 6 the viewer knows what is lost if it fails. Plant one object or detail early and pay it off in the last lines (continuity). Keep the same room, objects and time of day consistent; mention time moving only when it moves. Every scene turn is caused by the one before (cohesion). Anchor the lesson in 2-3 real dated facts from the primer, said by Marcus in context (grounding).
+- ENDING: the final character line is a felt payoff statement in Jordan's own words that answers the episode's question; it never ends with "?" and never repeats the central question verbatim. An optional single NARRATOR line may follow.
 - RHYTHM & FOCUS: vary line length like real talk — mix 3-8 word reactions with fuller 12-28 word lines; average about 12 words per character line; never more than 4 clipped (<7 word) lines in a row. The lesson is the A-story: at least 60% of lines move the topic forward, and the human problem (deadline, money, relationship) exists to force the lesson, never to replace it — when the problem is solved it is solved BY understanding the topic. The first 3 lines state a sharp, specific question or stake tied to the topic. Escalate once mid-episode (a surprise, a wrong assumption exposed). Close on a felt payoff line from a character, not a bare question and not a recap list.
 - Length: 650-900 spoken words (speaker tags do not count). Keep every SPEAKER: tag exactly as written when revising.`;
 function fmtSys(sys){ return (dialogueOn()? sys+'\n\n'+DIALOGUE_RULES : sys)+fbBlock(['research','script','voices']); }
@@ -3528,6 +3536,7 @@ function dialogueLint(text){
   if(L[0] && words(L[0])>12) issues.push('Cold open is '+words(L[0])+' words — the first line should be a conflict in 12 words or fewer');
   for(let i=2;i<L.length;i++) if(L[i].speaker==='NARRATOR'&&L[i-1].speaker==='NARRATOR'&&L[i-2].speaker==='NARRATOR'){ issues.push('Three NARRATOR lines in a row near line '+(i+1)); break; }
   for(let i=2;i<L.length;i++) if(L[i].speaker&&L[i].speaker!=='NARRATOR'&&L[i].speaker===L[i-1].speaker&&L[i].speaker===L[i-2].speaker){ issues.push(L[i].speaker+' speaks 3 lines in a row near line '+(i+1)); break; }
+  { const lastC=[...L].reverse().find(x=>x.speaker&&x.speaker!=='NARRATOR'); if(lastC&&/\?\s*$/.test(lastC.text)) issues.push('Ends on a question ("'+lastC.text.slice(-60)+'") — the last character line must be a payoff statement'); }
   if(total<650||total>900) issues.push('Spoken length '+total+' words (target 650-900)');
   return issues.concat(voiceLint(L));
 }
