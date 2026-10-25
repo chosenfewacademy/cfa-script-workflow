@@ -866,7 +866,7 @@ async def main():
             await J(pg,"()=>{document.getElementById('sm-voice-unlock').checked=false;renderVoiceLockUI();closeSettings&&closeSettings();}")
             # lint
             good="\n".join(["MARCUS: The payment says sent, but Dee has nothing yet.","JORDAN: Wait, so where is it right now?"]+[("JORDAN: " if i%2 else "MARCUS: ")+"word "*13 for i in range(50)]+["NARRATOR: Later that night, the shop was quiet again."])
-            li=await J(pg,"(t)=>dialogueLint(t)",good)
+            li=await J(pg,"(t)=>{localStorage.setItem('cfa_narr_mode','sparse');const r=dialogueLint(t);localStorage.removeItem('cfa_narr_mode');return r}",good)
             check('dialogue lint: clean tagged script passes', li==[], li)
             u=await J(pg,"""()=>{
               const L=t=>parseDialogue(t);
@@ -878,7 +878,7 @@ async def main():
               return {narr:narr.some(x=>/first person/.test(x)), bleed:bleed.some(x=>/both say/.test(x)), hints:hints.length, hl:hints.join('|'), pr:pr.length>200&&/declined|logic/i.test(pr),
                 acc:acc&&acc.length===1&&acc[0].kind==='stiff', wc:wordCount('JORDAN: [sighs] Wait. [short pause] Gone?'),
                 tw:stripTagWords([['Wait',0,1],['[sighs]',1,2],['[short',2,3],['pause]',3,4],['ok',4,5]]).map(w=>w[0]).join(' '),
-                rules:/SOUNDS LIKE REAL PEOPLE/.test(DIALOGUE_RULES)&&/stiff/.test(SYS_ACCURACY)&&/ALWAYS MOVING/.test(SYS_DIRECTOR)&&/LISTENER REACTION/.test(SYS_DIRECTOR)};
+                rules:/SOUNDS LIKE REAL PEOPLE/.test(dialogueRules())&&(()=>{localStorage.setItem('cfa_narr_mode','hybrid');const ok=/HYBRID STRUCTURE/.test(dialogueRules())&&dialogueLint('JORDAN: hi there\\nMARCUS: yo').some(x=>/Hybrid cold open/.test(x));localStorage.setItem('cfa_narr_mode','sparse');const sp=!/HYBRID/.test(dialogueRules());localStorage.removeItem('cfa_narr_mode');return ok&&sp&&/HYBRID/.test(dialogueRules())&&/animated wide/.test(SYS_DIRECTOR);})()&&/stiff/.test(SYS_ACCURACY)&&/ALWAYS MOVING/.test(SYS_DIRECTOR)&&/LISTENER REACTION/.test(SYS_DIRECTOR)};
             }""")
             check('voice lint: narrator first person flagged', u['narr'], u)
             check('voice lint: the same phrase in two characters\' mouths flagged', u['bleed'], u)
@@ -904,7 +904,7 @@ async def main():
             check('motion: per-episode choice, full costs more than mixed', m['other']=='full' and m['f']>m['mx']>0, m)
             check('motion: same-place continuity match ignores case/punctuation', m['sp'], m)
             bad="Jordan looked at the screen for a long while and wondered what had gone wrong with it.\nBOB: Hi there.\nNARRATOR: "+("calm "*400)+"\nMARCUS: "+("long "*45)+"\nMARCUS: one\nMARCUS: two"
-            li=await J(pg,"(t)=>dialogueLint(t).join(' | ')",bad)
+            li=await J(pg,"(t)=>{localStorage.setItem('cfa_narr_mode','sparse');const r=dialogueLint(t).join(' | ');localStorage.removeItem('cfa_narr_mode');return r}",bad)
             for frag in ['without a speaker tag','Unknown speaker','Too much narration','monologue','Cold open','3 lines in a row','Spoken length']:
                 check('dialogue lint flags: '+frag, frag in li, li[:300])
             check('dialogue: word count ignores speaker tags', await J(pg,"()=>wordCount('JORDAN: one two\\nMR. OKAFOR: three')")==3)
@@ -1053,15 +1053,15 @@ async def main():
                     k=min(per,left); lines.append(speakers[i%len(speakers)]+': '+' '.join(['word']*k)); left-=k; i+=1
                 return '\n'.join(lines)
             for n,ok in ((650,True),(900,True),(649,False),(901,False)):
-                li=await J(pg,"(t)=>dialogueLint(t)",mk(n))
+                li=await J(pg,"(t)=>{localStorage.setItem('cfa_narr_mode','sparse');const r=dialogueLint(t);localStorage.removeItem('cfa_narr_mode');return r}",mk(n))
                 check(f'stress: {n}-word script {"passes" if ok else "flagged"} length lint', (not [x for x in li if 'Spoken length' in x])==ok, li)
             six=mk(700,('JORDAN','MARCUS','DEE','PRIYA','MR. OKAFOR','NARRATOR'))
-            li=await J(pg,"(t)=>dialogueLint(t)",six)
+            li=await J(pg,"(t)=>{localStorage.setItem('cfa_narr_mode','sparse');const r=dialogueLint(t);localStorage.removeItem('cfa_narr_mode');return r}",six)
             check('stress: 6-speaker script lints clean', li==[], li)
             v=await J(pg,"(t)=>parseDialogue(t).map(x=>lockedVoice(x.speaker).voiceId)",six)
             check('stress: all 6 speakers resolve to locked voices', len(set(v))==6, sorted(set(v)))
             mono="NARRATOR: The wallet opened.\nMARCUS: "+"This is how a ledger keeps every record honest and visible. "*8
-            li=' | '.join(await J(pg,"(t)=>dialogueLint(t)",mono))
+            li=' | '.join(await J(pg,"(t)=>{localStorage.setItem('cfa_narr_mode','sparse');const r=dialogueLint(t);localStorage.removeItem('cfa_narr_mode');return r}",mono))
             check('stress: monologue flagged (one speaker, over-long line)', 'at least two speaking characters' in li and 'monologue' in li, li)
             sl=(await J(pg,"(t)=>dialogueSegments(t)",mono)).split('\n')
             check('stress: monologue line split into beats of <=35 words', len(sl)>=3 and all(len(l.split(': ',1)[1].split())<=35 for l in sl), [len(l.split()) for l in sl])

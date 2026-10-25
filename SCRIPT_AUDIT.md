@@ -84,3 +84,42 @@ Variant overall 7.16 ± 0.97
 
 Opening lines, before (baseline): "DEE: Supplier texted. Paid by five, or the order dies." / "JORDAN: Bank app still says pending. Since yesterday afternoon."
 Opening lines, after (variant): "DEE: The supplier just bounced two hundred dollars." / "JORDAN: Bounced? Those brake parts are due tomorrow morning."
+
+# Hybrid narration structure (Oct 24 2026, 10:00–11:15 PM ET)
+Bill gives a narrated cold open of 40–70 words (concrete stake), characters carry the scenes, and Bill adds 1–2 sentence bridges plus a closing reflection that calls back to the opening. Target 25–35% narration. Method: 3 generations per episode, judged blind (grok-4.3, 3 seeds × 11 criteria). Baseline = the 9 sparse-mode runs above.
+
+| Ep | Version | mean ± sd | hook | cohesion | continuity | grounding | dialogue_realism | human_likeness | story_pull | flow |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v02 | baseline (sparse) | 6.14 ± 0.55 | 6.22 | 5.56 | 6.56 | 7.89 | 5.11 | 4.44 | 4.33 | 5.44 |
+| v02 | HYBRID | 7.19 ± 0.59 | 6.89 | 7.44 | 7.56 | 8.67 | 6.11 | 5.22 | 5.89 | 6.67 |
+| v02 | old (prose) | 7.61 | | | | | | | | |
+| v11 | baseline (sparse) | 7.17 ± 0.46 | 5.00 | 7.33 | 7.67 | 8.55 | 6.56 | 5.89 | 6.67 | 6.44 |
+| v11 | HYBRID | 7.63 ± 0.20 | 6.00 | 8.22 | 7.89 | 8.89 | 7.22 | 6.56 | 7.00 | 7.22 |
+| v11 | old (prose) | 7.76 | | | | | | | | |
+| v23 | baseline (sparse) | 7.30 ± 0.34 | 5.78 | 7.67 | 7.56 | 8.56 | 6.33 | 5.44 | 7.00 | 6.78 |
+| v23 | HYBRID | 8.07 ± 0.13 | 7.78 | 8.44 | 8.22 | 8.89 | 7.22 | 6.67 | 7.67 | 7.78 |
+| v23 | old (prose) | 8.06 | | | | | | | | |
+
+Baseline overall 6.87 ± 0.69
+
+Hybrid overall 7.63 ± 0.51
+
+**Verdict: MERGED as the default** (setting: Narration = Hybrid | Sparse).
+- Hybrid beats the baseline on all 3 episodes and on all 8 criteria above: overall +0.76 (7.63 ± 0.51 vs 6.87 ± 0.69, n=9 each, about 3× the standard error).
+- v23 ties the old prose (8.07 vs 8.06) and v11 is close (7.63 vs 7.76). v02 is still 0.42 behind.
+- Human-likeness stays the weakest criterion (5.2–6.7).
+- Caveat: the hybrid and baseline batches were judged in separate sessions of the same blind setup.
+
+Line checks (9 hybrid scripts):
+- Narration landed at 17–28%, so the model under-narrates against the 25–35% target.
+- The cold open was the NARRATOR line in all 9, at 13–59 words.
+- No narrator first person; "crypto" ×0.
+
+Excerpt (v23, run h2):
+> NARRATOR: At the Spoke & Chain back office, twelve words filled the shop laptop, and the screenshot button sat grey under a warning Jordan could not dismiss. The parts invoice beside the keyboard had five o'clock circled in red. …
+> JORDAN: Dee, hold on. Last night I wrote up the private key. Now it wants twelve words.
+> …
+> JORDAN: Those twelve words on the card are what I protect. A dead laptop I can replace.
+> NARRATOR: Upstairs, the fireproof box sat closed on Marcus's shelf. Downstairs, the twelve words were gone from the shop laptop, and the supplier receipt still lay warm beside the green notebook.
+
+Shot plan: NARRATOR beats get animated wide or establishing shots (slow push-in, pan or drift, people moving). The renderer already uses gentler motion, dissolves and the quiet "Narr" caption style for these beats. The hook guard is skipped in Hybrid so it does not chop the narrated cold open.
