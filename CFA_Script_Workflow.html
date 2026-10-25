@@ -3246,6 +3246,21 @@ async function startGen(){
         if(fit.text.trim() && !fit.truncated && !forbiddenTerms(fit.text).length && Math.abs(fw-800)<Math.abs(wc2-800)) text=fit.text;
       }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Final fit failed:',e.message); }
     }
+    // Hybrid: narration share must land in 25-35% — one focused fix-up pass if it comes in low/high
+    if(fullPasses && text.trim() && dialogueOn() && narrMode()==='hybrid'){
+      const sh=narrShare(text);
+      if(sh<0.25||sh>0.35){
+        if(genAbort!==ctrl)return;
+        document.getElementById('s2-stat').textContent='Balancing narration ('+Math.round(sh*100)+'% → 25–35%)…';
+        try{
+          const fx=await llmComplete({role:'writer', system:fmtSys(SYS_REVISE), effort:'low', maxTokens:8000, signal:ctrl.signal,
+            user:'ONLY TASK: NARRATOR (Bill) is '+Math.round(sh*100)+'% of spoken words; it must be 28-32%. '+(sh<0.25?'ADD narration: make the cold open 50-70 words if shorter, add a 1-2 sentence NARRATOR bridge at each scene/time/place change, and a 2-3 sentence NARRATOR closing that calls back to an image from the cold open. Narration is third person past tense, concrete images (hands, objects, light, the clock), never explains the lesson. Trim a few redundant character lines if needed to stay within '+SCRIPT_WORDS.min+'-'+SCRIPT_WORDS.max+' words.':'CUT narration to bridges only.')+' Keep every other line word for word and every SPEAKER: tag. Output only the script.\n\nSCRIPT:\n'+text.trim()});
+          if(genAbort!==ctrl)return;
+          const ns=narrShare(fx.text||''), nw=wordCount(fx.text||'');
+          if(fx.text.trim() && !fx.truncated && nw>=SCRIPT_WORDS.min-30 && nw<=SCRIPT_WORDS.max+30 && Math.abs(ns-0.30)<Math.abs(sh-0.30) && !forbiddenTerms(fx.text).length && !voiceLint(parseDialogue(fx.text)).some(x=>/NARRATOR/.test(x))) text=fx.text.trim();
+        }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Narration balance failed:',e.message); }
+      }
+    }
     // Hook guard: the opening sentence must be a short, problem-first hook
     if(fullPasses && text.trim() && !(dialogueOn()&&narrMode()==='hybrid') && hookNeedsWork(text)){
       try{
@@ -3490,7 +3505,8 @@ function scriptFormat(){ return safeGetItem('cfa_format')==='narration'?'narrati
 function dialogueOn(){ return scriptFormat()==='dialogue'; }
 const NARR_DEFAULT='hybrid';
 function narrMode(){ const m=safeGetItem('cfa_narr_mode'); return m==='hybrid'||m==='sparse'?m:NARR_DEFAULT; }
-function narrRange(){ return narrMode()==='hybrid'?[0.22,0.38]:[0,0.35]; }
+function narrRange(){ return narrMode()==='hybrid'?[0.25,0.35]:[0,0.35]; }
+function narrShare(text){ const L=parseDialogue(text); let t=0,n=0; for(const x of L){ const w=wordCount(x.text); t+=w; if(x.speaker==='NARRATOR') n+=w; } return t?n/t:0; }
 function talkMode(){ return safeGetItem('cfa_talk_mode')==='off'?'off':'all'; }
 const MUSIC_STYLES=['cinematic','lofi','orchestral','acoustic','electronic','none'];
 function musicStyle(){ const m=safeGetItem('cfa_music_style'); return MUSIC_STYLES.includes(m)?m:'cinematic'; }
@@ -3517,8 +3533,9 @@ ${personaRules()}
 - RHYTHM & FOCUS: vary line length like real talk — mix 3-8 word reactions with fuller 12-28 word lines; average about 12 words per character line; never more than 4 clipped (<7 word) lines in a row. The lesson is the A-story: at least 60% of lines move the topic forward, and the human problem (deadline, money, relationship) exists to force the lesson, never to replace it — when the problem is solved it is solved BY understanding the topic. The first 3 lines state a sharp, specific question or stake tied to the topic. Escalate once mid-episode (a surprise, a wrong assumption exposed). Close on a felt payoff line from a character, not a bare question and not a recap list.
 - Length: 650-900 spoken words (speaker tags do not count). Keep every SPEAKER: tag exactly as written when revising.`;
 const HYBRID_MOSTLY="- HYBRID STRUCTURE: 25-35% of spoken words are NARRATOR (Bill), 65-75% character dialogue. Bill opens with a narrated cold open of 40-70 words (third person, past tense) that sets the place, the person and a concrete stake or loss happening right now. Characters then carry each scene in natural dialogue. Between scenes Bill gives a 1-2 sentence bridge (time or place moving, what changed). Bill closes with a short reflection (1-3 sentences) that calls back to an image from the cold open. Bill never explains the lesson in his own words and never quotes a character; he shows, characters teach.";
+const HYBRID_EXTRA="\n- STAKES & CALLBACK: the cold open names a concrete loss with a number or named object happening right now. In the first quarter one character mentions one specific object or line from the previous episode (from the continuity note); the same object returns at the end. Marcus anchors the lesson with 2 dated, verifiable facts from the VERIFIED PRIMER, each tied to what is on screen right now, never as a list.\n- HUMAN TEXTURE (most important): every character has one small off-topic human moment (a dry joke, a complaint about lunch, a worry about family, a pet name for the old laptop); people misremember and correct themselves (\"Tuesday — no, Monday\"), answer the feeling before the question, and sometimes do not answer at all. Jordan says one thing that is slightly wrong and is gently corrected. Nobody speaks in tidy complete paragraphs; Marcus uses one concrete bike-shop comparison per scene at most.";
 const HYBRID_COLD="- Cold open: the FIRST line is Bill's narrated cold open (one NARRATOR line, 40-70 words, concrete loss with a number or named object). The first character line follows it and drops straight into the conflict.";
-function dialogueRules(){ const h=narrMode()==='hybrid'; return DIALOGUE_RULES_BASE.replace('@@MOSTLY@@', h?HYBRID_MOSTLY:"- Mostly dialogue: at least 75% of the spoken words are character lines. NARRATOR (Bill) is sparse: a short time/place line, a bridge between scenes, at most one closing line. Never more than 2 NARRATOR lines in a row.").replace('@@COLD@@', h?HYBRID_COLD:"- Cold open (Resilia style): the FIRST line drops us into a conflict already happening, at most 12 words. No greeting, no setup, no lesson."); }
+function dialogueRules(){ const h=narrMode()==='hybrid'; return DIALOGUE_RULES_BASE.replace('@@MOSTLY@@', h?HYBRID_MOSTLY+HYBRID_EXTRA:"- Mostly dialogue: at least 75% of the spoken words are character lines. NARRATOR (Bill) is sparse: a short time/place line, a bridge between scenes, at most one closing line. Never more than 2 NARRATOR lines in a row.").replace('@@COLD@@', h?HYBRID_COLD:"- Cold open (Resilia style): the FIRST line drops us into a conflict already happening, at most 12 words. No greeting, no setup, no lesson."); }
 function fmtSys(sys){ return (dialogueOn()? sys+'\n\n'+dialogueRules() : sys)+fbBlock(['research','script','voices']); }
 function parseDialogue(text){
   return String(text||'').split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
