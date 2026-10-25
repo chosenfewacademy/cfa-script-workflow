@@ -39,3 +39,24 @@ After (r5):
 
 ## Next
 A HOOK & PULL rule (a concrete loss in line 1, plant an object early and pay it off at the end, continuity) was drafted. Its test run hung at the research step, so it is not merged. It targets v23's hook and continuity gaps.
+
+# Rounds 6–7 (Oct 24 2026, 9:00–10:00 PM ET)
+- **r6 (PR #41, merged).** Research step: 120 s timeout with fallback to the verified primer. Added the HOOK & PULL and ENDING rules and a lint that flags a script ending on a question.
+  - Scores: v02 5.94, v11 7.61, v23 **7.97** (hook 6.67, cohesion 8.33, story_pull 7.33, accuracy 9.33).
+  - v02 ending, before: "…Why do some people trust Bitcoin more than banks?"
+  - v02 ending, after: "We waited all afternoon for their yes. Bitcoin was built so a payment would not have to."
+- **r7 (curiosity-gap opener rule, NOT merged).** Scores: v02 7.12, v11 7.03, v23 6.79. Worse on all three.
+  - Openers did get sharper, e.g. "Twelve random words just filled my phone screen."
+  - But dialogue realism and human-likeness dropped.
+
+**Best scores so far vs old scripts:**
+
+| Episode | Old scripts | Best new score | Round |
+|---|---|---|---|
+| v02 | 7.61 | 8.24 | r5 |
+| v11 | 7.76 | 7.82 | r5 |
+| v23 | 8.06 | 7.97 | r6 |
+
+**Run-to-run noise.** The same prompts swing up to ±2.3 points on one episode (v02: 8.24 in r5, 5.94 in r6). One run per episode cannot show whether a prompt change helped. The next step is about 3 runs per episode per variant, about $3 each.
+
+**Still behind the old scripts:** hook (all three) and v23 continuity. "Beat on every criterion" is not met.
