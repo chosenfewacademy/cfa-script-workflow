@@ -60,3 +60,27 @@ A HOOK & PULL rule (a concrete loss in line 1, plant an object early and pay it 
 **Run-to-run noise.** The same prompts swing up to ±2.3 points on one episode (v02: 8.24 in r5, 5.94 in r6). One run per episode cannot show whether a prompt change helped. The next step is about 3 runs per episode per variant, about $3 each.
 
 **Still behind the old scripts:** hook (all three) and v23 continuity. "Beat on every criterion" is not met.
+
+# Repeated blind testing (Oct 24 2026, 9:30–11:00 PM ET)
+Method: 3 generations per episode per version, 18 scripts judged blind under shuffled names (grok-4.3, 3 seeds × 11 criteria each). Baseline = main after #41 (r6 + 2 new runs). Variant = STAKES IN LINE 1 + CALLBACK to a prior-episode object + GROUNDING with 2 dated primer facts.
+
+| Ep | Ver | mean ± sd | hook | cohesion | continuity | grounding | dialogue_realism | human_likeness | story_pull | flow |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v02 | baseline | 6.14 ± 0.55 | 6.22 | 5.56 | 6.56 | 7.89 | 5.11 | 4.44 | 4.33 | 5.44 |
+| v02 | variant | 7.64 ± 0.40 | 6.56 | 7.56 | 8.22 | 8.78 | 7.22 | 6.78 | 6.67 | 6.89 |
+| v02 | old | 7.61 | | | | | | | | |
+| v11 | baseline | 7.17 ± 0.46 | 5.00 | 7.33 | 7.67 | 8.55 | 6.56 | 5.89 | 6.67 | 6.44 |
+| v11 | variant | 6.89 ± 0.49 | 6.44 | 6.89 | 7.45 | 8.44 | 5.78 | 4.78 | 6.44 | 6.00 |
+| v11 | old | 7.76 | | | | | | | | |
+| v23 | baseline | 7.30 ± 0.34 | 5.78 | 7.67 | 7.56 | 8.56 | 6.33 | 5.44 | 7.00 | 6.78 |
+| v23 | variant | 6.95 ± 1.44 | 5.67 | 7.11 | 6.89 | 8.00 | 6.33 | 5.78 | 6.11 | 6.55 |
+| v23 | old | 8.06 | | | | | | | | |
+Baseline overall 6.87 ± 0.69
+Variant overall 7.16 ± 0.97
+
+**Verdict: variant NOT merged.** Overall +0.29 is within noise (sd 0.7–1.0, n=9). It helps v02 a lot (+1.5, about 3× its spread; continuity +1.7, realism +2.1). It slightly hurts v11 and v23 (human_likeness −1.1 on v11; v23 spread 1.44). Diff saved for a v02-style episode-specific trial: cfa-scripts-ab/variant_stakes_callback.diff.
+
+**Against the old scripts (mean of 3 runs):** none of the three beats the old scripts. v02 variant 7.64 vs 7.61 is about a tie. v11 7.17 vs 7.76. v23 7.30 vs 8.06. The single-run highs earlier (8.24 / 7.97) were noise. Weakest criteria in every arm: hook (5.0–6.6) and human_likeness (4.4–6.8).
+
+Opening lines, before (baseline): "DEE: Supplier texted. Paid by five, or the order dies." / "JORDAN: Bank app still says pending. Since yesterday afternoon."
+Opening lines, after (variant): "DEE: The supplier just bounced two hundred dollars." / "JORDAN: Bounced? Those brake parts are due tomorrow morning."
