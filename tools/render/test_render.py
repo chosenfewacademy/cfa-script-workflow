@@ -228,7 +228,7 @@ def main():
     wd = [["w", 0.1 + 0.5 * k, 0.45 + 0.5 * k] for k in range(42)]
     ds = R.split_drift([dict(x) for x in lsh], wd)
     parts = [x for x in ds if x["media"] == "x.png"]
-    check(len(parts) >= 3 and all(2.4 <= p["duration"] <= 4.3 for p in parts), "11 s still split into 3-4 s parts %r" % [p["duration"] for p in parts])
+    check(len(parts) >= 3 and all(1.9 <= p["duration"] <= 3.3 for p in parts), "11 s still split into ~2-3 s parts (fix 5) %r" % [p["duration"] for p in parts])
     check(abs(sum(x["duration"] for x in ds) - 21.0) < 0.01 and [x["index"] for x in ds] == list(range(1, len(ds) + 1)), "drift split keeps total timing and reindexes")
     check(all(p["motion"] not in ("static", None) for p in parts) and any(p["motion"] == "punch_in" and p.get("focus") in ("left", "right") for p in parts), "every part drifts; punch-ins are off-centre")
     check(all(p["transition_in"] == "cut" for p in parts[1:]) and parts[0]["transition_in"] == "dissolve", "inside a split: cuts; into it: the planned transition")
