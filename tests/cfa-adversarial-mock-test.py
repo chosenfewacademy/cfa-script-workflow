@@ -898,8 +898,14 @@ async def main():
             LOCK={'NARRATOR':'pqHfZKP75CvOlQylNhV4','JORDAN':'bIHbv24MWmeRgasZH58o','MARCUS':'nPczCjzI2devNBz1zQrb','DEE':'EXAVITQu4vr4xnSDxMaL','PRIYA':'XrExE9yKIg1WjnnlVkGX','OKAFOR':'JBFqnCBsd6RMkjVDRZzb'}
             # FULL NARRATION (default): Bill voices every line, no lip sync, no ai-avatar calls
             ctx,pg,errs=await newpage(b,pre="localStorage.setItem('cfa_format','dialogue');")
-            fn=await J(pg,"""()=>{const S='JORDAN: It is gone. All of it.\\nNARRATOR: Three days earlier, Jordan had been sure.\\nMARCUS: Sure of what?\\nNARRATOR: Jordan held up the phone.\\nNARRATOR: Day one, nothing.\\nNARRATOR: Day two, still nothing.\\nJORDAN: Found it.';
-              return {def:narrMode(), full:fullNarr(), talk:talkOn(), rules:/FULL NARRATION/.test(dialogueRules())&&/in media res/.test(dialogueRules()),
+            fn=await J(pg,"""()=>{const S='JORDAN: It is gone. All of it.\\nNARRATOR: Four thousand dollars, and the landlord wanted it by noon.\\nMARCUS: Sure of what?\\nNARRATOR: Jordan held up the phone.\\nNARRATOR: Day one, nothing.\\nNARRATOR: Day two, still nothing.\\nJORDAN: Found it.';
+              return {def:narrMode(), full:fullNarr(), talk:talkOn(), rules:/FULL NARRATION/.test(dialogueRules())&&/in medias res/.test(dialogueRules()),
+                st:{rules:/STORY STRUCTURE/.test(dialogueRules())&&/Escalate/.test(dialogueRules())&&/discovered at the climax/.test(dialogueRules())&&!dialogueRules().includes('Three days earlier, ...'),
+                  fb:['NARRATOR: Three hours earlier, Jordan had been fine.','NARRATOR: Two days before, nobody cared.','NARRATOR: It had started that morning.','NARRATOR: Let me take you back.'].map(l=>structureLint(parseDialogue('JORDAN: It is gone.\\n'+l)).some(x=>/Flashback/.test(x))),
+                  ok:structureLint(parseDialogue('JORDAN: It is gone.\\nNARRATOR: Four thousand dollars, due by noon.\\nMARCUS: Who has the key?\\nJORDAN: Nobody.\\nNARRATOR: He tried the bank.\\nJORDAN: Closed.')),
+                  nostake:structureLint(parseDialogue('JORDAN: Oh no.\\nNARRATOR: Jordan froze.\\nMARCUS: What?\\nJORDAN: Look.\\nNARRATOR: He pointed.\\nMARCUS: Hm.')).some(x=>/stakes/.test(x)),
+                  upfront:structureLint(parseDialogue('JORDAN: It is gone, all $400.\\nMARCUS: A seed phrase is basically when twelve words unlock your wallet.\\nJORDAN: So?\\nNARRATOR: He waited.\\nJORDAN: And?\\nMARCUS: Wait.\\nJORDAN: Fine.\\nNARRATOR: Later.\\nJORDAN: Ok.')).some(x=>/explained up front/.test(x)),
+                  laterOk:!structureLint(parseDialogue('JORDAN: Gone, $400.\\nNARRATOR: By noon.\\nMARCUS: Hm.\\nJORDAN: What?\\nNARRATOR: x\\nNARRATOR: y\\nNARRATOR: z\\nNARRATOR: w\\nNARRATOR: Three days earlier was a memory.')).some(x=>/Flashback/.test(x))},
                 lint:dialogueLint(S).filter(x=>/cold open|montage|in a row/i.test(x)),
                 badCold:dialogueLint('NARRATOR: It was a long day for everyone.\\nJORDAN: hi').some(x=>/Full-narration cold open/.test(x)),
                 four:dialogueLint('JORDAN: a\\nNARRATOR: b\\nJORDAN: c\\nMARCUS: d\\nJORDAN: e\\nMARCUS: f').some(x=>/Four character lines/.test(x)),
@@ -907,6 +913,12 @@ async def main():
                 fp:dialogueLint('JORDAN: a\\nNARRATOR: I saw it.\\nMARCUS: c').some(x=>/first person/.test(x)),
                 opt:[...document.querySelectorAll('#sm-narr option')].map(o=>o.value)}}""")
             check('full narration: default mode, lip sync off, rules in prompt', fn['def']=='full' and fn['full'] and not fn['talk'] and fn['rules'], fn)
+            st=fn['st']
+            check('structure: rules demand in medias res, escalation, lesson-at-climax; old "Three days earlier" template gone', st['rules'], st)
+            check('structure: flashback openers flagged (hours earlier / days before / it had started / take you back)', st['fb']==[True,True,True,True], st['fb'])
+            check('structure: forward cold open with concrete stakes passes clean', st['ok']==[], st['ok'])
+            check('structure: missing stakes and up-front lesson explainer flagged', st['nostake'] and st['upfront'], st)
+            check('structure: a time phrase after the opening lines is not flagged', st['laterOk'], st)
             check('full narration: lint accepts in-media-res cold open + montage', fn['lint']==[], fn['lint'])
             check('full narration: lint flags narrator cold open, 4 unattributed lines, no montage, narrator first person', fn['badCold'] and fn['four'] and fn['noMont'] and fn['fp'], fn)
             check('full narration: Hybrid and Sparse still selectable', fn['opt']==['full','sparse','hybrid'], fn['opt'])
@@ -961,7 +973,7 @@ async def main():
             check('voice lock: unlock shows editable ids', await J(pg,"()=>document.querySelectorAll('#sm-voice-lock input').length")==6)
             await J(pg,"()=>{document.getElementById('sm-voice-unlock').checked=false;renderVoiceLockUI();closeSettings&&closeSettings();}")
             # lint
-            good="\n".join(["MARCUS: The payment says sent, but Dee has nothing yet.","JORDAN: Wait, so where is it right now?"]+[("JORDAN: " if i%2 else "MARCUS: ")+"word "*13 for i in range(50)]+["NARRATOR: Later that night, the shop was quiet again."])
+            good="\n".join(["MARCUS: The $400 payment says sent, but Dee has nothing yet.","JORDAN: Wait, so where is it right now?"]+[("JORDAN: " if i%2 else "MARCUS: ")+"word "*13 for i in range(50)]+["NARRATOR: Later that night, the shop was quiet again."])
             li=await J(pg,"(t)=>{localStorage.setItem('cfa_narr_mode','sparse');const r=dialogueLint(t);localStorage.removeItem('cfa_narr_mode');return r}",good)
             check('dialogue lint: clean tagged script passes', li==[], li)
             u=await J(pg,"""()=>{
@@ -1164,7 +1176,7 @@ async def main():
                 check(f'stress: {n}-word script {"passes" if ok else "flagged"} length lint', (not [x for x in li if 'Spoken length' in x])==ok, li)
             six=mk(700,('JORDAN','MARCUS','DEE','PRIYA','MR. OKAFOR','NARRATOR'))
             li=await J(pg,"(t)=>{localStorage.setItem('cfa_narr_mode','sparse');const r=dialogueLint(t);localStorage.removeItem('cfa_narr_mode');return r}",six)
-            check('stress: 6-speaker script lints clean', li==[], li)
+            check('stress: 6-speaker script lints clean', [x for x in li if 'concrete stakes' not in x]==[], li)  # synthetic filler has no story stakes
             v=await J(pg,"(t)=>parseDialogue(t).map(x=>lockedVoice(x.speaker).voiceId)",six)
             check('stress: all 6 speakers resolve to locked voices', len(set(v))==6, sorted(set(v)))
             mono="NARRATOR: The wallet opened.\nMARCUS: "+"This is how a ledger keeps every record honest and visible. "*8
