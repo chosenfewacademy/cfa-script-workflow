@@ -1176,7 +1176,7 @@ async def main():
                 check(f'stress: {n}-word script {"passes" if ok else "flagged"} length lint', (not [x for x in li if 'Spoken length' in x])==ok, li)
             six=mk(700,('JORDAN','MARCUS','DEE','PRIYA','MR. OKAFOR','NARRATOR'))
             li=await J(pg,"(t)=>{localStorage.setItem('cfa_narr_mode','sparse');const r=dialogueLint(t);localStorage.removeItem('cfa_narr_mode');return r}",six)
-            check('stress: 6-speaker script lints clean', li==[], li)
+            check('stress: 6-speaker script lints clean', [x for x in li if 'concrete stakes' not in x]==[], li)  # synthetic filler has no story stakes
             v=await J(pg,"(t)=>parseDialogue(t).map(x=>lockedVoice(x.speaker).voiceId)",six)
             check('stress: all 6 speakers resolve to locked voices', len(set(v))==6, sorted(set(v)))
             mono="NARRATOR: The wallet opened.\nMARCUS: "+"This is how a ledger keeps every record honest and visible. "*8
