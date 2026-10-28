@@ -1236,6 +1236,24 @@ async def main():
                 await ctx.close()
             finally:
                 svc.terminate()
+        if want('testclip'):
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
+            ctx,pg,errs=await newpage(b)
+            r=await J(pg,"""()=>{sceneData.length=0; for(let i=0;i<20;i++) sceneData.push({line:'NARRATOR: '+Array(26).fill('word').join(' '),tag:i%5==2?'VIDEO':'IMAGE',prompt:'p'+i,tStart:i*10,tEnd:i*10+10});
+              const off=testClipLimit(); setTestClip(true,40,6); const on=testClipLimit(), bt=batchTargets().map(x=>x.i), q=testClipRenderQuery();
+              let alerts=0; window.alert=()=>{alerts++}; window.confirm=()=>true;
+              const small=budgetPreflight('fal',1.0,'x'), big=budgetPreflight('fal',5.8,'y');
+              trackSpend(5.0); const after=budgetPreflight('fal',0.6,'z'), q2=testClipRenderQuery();
+              setTestClip(false); const offAgain=testClipLimit(), q3=testClipRenderQuery();
+              return {off,on,bt,q,small,big,after,alerts,q2,offAgain,q3,ui:!!document.getElementById('tc-on')}}""")
+            check('testclip: off = whole episode', r['off']==20 and r['offAgain']==20 and r['q3']=='', r)
+            check('testclip: on = first beats within 40 s', r['on']==4, r)
+            check('testclip: image batch limited to test beats', all(i<4 for i in r['bt']) and len(r['bt'])>0, r['bt'])
+            check('testclip: render query carries test_s and remaining cap', r['q']=='&test_s=40&cap=6.00' and r['q2']=='&test_s=40&cap=1.00', (r['q'],r['q2']))
+            check('testclip: hard cap includes music reserve and cannot be overridden', r['small'] and not r['big'] and not r['after'] and r['alerts']==2, r)
+            check('testclip: toggle in render panel', r['ui'])
+            check('testclip: no page errors', not [e for e in errs if 'pageerror' in e], errs)
+            await ctx.close()
         if want('stress'):
             for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
             ctx,pg,errs=await newpage(b,pre="localStorage.setItem('cfa_format','dialogue');")

@@ -63,7 +63,7 @@ def public(j):
         eta = max(5, round(est - el)) if p < 15 else max(3, round(el * (100 - p) / max(p, 1)))
     elif j["state"] == "queued":
         eta = round((j.get("estimate") or 120) * pos)
-    out = {k: j.get(k) for k in ("id", "state", "stage", "progress", "error", "aspect", "notes", "parent", "created")}
+    out = {k: j.get(k) for k in ("id", "state", "stage", "progress", "error", "aspect", "notes", "parent", "created", "test_s", "cap")}
     out.update(elapsed=round(el, 1), eta=eta, queue_position=pos,
                wait=round(now - j["created"], 1))
     if j["state"] == "done":
@@ -72,7 +72,22 @@ def public(j):
     return out
 
 
-def new_job(bundle_path, aspect, notes, parent=None):
+def test_params(qs):
+    """Test-clip mode from the query string: test_s clamped to 30-45 s, cap clamped to $0-10."""
+    out = {}
+    try:
+        v = float((qs.get("test_s") or [""])[0])
+        out["test_s"] = min(45.0, max(30.0, v))
+    except ValueError:
+        pass
+    try:
+        out["cap"] = min(10.0, max(0.0, float((qs.get("cap") or [""])[0])))
+    except ValueError:
+        pass
+    return out
+
+
+def new_job(bundle_path, aspect, notes, parent=None, test=None):
     jid = uuid.uuid4().hex[:12]
     os.makedirs(jdir(jid))
     dst = os.path.join(jdir(jid), "bundle.zip")
@@ -87,6 +102,7 @@ def new_job(bundle_path, aspect, notes, parent=None):
         est = sum(x["render_seconds"] for x in done[-5:]) / len(done[-5:])
     j = {"id": jid, "state": "queued", "stage": "queued", "progress": 0, "aspect": aspect, "notes": notes[:2000],
          "parent": parent, "created": time.time(), "estimate": round(est or 150)}
+    j.update(test or {})
     with lock:
         jobs[jid] = j
     save(j)
@@ -113,6 +129,10 @@ def worker():
             cmd.append("--vertical")
         if j.get("notes"):
             cmd += ["--notes", j["notes"]]
+        if j.get("test_s"):
+            cmd += ["--max-seconds", "%.1f" % j["test_s"]]
+        if j.get("cap") is not None:
+            cmd += ["--total-cap", "%.2f" % j["cap"]]
         if MUSIC and os.path.exists(MUSIC):
             cmd += ["--music", MUSIC]
         logf = open(os.path.join(jdir(jid), "render.log"), "w")
@@ -372,7 +392,7 @@ class H(BaseHTTPRequestHandler):
                 os.remove(tmp)
                 return self.send(400, {"error": "body must be the CFA_FinalEdit zip"})
             aspect = "vertical" if (qs.get("aspect") or [""])[0] == "vertical" else "landscape"
-            j = new_job(tmp, aspect, (qs.get("notes") or [""])[0])
+            j = new_job(tmp, aspect, (qs.get("notes") or [""])[0], test=test_params(qs))
             return self.send(202, public(j))
         if parts[:1] == ["feedback"]:
             try:
