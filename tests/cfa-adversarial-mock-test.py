@@ -852,7 +852,46 @@ async def main():
         if want('dialogue'):
             for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
             LOCK={'NARRATOR':'pqHfZKP75CvOlQylNhV4','JORDAN':'bIHbv24MWmeRgasZH58o','MARCUS':'nPczCjzI2devNBz1zQrb','DEE':'EXAVITQu4vr4xnSDxMaL','PRIYA':'XrExE9yKIg1WjnnlVkGX','OKAFOR':'JBFqnCBsd6RMkjVDRZzb'}
+            # FULL NARRATION (default): Bill voices every line, no lip sync, no ai-avatar calls
             ctx,pg,errs=await newpage(b,pre="localStorage.setItem('cfa_format','dialogue');")
+            fn=await J(pg,"""()=>{const S='JORDAN: It is gone. All of it.\\nNARRATOR: Three days earlier, Jordan had been sure.\\nMARCUS: Sure of what?\\nNARRATOR: Jordan held up the phone.\\nNARRATOR: Day one, nothing.\\nNARRATOR: Day two, still nothing.\\nJORDAN: Found it.';
+              return {def:narrMode(), full:fullNarr(), talk:talkOn(), rules:/FULL NARRATION/.test(dialogueRules())&&/in media res/.test(dialogueRules()),
+                lint:dialogueLint(S).filter(x=>/cold open|montage|in a row/i.test(x)),
+                badCold:dialogueLint('NARRATOR: It was a long day for everyone.\\nJORDAN: hi').some(x=>/Full-narration cold open/.test(x)),
+                four:dialogueLint('JORDAN: a\\nNARRATOR: b\\nJORDAN: c\\nMARCUS: d\\nJORDAN: e\\nMARCUS: f').some(x=>/Four character lines/.test(x)),
+                noMont:dialogueLint('JORDAN: a\\nNARRATOR: b\\nMARCUS: c').some(x=>/milestone montage/.test(x)),
+                fp:dialogueLint('JORDAN: a\\nNARRATOR: I saw it.\\nMARCUS: c').some(x=>/first person/.test(x)),
+                opt:[...document.querySelectorAll('#sm-narr option')].map(o=>o.value)}}""")
+            check('full narration: default mode, lip sync off, rules in prompt', fn['def']=='full' and fn['full'] and not fn['talk'] and fn['rules'], fn)
+            check('full narration: lint accepts in-media-res cold open + montage', fn['lint']==[], fn['lint'])
+            check('full narration: lint flags narrator cold open, 4 unattributed lines, no montage, narrator first person', fn['badCold'] and fn['four'] and fn['noMont'] and fn['fp'], fn)
+            check('full narration: Hybrid and Sparse still selectable', fn['opt']==['full','sparse','hybrid'], fn['opt'])
+            script="JORDAN: It's gone. The whole payment.\nNARRATOR: An hour earlier, Jordan had pressed send.\nMARCUS: Sent is not arrived.\nDEE: Nothing on my phone.\nNARRATOR: Ten minutes passed. Then twenty.\nPRIYA: Check the confirmations.\nJORDAN: Twelve confirmations. It's there."
+            SC['elCalls']=[]; SC['elReal']=True
+            await J(pg,"(t)=>{finalScript=t;segScript=dialogueSegments(t);goVO();}",script)
+            await J(pg,"()=>generateVO()")
+            await pg.wait_for_function("()=>document.getElementById('s5-result').style.display!=='none'||document.getElementById('e5').textContent",timeout=20000)
+            calls=SC['elCalls']
+            check('full narration: every line (characters too) voiced by Bill, eleven_v4, slow 0.9', len(calls)==7 and all('/text-to-speech/pqHfZKP75CvOlQylNhV4/' in c[0] and c[1]['model_id']=='eleven_v4' and c[1]['voice_settings']['speed']==0.9 for c in calls), [(c[0].split('/')[-2],c[1]['text'][:16]) for c in calls])
+            check('full narration: characters quoted with their exact words', sorted(c[1]['text'] for c in calls)==sorted(l.split(': ',1)[1] for l in script.split('\n')))
+            SC['elReal']=False
+            await go_scenes(pg)
+            cl=await J(pg,"()=>({tags:sceneData.map(s=>s.tag),cast:sceneData.map(s=>s.characters),sum:document.getElementById('s6-class-summary').textContent})")
+            check('full narration: no TALK beats, no lip-sync cost', 'TALK' not in cl['tags'] and 'talking' not in cl['sum'], cl)
+            check('full narration: character beats still carry their cast for consistency', cl['cast'][0]=='JORDAN' and cl['cast'][2]=='MARCUS', cl['cast'])
+            SC['falLog']=[]
+            await J(pg,"()=>startSceneGeneration()"); await pg.wait_for_timeout(400)
+            for i in (0,2):
+                await J(pg,"(i)=>{jumpToScene(i);}",i); await pg.wait_for_timeout(300)
+                await J(pg,"()=>generateScene()")
+                await pg.wait_for_function("(i)=>sceneData[i].resultURL||document.getElementById('e6').textContent",arg=i,timeout=20000)
+            r=await J(pg,"()=>({lip:sceneData.map(s=>!!s.lipsync),e:document.getElementById('e6').textContent})")
+            av=[x for x in SC['falLog'] if 'ai-avatar' in x[0]]
+            gen=' '.join(x[1] for x in SC['falLog'])
+            check('full narration: ZERO calls to fal-ai/kling-video/ai-avatar', not av and not any(r['lip']) and len(SC['falLog'])>0, (len(av),len(SC['falLog']),r))
+            check('full narration: shot prompts keep mouths closed (acting shots)', 'mouth closed' in gen or 'mouths closed' in gen, gen[:300])
+            await ctx.close()
+            ctx,pg,errs=await newpage(b,pre="localStorage.setItem('cfa_format','dialogue');localStorage.setItem('cfa_narr_mode','hybrid');")
             check('dialogue: default format is dialogue', await J(pg,"()=>{localStorage.removeItem('cfa_format');const f=scriptFormat();localStorage.setItem('cfa_format','dialogue');return f}")=='dialogue')
             vl=await J(pg,"()=>Object.fromEntries(Object.entries(voiceLock()).map(([k,v])=>[k,v.voiceId]))")
             check('voice lock: registry map is exactly the locked series voices', vl==LOCK, vl)
@@ -883,7 +922,7 @@ async def main():
               return {narr:narr.some(x=>/first person/.test(x)), bleed:bleed.some(x=>/both say/.test(x)), hints:hints.length, hl:hints.join('|'), pr:pr.length>200&&/declined|logic/i.test(pr),
                 acc:acc&&acc.length===1&&acc[0].kind==='stiff', wc:wordCount('JORDAN: [sighs] Wait. [short pause] Gone?'),
                 tw:stripTagWords([['Wait',0,1],['[sighs]',1,2],['[short',2,3],['pause]',3,4],['ok',4,5]]).map(w=>w[0]).join(' '),
-                rules:/SOUNDS LIKE REAL PEOPLE/.test(dialogueRules())&&(()=>{localStorage.setItem('cfa_narr_mode','hybrid');const ok=/HYBRID STRUCTURE/.test(dialogueRules())&&dialogueLint('JORDAN: hi there\\nMARCUS: yo').some(x=>/Hybrid cold open/.test(x));localStorage.setItem('cfa_narr_mode','sparse');const sp=!/HYBRID/.test(dialogueRules());localStorage.removeItem('cfa_narr_mode');return ok&&sp&&/HYBRID/.test(dialogueRules())&&/animated wide/.test(SYS_DIRECTOR);})()&&/stiff/.test(SYS_ACCURACY)&&/ALWAYS MOVING/.test(SYS_DIRECTOR)&&/LISTENER REACTION/.test(SYS_DIRECTOR)};
+                rules:/SOUNDS LIKE REAL PEOPLE/.test(dialogueRules())&&(()=>{localStorage.setItem('cfa_narr_mode','hybrid');const ok=/HYBRID STRUCTURE/.test(dialogueRules())&&dialogueLint('JORDAN: hi there\\nMARCUS: yo').some(x=>/Hybrid cold open/.test(x));localStorage.setItem('cfa_narr_mode','sparse');const sp=!/HYBRID/.test(dialogueRules());localStorage.removeItem('cfa_narr_mode');return ok&&sp&&/FULL NARRATION/.test(dialogueRules())&&/animated wide/.test(SYS_DIRECTOR);})()&&/stiff/.test(SYS_ACCURACY)&&/ALWAYS MOVING/.test(SYS_DIRECTOR)&&/LISTENER REACTION/.test(SYS_DIRECTOR)};
             }""")
             check('voice lint: narrator first person flagged', u['narr'], u)
             check('voice lint: the same phrase in two characters\' mouths flagged', u['bleed'], u)
@@ -917,6 +956,7 @@ async def main():
             sl=seg.split('\n')
             check('dialogue segments: one beat per line, long line split, tags kept', len(sl)>=4 and sl[0]=='1. JORDAN: Hi.' and all(re.match(r'^\d+\. (JORDAN|MR\. OKAFOR|NARRATOR): ',l) for l in sl), seg[:300])
             # per-line TTS: every line uses its speaker's locked voice
+            await J(pg,"()=>localStorage.setItem('cfa_narr_mode','hybrid')")
             script="NARRATOR: Ten minutes to close.\nJORDAN: I sent it an hour ago!\nMARCUS: Sent is not arrived.\nDEE: Nothing on my phone.\nPRIYA: Check the confirmations.\nMR. OKAFOR: In my day we used cash.\nJORDAN: Twelve confirmations. It's there."
             SC['elCalls']=[]; SC['elReal']=True
             await J(pg,"(t)=>{finalScript=t;segScript=dialogueSegments(t);goVO();}",script)
