@@ -527,7 +527,9 @@ async def main():
             check('batch: button counts 5 targets', 'all 5' in await J(pg,"()=>document.getElementById('btn-gen-all').textContent"))
             SC['delay']=0.4; n0=cnt['falgen']; peak={'v':0}
             await J(pg,"()=>{window.__peak=0;const of=window.fetch;window.fetch=async(...a)=>{const gen=String(a[0]).startsWith('https://fal.run/');if(gen){window.__inflight=(window.__inflight||0)+1;window.__peak=Math.max(window.__peak,window.__inflight);}try{return await of(...a);}finally{if(gen)window.__inflight--;}};generateAllImages();}")
-            await pg.wait_for_timeout(300); await J(pg,"()=>generateAllImages()")  # clicking again = stop
+            await pg.wait_for_timeout(200); await J(pg,"()=>generateAllImages({noToggle:true})")
+            check('batch: scripted re-call ({noToggle}) does not cancel a running batch', await J(pg,"()=>!!batchRun&&!batchRun.cancel"))
+            await pg.wait_for_timeout(100); await J(pg,"()=>generateAllImages()")  # clicking again = stop
             await pg.wait_for_timeout(1500)
             st=await J(pg,"()=>({peak:window.__peak,done:sceneData.filter(s=>s.resultURL).length,running:!!batchRun,e6:document.getElementById('e6').textContent})")
             check('batch: stop honoured, ≤3 in flight', st['peak']<=3 and st['done']==3 and not st['running'] and 'stopped' in st['e6'].lower(), st)
@@ -540,6 +542,8 @@ async def main():
                 await pg.wait_for_timeout(250)
                 if not await J(pg,"()=>!!batchRun"): break
             check('batch: each failed scene is retried once automatically', cnt['falgen']-g0>=4, cnt['falgen']-g0)
+            check('batch: a failed scene does not stop the batch (finished, not stopped)', 'finished' in (await J(pg,"()=>document.getElementById('e6').textContent")).lower())
+            check('batch: stopBatch() is a no-op when idle', await J(pg,"()=>{stopBatch(); return !batchRun}"))
             check('batch: failures reported', '2 failed' in await J(pg,"()=>document.getElementById('e6').textContent"), await J(pg,"()=>document.getElementById('e6').textContent"))
             SC['fal']='ok'; SC['delay']=0
             check('batch: no page errors', not [e for e in errs if 'pageerror' in e], errs)

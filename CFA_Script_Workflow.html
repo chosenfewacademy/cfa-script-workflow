@@ -7178,8 +7178,10 @@ function updateBatchButton(){
   btn.textContent=n?('⚡ Generate all '+n+' remaining images'):'✓ All image scenes generated';
   btn.disabled=!n;
 }
-async function generateAllImages(){
-  if(batchRun){ batchRun.cancel=true; updateBatchButton(); return; } // acts as Stop while running
+function stopBatch(){ if(batchRun){ batchRun.cancel=true; updateBatchButton(); } }
+async function generateAllImages(opts){
+  // The button toggles Stop while running; scripted callers pass {noToggle:true} so a re-call never cancels a live batch.
+  if(batchRun){ if(opts&&opts.noToggle) return; stopBatch(); return; }
   if(!sessionStorage.getItem('cfa_fal_key')){ showErr('e6','fal.ai API key not set — open ⚙ Settings.'); return; }
   const targets=batchTargets();
   if(!targets.length){ updateBatchButton(); return; }
