@@ -1121,23 +1121,23 @@ def scene_ambience(shots, segs, key, work, cache=None):
     return out, info
 
 
-FOLEY_KINDS = [  # (kind, keyword regex on the line + shot prompt, ElevenLabs prompt)
-    ("phone", r"\b(phone|text(ed)?|message|notification|buzz(ed|ing)?|screen|app)\b", "single smartphone vibration buzz on a wooden desk, close"),
-    ("typing", r"\b(typ(e|ed|ing)|keyboard|laptop|keys)\b", "short burst of laptop keyboard typing, close"),
-    ("writing", r"\b(wr(ite|ote|iting)|pen|pencil|notebook|scribbl\w*)\b", "pencil scribbling on paper notebook, close"),
-    ("paper", r"\b(paper|invoice|envelope|receipt|page|card)\b", "paper sheet rustle and slide on a desk"),
+FOLEY_KINDS = [  # (kind, keyword regex on the SPOKEN line only, ElevenLabs prompt). No phone buzz: it read as random buzzing (Oct 28 audit).
+    ("typing", r"\b(typ(e|ed|ing)|keyboard)\b", "short burst of laptop keyboard typing, close"),
+    ("writing", r"\b(wr(ite|ote|iting)|pen|pencil|scribbl\w*)\b", "pencil scribbling on paper notebook, close"),
+    ("paper", r"\b(paper|invoice|envelope|receipt)\b", "paper sheet rustle and slide on a desk"),
     ("door", r"\b(door|bell|walked in|came in)\b", "small shop door bell jingle as a door opens"),
-    ("tool", r"\b(wrench|tool|bench|bolt|chain|spoke|bike)\b", "metal wrench set down on a wooden workbench, single clink"),
+    ("tool", r"\b(wrench|bolt|spoke)\b", "metal wrench set down on a wooden workbench, single clink"),
 ]
-FOLEY_GAIN, FOLEY_GAP, FOLEY_MAX = 0.45, 4.0, 40
+FOLEY_GAIN, FOLEY_GAP, FOLEY_MAX = 0.2, 20.0, 40
+FOLEY_DEFAULT_ON = False   # off unless --foley (the user reviews it first)
 
 
 def foley_plan(shots, segs):
-    """One foley hit per shot at most, from the shot's line/prompt keywords; spaced >= FOLEY_GAP s apart."""
+    """At most one foley hit per FOLEY_GAP s, only when the SPOKEN line names the sound (never the image prompt / sfx text)."""
     by_idx = {sg["index"]: sg for sg in segs}
     plan, last = [], -99.0
     for sh in shots:
-        txt = " ".join(str(by_idx[i].get(k) or "") for i in sh.get("beats", []) if i in by_idx for k in ("text", "prompt", "sfx")).lower()
+        txt = " ".join(str(by_idx[i].get("text") or "") for i in sh.get("beats", []) if i in by_idx).lower()
         kind = next((k for k, rx, _ in FOLEY_KINDS if re.search(rx, txt)), None)
         t = sh["start"] + min(0.4, sh["duration"] / 4)
         if kind and t - last >= FOLEY_GAP and len(plan) < FOLEY_MAX:
@@ -1682,6 +1682,7 @@ def main():
     ap.add_argument("--grok-title", action="store_true", help="let Grok write the title/thumbnail text (default: bundle title only)")
     ap.add_argument("--notes", default="", help="re-edit notes passed to Grok's edit plan")
     ap.add_argument("--no-sfx", action="store_true", help="skip whooshes / riser / impact")
+    ap.add_argument("--foley", action="store_true", default=FOLEY_DEFAULT_ON, help="add sparse foley hits (typing, pencil, paper, door, tool) from the spoken lines; off by default")
     ap.add_argument("--no-ambience", action="store_true", help="skip per-scene ElevenLabs ambience from the director's sfx text")
     ap.add_argument("--no-end-card", action="store_true")
     ap.add_argument("--keep-work", action="store_true")
@@ -1828,8 +1829,8 @@ def main():
             amb_info.update(inf)
         except Exception as e:
             amb_info["errors"].append(str(e)[:160])
-    foley_info = {"skipped": "off"}
-    if not a.no_sfx:
+    foley_info = {"skipped": "off (default; pass --foley)"}
+    if a.foley and not a.no_sfx:
         try:
             fol, foley_info = scene_foley(shots, segs, env_key("ELEVENLABS_API_KEY", a.keys_env), work)
             amb = list(amb) + fol
