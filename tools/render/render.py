@@ -1801,6 +1801,24 @@ def measure_lufs(path):
         return None
 
 
+def trim_to_seconds(d, b, segs, words, total, max_s, work):
+    """Test-clip mode: keep the first beats whose end <= max_s (always >= 1), cut voice/words to match."""
+    keep = []
+    for sg in segs:
+        e = sg.get("end")
+        if keep and (e is None or e > max_s):
+            break
+        keep.append(sg)
+    end = min(total, max(x.get("end") or 0 for x in keep) + 0.35)
+    out = os.path.join(d, "voiceover_test.wav")
+    run(["ffmpeg", "-y", "-v", "error", "-i", os.path.join(d, b["voiceover"]), "-t", "%.3f" % end, out])
+    b["voiceover"] = os.path.basename(out)
+    words = [w for w in words if w[2] <= end + 0.05]
+    info = {"max_seconds": max_s, "beats": len(keep), "of_beats": len(segs), "seconds": round(end, 2)}
+    log("test clip: %d of %d beats, %.1fs" % (len(keep), len(segs), end))
+    return keep, words, media_duration(out), info
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("bundle", help="CFA_FinalEdit_*.zip (or unpacked folder, or JSON-with-base64)")
@@ -1831,6 +1849,10 @@ def main():
     ap.add_argument("--i2v", choices=["off"] + sorted(I2V_MODELS), default=os.environ.get("CFA_I2V", "off"),
                     help="idle micro-motion image-to-video on stills via fal (paid; default off)")
     ap.add_argument("--i2v-cap", type=float, default=float(os.environ.get("CFA_I2V_CAP", "0")), help="max est. USD for i2v clips")
+    ap.add_argument("--max-seconds", type=float, default=float(os.environ.get("CFA_MAX_SECONDS", "0")),
+                    help="test-clip mode: render only the beats that end within this many seconds (0 = whole episode)")
+    ap.add_argument("--total-cap", type=float, default=float(os.environ.get("CFA_TOTAL_CAP", "0")),
+                    help="hard cap (USD) on everything this render bills (music + i2v); 0 = per-item caps only")
     ap.add_argument("--foley", action="store_true", default=FOLEY_DEFAULT_ON, help="add sparse foley hits (typing, pencil, paper, door, tool) from the spoken lines; off by default")
     ap.add_argument("--no-ambience", action="store_true", help="skip per-scene ElevenLabs ambience from the director's sfx text")
     ap.add_argument("--no-end-card", action="store_true")
@@ -1857,6 +1879,13 @@ def main():
         if s.get("media") and not os.path.exists(os.path.join(d, s["media"])):
             s["media"] = None
     fill_timings(segs, words, total)
+    test_clip = None
+    if a.max_seconds and a.max_seconds > 0:
+        segs, words, total, test_clip = trim_to_seconds(d, b, segs, words, total, a.max_seconds, work)
+        voice = os.path.join(d, b["voiceover"])
+    if a.total_cap and a.total_cap > 0:
+        a.music_cap = min(a.music_cap, a.total_cap)
+        a.i2v_cap = min(a.i2v_cap, a.total_cap)
     voice_raw = total
     voice, words, pauses, added = add_pauses(voice, words, segs, work, a.beat_pause, a.sentence_pause)
     if added:
@@ -2021,6 +2050,8 @@ def main():
     elif style != "none" and not a.no_score:
         ckey = music_cache_key(b, style)
         cached = music_cache_get(ckey)
+        if a.total_cap and a.total_cap > 0:
+            a.music_cap = max(0.0, min(a.music_cap, a.total_cap - getattr(a, "spent_usd", 0.0)))
         ok, est, why = music_guard(total, a.music_cap, getattr(a, "spent_usd", 0.0))
         if cached:
             a.music = cached
@@ -2128,7 +2159,7 @@ def main():
         mqa = {"error": str(e)[:160]}
     gate = motion_gate(final)
     log("motion gate:", "PASS" if gate["pass"] else "FAIL " + "; ".join(gate["fails"]))
-    report = {"motion_gate": gate, "i2v": i2v_info, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
+    report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
               "audio_streams": len(au), "lufs": measure_lufs(final), "edl_source": source,
               "edl_problems": problems, "grok_usage": usage, "beats": len(segs),

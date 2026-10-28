@@ -1979,6 +1979,8 @@ select option{background:var(--surface2)}
     </div>
     <div class="complete-actions" style="margin-top:-4px">
       <button class="btn bprim" onclick="sendToGrokRender()" id="btn-send-grok" style="font-size:13px;padding:11px 22px;background:linear-gradient(135deg,#7c3aed,#2563eb)" title="Upload every scene, the voiceover and the timings to Grok Bot, which plans the edit and renders the finished MP4 for review here">&#x1F680; Send to Grok for final edit</button>
+      <label style="font-size:12px;display:flex;align-items:center;gap:6px" title="Render only the first ~30-45 s of beats under a hard billed cap (music included)"><input type="checkbox" id="tc-on" onchange="setTestClip(this.checked)"> 🧪 Test clip (40 s, $6 cap)</label>
+      <span id="tc-status" style="font-size:11px;color:var(--muted)"></span>
       <label style="font-size:12px;display:flex;align-items:center;gap:6px">Format
         <select id="rs-aspect" class="inp" style="width:auto;padding:6px 8px"><option value="landscape">16:9 (YouTube)</option><option value="vertical">9:16 vertical (Shorts / Reels)</option></select></label>
     </div>
@@ -4518,7 +4520,26 @@ function renderBudgetUI(){
   if(bn){ bn.style.display=lows.length&&!sessionStorage.getItem('cfa_budget_banner_off')?'':'none'; const t=bn.querySelector('.bb-txt'); if(t) t.textContent='Low API balance — time to reload: '+lows.join(' · '); }
 }
 // Pre-flight before an expensive step. est in $ (or chars for ElevenLabs live). Only warns when a balance is known.
+
+// ── Test-clip mode (fix 6): generate/render only the first ~30-45 s of beats under a hard billed cap (music included) ──
+const TEST_CLIP_MUSIC_RESERVE=0.45; // renderer score for <=45 s at $0.65/min, rounded up
+function testClipCfg(){ const c=budgetLoad('cfa_test_clip',{on:false,sec:40,cap:6,base:0}); c.sec=Math.min(45,Math.max(30,+c.sec||40)); c.cap=Math.min(10,Math.max(0.5,+c.cap||6)); return c; }
+function testClipOn(){ return !!testClipCfg().on; }
+function totalSpendNow(){ return (+sessionSpend||0)+(+voiceSpend||0)+(+textSpend||0); }
+function setTestClip(on,sec,cap){ const c=testClipCfg(); c.on=!!on; if(sec!=null) c.sec=+sec; if(cap!=null) c.cap=+cap; if(on && !testClipCfg().on) c.base=totalSpendNow(); safeSetItem('cfa_test_clip',JSON.stringify(c)); try{ renderTestClipUI(); updateBatchButton(); }catch(e){} return testClipCfg(); }
+function testClipSpent(){ const c=testClipCfg(); return Math.max(0, totalSpendNow()-(c.base||0)); }
+function beatSecs(x){ const L=beatLen(x); if(L>0) return L; const w=String(splitTag(x.line||'').text||x.line||'').split(/\s+/).filter(Boolean).length; return Math.max(1.5,w/2.6); }
+// Index limit: beats 0..n-1 whose cumulative length stays within the test seconds (always >= 1 beat).
+function testClipLimit(){ if(!testClipOn()||!sceneData.length) return sceneData.length; const sec=testClipCfg().sec; let t=0,n=0; for(const x of sceneData){ t+=beatSecs(x); if(n && t>sec) break; n++; } return n; }
+function inTestClip(i){ return i<testClipLimit(); }
+// Hard cap: refuses (no "try anyway") any call that would push spend + the renderer music reserve over the cap.
+function testClipGuard(est,what){ if(!testClipOn()) return true; const c=testClipCfg(), e=typeof est==='object'?(est.usd||0):(+est||0), after=testClipSpent()+e+TEST_CLIP_MUSIC_RESERVE;
+  if(after>c.cap+1e-9){ alert('🧪 Test-clip cap: '+what+' would bring billed spend to ≈ $'+after.toFixed(2)+' (incl. $'+TEST_CLIP_MUSIC_RESERVE.toFixed(2)+' music reserve), over the $'+c.cap.toFixed(2)+' cap. Stopped.'); return false; } return true; }
+function testClipRenderQuery(){ if(!testClipOn()) return ''; const c=testClipCfg(); return '&test_s='+c.sec.toFixed(0)+'&cap='+Math.max(0,c.cap-testClipSpent()).toFixed(2); }
+function renderTestClipUI(){ const el=document.getElementById('tc-status'); if(!el) return; const c=testClipCfg(); const cb=document.getElementById('tc-on'); if(cb) cb.checked=c.on;
+  el.textContent=c.on?('🧪 Test clip: first '+testClipLimit()+' beat(s) ≈ '+c.sec+' s · spent $'+testClipSpent().toFixed(2)+' of $'+c.cap.toFixed(2)+' cap (music included)'):'Full episode'; }
 function budgetPreflight(p, est, what){
+  if(!testClipGuard(est&&est.usd!=null?est.usd:est, what)) return false;
   const st=budgetStatus(p); if(st.remaining==null) return true;
   let e=est; if(st.unit==='chars' && p==='eleven') e=est.chars!=null?est.chars:est/(0.08/1000); if(typeof e==='object') e=e.usd||0;
   const after=st.remaining-e, P=BUDGET_PROVIDERS[p], f=v=>st.unit==='chars'?Math.round(v).toLocaleString()+' chars':'$'+v.toFixed(2);
@@ -5191,6 +5212,7 @@ async function buildFinalEditZip(say){
     const lines=sceneData.map(x=>x.line);
     const times=lineTimes()||(voWords.length?computeBeatTimes(lines,voWords):[]);
     for(let i=0;i<sceneData.length;i++){
+      if(!inTestClip(i)) break;
       const s=sceneData[i], n=String(i+1).padStart(3,'0');
       say('Fetching scene '+(i+1)+' of '+sceneData.length+'…');
       let media=null, kind='';
@@ -5299,7 +5321,7 @@ async function sendToGrokRender(){
     say(''); up.style.display=''; bar.style.width='0';
     const mb=b.zip.size/1048576;
     const aspect=document.getElementById('rs-aspect').value;
-    const job=await uploadWithProgress(renderBase()+'/jobs?aspect='+aspect, b.zip, (f,n)=>{ bar.style.width=(f*100).toFixed(1)+'%'; txt.textContent='Uploading to Grok Bot… '+(n/1048576).toFixed(1)+' / '+mb.toFixed(1)+' MB ('+Math.round(f*100)+'%)'; });
+    const job=await uploadWithProgress(renderBase()+'/jobs?aspect='+aspect+testClipRenderQuery(), b.zip, (f,n)=>{ bar.style.width=(f*100).toFixed(1)+'%'; txt.textContent='Uploading to Grok Bot… '+(n/1048576).toFixed(1)+' / '+mb.toFixed(1)+' MB ('+Math.round(f*100)+'%)'; });
     bar.style.width='100%';
     txt.textContent='✓ Uploaded '+mb.toFixed(1)+' MB'+b.note;
     startRenderWatch(job, b.title);
@@ -7199,7 +7221,7 @@ function bestStartFrameFor(j){
 const BATCH_CONCURRENCY=3;
 let batchRun=null; // {cancel:boolean, total, done, failed}
 function batchTargets(){
-  return sceneData.map((s,i)=>({s,i})).filter(({s})=>s.tag==='IMAGE' && !s.resultURL && !s._generating && (s.prompt||'').trim());
+  return sceneData.map((s,i)=>({s,i})).filter(({s,i})=>inTestClip(i) && s.tag==='IMAGE' && !s.resultURL && !s._generating && (s.prompt||'').trim());
 }
 function updateBatchButton(){
   const qs=document.getElementById('qa-style-check'), qg=document.getElementById('qa-gpt-text');
@@ -7346,6 +7368,7 @@ async function generateScene(){
   const falKey=sessionStorage.getItem('cfa_fal_key');
 
   if(!falKey){showErr('e6','fal.ai API key not set — open ⚙ Settings.');return;}
+  if(testClipOn() && !inTestClip(currentScene)){ alert('🧪 Test clip is on: beat '+(currentScene+1)+' is past the first '+testClipCfg().sec+' s. Turn test clip off to generate it.'); return; }
   if(isVideo && !budgetPreflight('fal',getEstimatedCost(),'this video clip')) return;
 
   const prompt=document.getElementById('s6-prompt').value.trim();
