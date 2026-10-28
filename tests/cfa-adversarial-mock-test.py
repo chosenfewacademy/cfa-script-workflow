@@ -957,6 +957,11 @@ async def main():
               return {def,kbTags,fullTags,mixTags,f,mx,other,sp};
             }""")
             check('motion: key-beat default; fully animated makes every non-talking beat a clip', m['def']=='keybeat' and m['fullTags']=='VIDEO,TALK,VIDEO,VIDEO' and m['kbTags'].split(',')[0]=='VIDEO' and m['kbTags'].split(',')[-1]=='VIDEO', m)
+            ce=await J(pg,"""()=>{ const keep=sceneData; sceneData=[{line:'1. NARRATOR: a',tag:'IMAGE'},{line:'2. NARRATOR: b',tag:'IMAGE'}];
+              const k0=safeGetItem('cfa_style_check'); safeSetItem('cfa_style_check','1'); const on=motionCostEstimate('mixed');
+              safeSetItem('cfa_style_check','0'); const off=motionCostEstimate('mixed'); if(k0==null) localStorage.removeItem('cfa_style_check'); else safeSetItem('cfa_style_check',k0);
+              sceneData=keep; return {on:on.usd, off:off.usd, per:MODEL_COSTS.image[selectedImageModel]||0.04}; }""")
+            check('cost estimate: stills include ~3.3 style-check tries when the style check is on, 1 try when off', abs(ce['on']-round(2*ce['per']*3.3,2))<0.011 and abs(ce['off']-round(2*ce['per'],2))<0.011, ce)
             check('motion: mixed restores the classifier mix', m['mixTags']=='IMAGE,TALK,VIDEO,IMAGE', m)
             check('motion: per-episode choice, full costs more than mixed', m['other']=='keybeat' and m['f']>m['mx']>0, m)
             check('motion: same-place continuity match ignores case/punctuation', m['sp'], m)

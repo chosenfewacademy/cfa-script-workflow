@@ -3765,7 +3765,7 @@ function motionCostEstimate(mode){
     if(x.tag==='TALK'){ usd+=0.04+beatSecs(x)*TALK_COST_PER_S; continue; }
     const vid=mode==='full'?true:mode==='keybeat'?KB.has(sceneData.indexOf(x)):(x.origTag||x.tag)==='VIDEO';
     if(vid){ clips++; usd+=0.04+MODEL_COSTS.video['kling-o1v']*Math.max(3,Math.min(10,Math.round(beatSecs(x)))); }
-    else { stills++; usd+=MODEL_COSTS.image[selectedImageModel]||0.04; }
+    else { stills++; usd+=(MODEL_COSTS.image[selectedImageModel]||0.04)*stillTries(); }
   }
   return {usd:Math.round(usd*100)/100, clips, stills};
 }
@@ -6778,6 +6778,10 @@ let STYLE_SPEC='ART STYLE (locked, matches the Marcus/Jordan reference art): fla
 const STYLE_RETRY_CAP=2;      // max regenerations when the vision check says off-style
 const VISION_MODEL='grok-4.3';
 function styleCheckOn(){ return safeGetItem('cfa_style_check')!=='0'; }
+// Measured on a real key-beat episode (Oct 28, 2026, v23 3D): with the style check on, a still took ~3.3 generations
+// on average (style-drift redos + batch retry), so estimates multiply still cost by this instead of assuming 1 try.
+const STYLE_TRIES_AVG=3.3, STYLE_QA_USD=0.02; // + ~$0.02 xAI vision check per still
+function stillTries(){ return styleCheckOn()?STYLE_TRIES_AVG:1; }
 function autoGptTextOn(){ return safeGetItem('cfa_gpt_text')!=='0'; }
 function setQaToggle(k,on){ try{ localStorage.setItem(k,on?'1':'0'); }catch(e){} }
 const TEXT_HINT_RE=/\b(sign|signs|label|labels|labeled|headline|newspaper|banner|poster|caption|title|text|words?|reads|says|written|writing|letters|chart|graph|receipt|price tag|screen shows|app screen|notebook|whiteboard|menu|logo)\b|["“][^"”]{2,}["”]/i;
@@ -7047,9 +7051,10 @@ async function generateAllImages(){
   if(!sessionStorage.getItem('cfa_fal_key')){ showErr('e6','fal.ai API key not set — open ⚙ Settings.'); return; }
   const targets=batchTargets();
   if(!targets.length){ updateBatchButton(); return; }
-  const est=targets.reduce((sum,{s})=>sum+MODEL_COSTS.image[userImageModel==='imagen4'?'kling-o1':userImageModel],0);
+  const est=targets.reduce((sum,{s})=>sum+MODEL_COSTS.image[userImageModel==='imagen4'?'kling-o1':userImageModel],0)*stillTries();
+  const qaUsd=styleCheckOn()&&llmKey()?targets.length*STYLE_QA_USD:0;
   if(!budgetPreflight('fal',est,'this batch of '+targets.length+' images')) return;
-  if(!confirm('Generate '+targets.length+' image scenes in parallel ('+BATCH_CONCURRENCY+' at a time)?\nEstimated cost: ~$'+est.toFixed(2)+'\n\nEvery scene uses the Marcus/Jordan art as a style anchor (Kling o1 for concept scenes)'+(styleCheckOn()&&llmKey()?', is checked for style drift (up to '+STYLE_RETRY_CAP+' redos)':'')+(autoGptTextOn()&&sessionStorage.getItem('cfa_openai_key')?' and gets a GPT text cleanup when it has writing':'')+'. Review each result afterwards.')) return;
+  if(!confirm('Generate '+targets.length+' image scenes in parallel ('+BATCH_CONCURRENCY+' at a time)?\nEstimated cost: ~$'+est.toFixed(2)+(styleCheckOn()?' fal (incl. ~'+STYLE_TRIES_AVG+' tries per still for style-check redos)':'')+(qaUsd?' + ~$'+qaUsd.toFixed(2)+' xAI style checks':'')+'\n\nEvery scene uses the Marcus/Jordan art as a style anchor (Kling o1 for concept scenes)'+(styleCheckOn()&&llmKey()?', is checked for style drift (up to '+STYLE_RETRY_CAP+' redos)':'')+(autoGptTextOn()&&sessionStorage.getItem('cfa_openai_key')?' and gets a GPT text cleanup when it has writing':'')+'. Review each result afterwards.')) return;
   const run=batchRun={cancel:false,total:targets.length,done:0,failed:0,errors:[]};
   const data=sceneData;
   showErr('e6','');
