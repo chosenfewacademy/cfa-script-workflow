@@ -221,6 +221,45 @@ def main():
     check([f["shot"] for f in q["frozen"]] == [0], "motion QA flags only the frozen shot %s" % q.get("motion"))
     check(len(q["jarring_cuts"]) == 1 and q["jarring_cuts"][0]["after_shot"] == 0, "motion QA flags the black-to-colour-bars cut %s" % q["jarring_cuts"])
     check([w[0] for w in R.strip_tag_words([["Wait", 0, 1], ["[sighs]", 1, 2], ["[short", 2, 3], ["pause]", 3, 4], ["okay.", 4, 5]])] == ["Wait", "okay."], "v4 audio tags never reach captions")
+    # Resilia: drift split, per-beat grades, per-beat music cues, montage
+    lsh = [{"index": 1, "start": 0.0, "end": 11.0, "duration": 11.0, "mediaType": "image", "media": "x.png", "motion": "zoom_in", "intensity": 0.05, "role": "tension", "transition_in": "dissolve", "transition_duration": 0.5, "part": ""},
+           {"index": 2, "start": 11.0, "end": 19.0, "duration": 8.0, "mediaType": "video", "media": "v.mp4", "motion": "push_in", "intensity": 0.04, "role": "turn", "transition_in": "whip", "transition_duration": 0.3, "part": ""},
+           {"index": 3, "start": 19.0, "end": 21.0, "duration": 2.0, "mediaType": "image", "media": "y.png", "motion": "pan_left", "intensity": 0.05, "role": "resolve", "transition_in": "dissolve", "transition_duration": 0.5, "part": ""}]
+    wd = [["w", 0.1 + 0.5 * k, 0.45 + 0.5 * k] for k in range(42)]
+    ds = R.split_drift([dict(x) for x in lsh], wd)
+    parts = [x for x in ds if x["media"] == "x.png"]
+    check(len(parts) >= 3 and all(2.4 <= p["duration"] <= 4.3 for p in parts), "11 s still split into 3-4 s parts %r" % [p["duration"] for p in parts])
+    check(abs(sum(x["duration"] for x in ds) - 21.0) < 0.01 and [x["index"] for x in ds] == list(range(1, len(ds) + 1)), "drift split keeps total timing and reindexes")
+    check(all(p["motion"] not in ("static", None) for p in parts) and any(p["motion"] == "punch_in" and p.get("focus") in ("left", "right") for p in parts), "every part drifts; punch-ins are off-centre")
+    check(all(p["transition_in"] == "cut" for p in parts[1:]) and parts[0]["transition_in"] == "dissolve", "inside a split: cuts; into it: the planned transition")
+    check(sum(1 for x in ds if x["media"] == "v.mp4") == 1 and sum(1 for x in ds if x["media"] == "y.png") == 1, "video and short shots are not split")
+    check(R.split_drift([], wd) == [] and len(R.split_drift([dict(lsh[0])], [])) >= 3, "edge: no shots / no word gaps")
+    sm = R.smooth_transitions([dict(x) for x in ds])
+    check([x["transition_in"] for x in sm if x["role"] == "turn"] == ["whip"] and all(x["transition_in"] != "whip" for x in sm if x["role"] != "turn"), "whips only into the reveal")
+    gr = R.assign_grades([{"role": r} for r in ("hook", "tension", "montage", "turn", "realization", "resolve", None)])
+    check([g["grade"] for g in gr] == ["cool_low", "sterile", "sterile", "golden", "golden", "golden", ""], "per-beat grades: cool low -> sterile -> golden")
+    check(R.grade_vf({"grade": "golden"}).startswith(",eq=") and R.grade_vf({}) == "" and R.assign_grades([{"role": "turn"}], False)[0]["grade"] == "", "grade filter / off switch")
+    gd = tempfile.mkdtemp(prefix="cfa-grade-")
+    gsrc = os.path.join(gd, "g.png"); ff("-f", "lavfi", "-i", "color=c=0x808080:s=320x180", "-frames:v", "1", gsrc)
+    means = {}
+    for g in ("cool_low", "golden"):
+        o = os.path.join(gd, g + ".png"); v = os.path.join(gd, g + ".mp4")
+        R.render_shot(gsrc, "image", {"motion": "zoom_in", "intensity": 0.03, "grade": g}, 160, 90, v, 4)
+        ff("-i", v, "-frames:v", "1", "-vf", "scale=1:1", "-pix_fmt", "rgb24", "-f", "rawvideo", o)
+        means[g] = list(open(o, "rb").read()[:3])
+    ok = means["golden"][0] - means["golden"][2] > means["cool_low"][0] - means["cool_low"][2] + 6
+    check(bool(ok), "rendered grades differ: golden warmer than cool %r" % means)
+    mp = R.music_plan(90.0, {"hook_end": 6.0, "turn": 60.0}, "cinematic")
+    names = [c["text"] for c in mp]
+    inst = [c["positive_styles"][1] for c in mp]
+    check(names[0] == "[Cold open cue]" and "[Triumph cue]" in names and len(set(inst)) == len(inst), "per-beat music cues with distinct instruments %r" % inst)
+    check(abs(sum(c["duration_ms"] for c in mp) / 1000.0 - 91.5) < 0.05, "cue durations cover the episode")
+    check(all(c["duration_ms"] >= 3000 for c in R.music_plan(10.0, {"hook_end": 1.0, "turn": 8.0}, "lofi")), "short episode: no sub-3 s cues")
+    segm = [{"speaker": "JORDAN", "start": 0, "text": "Gone."}, {"speaker": "NARRATOR", "start": 30, "text": "Day one, nothing."}, {"speaker": "NARRATOR", "start": 34, "text": "Day two, a reply."},
+            {"speaker": "NARRATOR", "start": 38, "text": "By day three, twelve confirmations."}, {"speaker": "MARCUS", "start": 42, "text": "See?"}]
+    check(len(R.detect_montage(segm, 100.0)) == 3 and R.detect_montage(segm[:2], 100.0) == [], "montage = run of counting narrator lines")
+    msh = R.smooth_transitions([{"role": "tension", "transition_in": "dissolve", "transition_duration": .5, "part": ""}, {"role": "montage", "transition_in": "dissolve", "transition_duration": .5, "part": ""}])
+    check(msh[1]["transition_in"] == "cut", "montage beats hard-cut")
     print("\n%d failure(s)" % len(fails))
     sys.exit(1 if fails else 0)
 
