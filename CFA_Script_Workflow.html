@@ -3901,8 +3901,8 @@ async function revoiceFlagged(idxArg){
 // Accepted suggestions come back as the feedback memory and are injected into the
 // script, director and image prompts.
 const FB_STEPS=[['research','Research'],['script','Script'],['voices','Voices'],['registry','Character registry'],['shotlist','Shot list'],['stills','Stills'],['clips','Clips'],['lipsync','Lip-sync'],['music','Music'],['edit','Edit'],['final','Final review']];
-// Full narration has no lip sync: the box offers a Narration step (Bill quoting characters) instead, and Voices is Bill's voice.
-function fbSteps(){ if(!(typeof fullNarr==='function'&&fullNarr())) return FB_STEPS;
+// Full narration (and narration-only) has no lip sync: the box offers a Narration step (Bill quoting characters) instead, and Voices is Bill's voice.
+function fbSteps(){ if(typeof talkOn!=='function'||talkOn()) return FB_STEPS; // no lip-sync step when nobody lip-syncs (full narration / narration-only)
   return FB_STEPS.map(([v,t])=>v==='lipsync'?['narration','Narration (Bill quoting characters)']:v==='voices'?['voices','Narrator voice (Bill)']:[v,t]); }
 function fbStepLabel(v){ return ((fbSteps().find(x=>x[0]===v)||FB_STEPS.find(x=>x[0]===v)||(v==='narration'?[0,'Narration']:[0,v]))[1]); }
 const FB_ITEMS_KEY='cfa_fb_items_v1', FB_MEM_KEY='cfa_fb_memory_v1', FB_NOTES_KEY='cfa_fb_notes_v1';
@@ -3967,7 +3967,7 @@ function fbEsc(t){ return escHtml(String(t==null?'':t)); }
 function fbRenderList(){
   const el=document.getElementById('fb-list'); const items=fbItems().slice().reverse();
   const label={submitted:'Submitted',in_progress:'In progress',ready:'Ready',declined:'Declined'};
-  el.innerHTML=items.length?items.map(it=>'<div class="fb-item"><span class="fb-st fb-st-'+fbEsc(label[it.status]?it.status:'submitted')+'">'+fbEsc(label[it.status]||'Submitted')+'</span> <b>'+fbEscfbStepLabel(it.step)+'</b> · '+(it.kind==='tool'?'tool suggestion':'this episode')+(it.ref?' · '+fbEsc(it.ref):'')+'<div style="color:var(--muted);margin-top:2px">'+fbEsc(String(it.comment||'').slice(0,160))+'</div>'+(it.resolution?'<div style="margin-top:2px">&#x2192; '+fbEsc(it.resolution)+'</div>':'')+'</div>').join(''):'<div style="color:var(--muted);font-size:12px;margin-top:4px">Nothing yet.</div>';
+  el.innerHTML=items.length?items.map(it=>'<div class="fb-item"><span class="fb-st fb-st-'+fbEsc(label[it.status]?it.status:'submitted')+'">'+fbEsc(label[it.status]||'Submitted')+'</span> <b>'+fbEsc(fbStepLabel(it.step))+'</b> · '+(it.kind==='tool'?'tool suggestion':'this episode')+(it.ref?' · '+fbEsc(it.ref):'')+'<div style="color:var(--muted);margin-top:2px">'+fbEsc(String(it.comment||'').slice(0,160))+'</div>'+(it.resolution?'<div style="margin-top:2px">&#x2192; '+fbEsc(it.resolution)+'</div>':'')+'</div>').join(''):'<div style="color:var(--muted);font-size:12px;margin-top:4px">Nothing yet.</div>';
 }
 function fbUnseenReady(){ return fbItems().filter(i=>i.status==='ready'&&!i.seen); }
 function fbBadge(){ const n=fbUnseenReady().length, b=document.getElementById('fb-badge'); if(!b) return; b.textContent=n+' ready'; b.style.display=n?'inline-block':'none'; }
