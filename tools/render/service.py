@@ -170,7 +170,7 @@ def load_jobs():
         q.put(j["id"])
 
 
-FB_STEPS = ("research", "script", "voices", "registry", "shotlist", "stills", "clips", "lipsync", "music", "edit", "final")
+FB_STEPS = ("research", "script", "voices", "registry", "shotlist", "stills", "clips", "lipsync", "narration", "music", "edit", "final")
 FB_STATUS = ("submitted", "in_progress", "ready", "declined", "reverted")
 fb_lock = threading.Lock()
 

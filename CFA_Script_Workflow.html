@@ -2510,6 +2510,7 @@ function smSaveModels(){
 function smSaveOpenAI(){ saveSessionKey('cfa_openai_key','sm-oai-key','sm-oai-ok'); }
 function smSaveRender(){
   const u=document.getElementById('sm-render-url'); u.value=u.value.trim().replace(/\/+$/,'');
+  if(renderUrlBlocked(u.value)){ alert(RENDER_URL_BLOCKED_MSG); u.focus(); return; }
   saveSessionKey('cfa_render_url','sm-render-url','sm-render-ok'); saveSessionKey('cfa_render_token','sm-render-token','sm-render-ok');
   const d=document.getElementById('sm-ks-render'); if(d) d.className='ks-dot '+(renderServiceReady()?'ok':'miss');
 }
@@ -3526,7 +3527,7 @@ const FULL_MOSTLY="- FULL NARRATION (Resilia style): Bill (NARRATOR) tells the w
 const FULL_COLD="- Cold open (in media res): the FIRST line is a CHARACTER line at the peak of the conflict, at most 14 words; the SECOND line is NARRATOR stepping back (\"Three days earlier, ...\" or \"It had started that morning.\") and the story builds back up to that moment, which is replayed near the turn.";
 const HYBRID_COLD="- Cold open: the FIRST line is Bill's narrated cold open (one NARRATOR line, 40-70 words, concrete loss with a number or named object). The first character line follows it and drops straight into the conflict.";
 function dialogueRules(){ const m=narrMode(), h=m==='hybrid'; if(m==='full') return DIALOGUE_RULES_BASE.replace('@@MOSTLY@@',FULL_MOSTLY).replace('@@COLD@@',FULL_COLD).replace('Natural exchanges: most character lines','Natural exchanges (quoted by Bill): most character lines').replace('the same character never speaks more than 2 lines in a row','the same character never has more than 2 quoted lines in a row'); return DIALOGUE_RULES_BASE.replace('@@MOSTLY@@', h?HYBRID_MOSTLY:"- Mostly dialogue: at least 75% of the spoken words are character lines. NARRATOR (Bill) is sparse: a short time/place line, a bridge between scenes, at most one closing line. Never more than 2 NARRATOR lines in a row.").replace('@@COLD@@', h?HYBRID_COLD:"- Cold open (Resilia style): the FIRST line drops us into a conflict already happening, at most 12 words. No greeting, no setup, no lesson."); }
-function fmtSys(sys){ return (dialogueOn()? sys+'\n\n'+dialogueRules() : sys)+fbBlock(['research','script','voices']); }
+function fmtSys(sys){ return (dialogueOn()? sys+'\n\n'+dialogueRules() : sys)+fbBlock(['research','script','voices','narration']); }
 function parseDialogue(text){
   return String(text||'').split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
     const t=splitTag(l); const any=l.match(ANY_TAG_RE);
@@ -3901,6 +3902,10 @@ async function revoiceFlagged(idxArg){
 // Accepted suggestions come back as the feedback memory and are injected into the
 // script, director and image prompts.
 const FB_STEPS=[['research','Research'],['script','Script'],['voices','Voices'],['registry','Character registry'],['shotlist','Shot list'],['stills','Stills'],['clips','Clips'],['lipsync','Lip-sync'],['music','Music'],['edit','Edit'],['final','Final review']];
+// Full narration (and narration-only) has no lip sync: the box offers a Narration step (Bill quoting characters) instead, and Voices is Bill's voice.
+function fbSteps(){ if(typeof talkOn!=='function'||talkOn()) return FB_STEPS; // no lip-sync step when nobody lip-syncs (full narration / narration-only)
+  return FB_STEPS.map(([v,t])=>v==='lipsync'?['narration','Narration (Bill quoting characters)']:v==='voices'?['voices','Narrator voice (Bill)']:[v,t]); }
+function fbStepLabel(v){ return ((fbSteps().find(x=>x[0]===v)||FB_STEPS.find(x=>x[0]===v)||(v==='narration'?[0,'Narration']:[0,v]))[1]); }
 const FB_ITEMS_KEY='cfa_fb_items_v1', FB_MEM_KEY='cfa_fb_memory_v1', FB_NOTES_KEY='cfa_fb_notes_v1';
 const FB_THANKS="Thanks Chris, your feedback was received. Changes may take up to 24 hours. You'll see a Changes ready notice here when they're live.";
 let fbRating=0, fbPollTimer=null, fbSince=0;
@@ -3952,7 +3957,8 @@ function fbToggle(show){
   p.style.display=on?'block':'none';
   if(!on) return;
   const st=document.getElementById('fb-step');
-  if(!st.options.length) FB_STEPS.forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; st.appendChild(o); });
+  const want=fbSteps().map(x=>x[0]).join(); if(st.dataset.steps!==want){ st.innerHTML=''; st.dataset.steps=want; }
+  if(!st.options.length) fbSteps().forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; st.appendChild(o); });
   st.value=fbCurrentStep(); fbRefOptions(); fbStars();
   document.getElementById('fb-name').value=safeGetItem('cfa_fb_name')||'Chris';
   document.getElementById('fb-thanks').style.display='none';
@@ -3962,7 +3968,7 @@ function fbEsc(t){ return escHtml(String(t==null?'':t)); }
 function fbRenderList(){
   const el=document.getElementById('fb-list'); const items=fbItems().slice().reverse();
   const label={submitted:'Submitted',in_progress:'In progress',ready:'Ready',declined:'Declined'};
-  el.innerHTML=items.length?items.map(it=>'<div class="fb-item"><span class="fb-st fb-st-'+fbEsc(label[it.status]?it.status:'submitted')+'">'+fbEsc(label[it.status]||'Submitted')+'</span> <b>'+fbEsc((FB_STEPS.find(x=>x[0]===it.step)||[0,it.step])[1])+'</b> · '+(it.kind==='tool'?'tool suggestion':'this episode')+(it.ref?' · '+fbEsc(it.ref):'')+'<div style="color:var(--muted);margin-top:2px">'+fbEsc(String(it.comment||'').slice(0,160))+'</div>'+(it.resolution?'<div style="margin-top:2px">&#x2192; '+fbEsc(it.resolution)+'</div>':'')+'</div>').join(''):'<div style="color:var(--muted);font-size:12px;margin-top:4px">Nothing yet.</div>';
+  el.innerHTML=items.length?items.map(it=>'<div class="fb-item"><span class="fb-st fb-st-'+fbEsc(label[it.status]?it.status:'submitted')+'">'+fbEsc(label[it.status]||'Submitted')+'</span> <b>'+fbEsc(fbStepLabel(it.step))+'</b> · '+(it.kind==='tool'?'tool suggestion':'this episode')+(it.ref?' · '+fbEsc(it.ref):'')+'<div style="color:var(--muted);margin-top:2px">'+fbEsc(String(it.comment||'').slice(0,160))+'</div>'+(it.resolution?'<div style="margin-top:2px">&#x2192; '+fbEsc(it.resolution)+'</div>':'')+'</div>').join(''):'<div style="color:var(--muted);font-size:12px;margin-top:4px">Nothing yet.</div>';
 }
 function fbUnseenReady(){ return fbItems().filter(i=>i.status==='ready'&&!i.seen); }
 function fbBadge(){ const n=fbUnseenReady().length, b=document.getElementById('fb-badge'); if(!b) return; b.textContent=n+' ready'; b.style.display=n?'inline-block':'none'; }
@@ -3970,7 +3976,7 @@ function fbSeen(){ const a=fbItems(); a.forEach(i=>{ if(i.status==='ready') i.se
 function fbHideBanner(){ document.getElementById('fb-banner').style.display='none'; }
 function fbNotify(items){
   if(!items.length) return;
-  const txt=items.length===1?('your '+((FB_STEPS.find(x=>x[0]===items[0].step)||[0,items[0].step])[1])+' feedback is live.'):(items.length+' feedback items are live.');
+  const txt=items.length===1?('your '+fbStepLabel(items[0].step)+' feedback is live.'):(items.length+' feedback items are live.');
   document.getElementById('fb-banner-text').textContent=txt; document.getElementById('fb-banner').style.display='block';
   try{ if(window.Notification&&Notification.permission==='granted') new Notification('CFA: Changes ready',{body:txt[0].toUpperCase()+txt.slice(1)}); }catch(e){}
   fbBadge();
@@ -3988,7 +3994,7 @@ function fbMerge(serverItems){
   fbSetItems(a); return fresh;
 }
 async function fbPoll(){
-  if(!renderServiceReady()) { const e=document.getElementById('fb-sync'); if(e) e.textContent='(connect the render service in Settings to sync)'; return; }
+  if(!renderServiceReady()) { const e=document.getElementById('fb-sync'); if(e) e.textContent=renderUrlBlocked(sessionStorage.getItem('cfa_render_url'))?'(render URL is 127.0.0.1/localhost, which the browser blocks here: use the public tunnel URL in Settings)':'(connect the render service in Settings to sync)'; return; }
   try{
     const r=await renderFetch('/feedback?since='+encodeURIComponent(fbSince));
     if(!r.ok) throw new Error('HTTP '+r.status);
@@ -4079,7 +4085,7 @@ function fbLiveStart(it){
   fbLive.waitRender=fbLive.kind==='render';
   if(fbLive.kind==='render') fbHoldURL=renderVideoURL; if(fbLive.kind==='audio') fbHoldURL=voAudioURL;
   const box=document.getElementById('fb-live'); if(!box) return; box.style.display='block';
-  document.getElementById('fb-live-title').textContent='Applying your note to '+((FB_STEPS.find(x=>x[0]===it.step)||[0,it.step])[1])+(it.ref?' · '+it.ref:'')+'…';
+  document.getElementById('fb-live-title').textContent='Applying your note to '+fbStepLabel(it.step)+(it.ref?' · '+it.ref:'')+'…';
   document.getElementById('fb-live-actions').style.display='none'; document.getElementById('fb-live-view').innerHTML='';
   fbLiveStage(fbLive.kind==='render'?'Starting a re-edit on the render service…':'Regenerating with your note…');
   clearInterval(fbLive.tick); fbLive.tick=setInterval(()=>{ const el=document.getElementById('fb-live-timer'); if(el&&fbLive) el.textContent=fmtClock(Math.round((Date.now()-fbLive.t0)/1000)); },1000);
@@ -5168,7 +5174,13 @@ async function buildFinalEditZip(say){
 // ═══ GROK BOT RENDER SERVICE (send → timer → review) ═════════════════════════
 const RENDER_STAGES=['queued','planning edit','rendering','captions','mixing','encoding','done'];
 let renderJob=null, renderPoll=null, renderTick=null, renderT0=0, renderLast=null, renderVideoURL=null;
-function renderServiceReady(){ return !!(sessionStorage.getItem('cfa_render_url')&&sessionStorage.getItem('cfa_render_token')); }
+// Chrome (Private Network Access) blocks the public github.io page from calling loopback/LAN addresses,
+// so the live tool must use the render service's public tunnel URL (https://….ngrok-free.dev), not 127.0.0.1.
+function renderUrlBlocked(u, pageHost){ try{ const h=new URL(String(u||'').trim()).hostname.replace(/^\[|\]$/g,''), ph=pageHost==null?location.hostname:pageHost;
+  const local=x=>/^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|::1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/i.test(x)||/\.local$/i.test(x);
+  return local(h) && !(local(ph)||ph===''||(pageHost==null&&location.protocol==='file:')); }catch(e){ return false; } }
+const RENDER_URL_BLOCKED_MSG='That render URL is a local address (127.0.0.1 / localhost), which Chrome blocks from the live tool. Use the render service\u2019s public tunnel URL (https://\u2026.ngrok-free.dev) instead.';
+function renderServiceReady(){ const u=sessionStorage.getItem('cfa_render_url'); return !!(u&&sessionStorage.getItem('cfa_render_token')&&!renderUrlBlocked(u)); }
 function renderBase(){ return String(sessionStorage.getItem('cfa_render_url')||'').trim().replace(/\/+$/,''); }
 async function renderFetch(path, opts){
   opts=opts||{}; opts.headers=Object.assign({'Authorization':'Bearer '+sessionStorage.getItem('cfa_render_token'),'ngrok-skip-browser-warning':'1'}, opts.headers||{});
@@ -5211,6 +5223,7 @@ function clipBeatsHoldingStills(){
 async function sendToGrokRender(){
   const st=document.getElementById('fe-status');
   const say=m=>{ if(st){ st.style.display=m?'':'none'; st.textContent=m; } };
+  if(renderUrlBlocked(sessionStorage.getItem('cfa_render_url'))){ say(RENDER_URL_BLOCKED_MSG); openSettings(); return; }
   if(!renderServiceReady()){ say('Add the Grok Bot render service URL and access token in ⚙ Settings first (or use 🎬 Export for final edit and send the .zip in chat).'); openSettings(); return; }
   const btn=document.getElementById('btn-send-grok'), up=document.getElementById('rs-upload'), bar=document.getElementById('rs-upload-bar'), txt=document.getElementById('rs-upload-txt');
   const missing=sceneData.map((x,i)=>x.resultURL?0:i+1).filter(Boolean);
@@ -5657,7 +5670,7 @@ let sceneLook=null;
 async function directorPass(data){
   const beats=data.map((x,i)=>'['+(i+1)+'] '+x.tag+' | on screen: '+(x.characters||'NONE')+(castInScene(x).length?', '+castInScene(x).join(', '):'')+' | '+String(x.line).replace(/^\s*\d+\.\s*/,''));
   const user=(V[selId]?'EPISODE: '+V[selId].title+'\n':'')+'BEATS:\n'+beats.join('\n');
-  const r=await llmComplete({role:'fast', system:SYS_DIRECTOR+DIRECTOR_RESILIA+(fullNarr()?DIRECTOR_FULL:'')+fbBlock(['registry','shotlist','clips','lipsync','edit']), user, maxTokens:Math.min(16000,900+data.length*260), effort:'low'});
+  const r=await llmComplete({role:'fast', system:SYS_DIRECTOR+DIRECTOR_RESILIA+(fullNarr()?DIRECTOR_FULL:'')+fbBlock(['registry','shotlist','clips','lipsync','narration','edit']), user, maxTokens:Math.min(16000,900+data.length*260), effort:'low'});
   const j=parseDirector(r.text); if(!j) throw new Error('director returned no shot list');
   if(sceneData!==data) return 0;
   sceneLook=j.look||null;
