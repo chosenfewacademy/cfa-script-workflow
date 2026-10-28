@@ -35,7 +35,11 @@ def log(*a):
     print("[render]", *a, flush=True)
 
 
+RUN_TIMEOUT = int(os.environ.get("CFA_FFMPEG_TIMEOUT", "1800"))
+
+
 def run(cmd, **kw):
+    kw.setdefault("timeout", RUN_TIMEOUT)
     r = subprocess.run(cmd, capture_output=True, text=True, **kw)
     if r.returncode:
         sys.stderr.write(r.stderr[-4000:])
@@ -964,7 +968,7 @@ def build_sfx_track(events, total, work, ambience=None):
         fc.append("[%d:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=0:%.3f,afade=t=in:d=%.3f,afade=t=out:st=%.3f:d=%.3f,adelay=%d|%d,volume=%.2f[s%d]"
                   % (k, dur, fd, max(0, dur - fd), fd, ms, ms, gain, k))
     events = list(events) + list(ambience)
-    fc.append("%samix=inputs=%d:normalize=0:duration=longest,apad,atrim=0:%.3f[o]" % ("".join("[s%d]" % k for k in range(len(events))), len(events), total))
+    fc.append("%samix=inputs=%d:normalize=0:duration=longest,apad=whole_dur=%.3f,atrim=0:%.3f[o]" % ("".join("[s%d]" % k for k in range(len(events))), len(events), total, total))
     out = os.path.join(work, "sfx.wav")
     run(["ffmpeg", "-y", "-v", "error"] + ins + ["-filter_complex", ";".join(fc), "-map", "[o]", "-ar", "48000", "-ac", "2", out])
     return out
@@ -1298,7 +1302,7 @@ def build_audio(voice, music, total, out, work, sfx=None, turn=None):
     """Voice + music bed (builds to the turn, ducked under the voice) + sparse SFX; 2-pass loudnorm to -14 LUFS / -1 dBTP."""
     mix = os.path.join(work, "mix.wav")
     ins = ["-i", voice]
-    fc = ["[0:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=0:%.3f,asplit=2[v][sc]" % total]
+    fc = ["[0:a]aformat=sample_rates=48000:channel_layouts=stereo,apad=whole_dur=%.3f,atrim=0:%.3f,asplit=2[v][sc]" % (total, total)]
     parts = ["[v]"]
     if music:
         ins += ["-stream_loop", "-1", "-i", music]
