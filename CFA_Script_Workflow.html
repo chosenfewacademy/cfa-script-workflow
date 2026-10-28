@@ -3648,7 +3648,22 @@ const DLG_GAP_SAME=0.6, DLG_GAP_CHANGE=0.7;   // natural pauses between lines (s
 const TALK_MODEL='fal-ai/kling-video/ai-avatar/v2/standard', TALK_COST_PER_S=0.0562;
 const TALK_PROMPT='Natural conversational talking, subtle head movement and blinking, keeps the exact same character look and art style, no text.';
 let voLines=[]; // [{speaker, voiceId, text, start (line audio start), end (last word), dur, blob}]
+// Pronunciation alias pass (Oct 28 audit): applied to the text sent to TTS only (script and captions keep the original).
+const SPEECH_ALIASES=[
+  [/\$\s?(\d[\d,]*)\.(\d\d)\b/g,(m,a,c)=>a+' dollars and '+(+c)+' cents'],
+  [/\$\s?(\d[\d,]*)\s*(k|K)\b/g,(m,a)=>a+' thousand dollars'],
+  [/\$\s?(\d[\d,]*)\b/g,(m,a)=>a+' dollars'],
+  [/\b(\d{1,2}):00\s*([ap])\.?m\b(\.(?=\s|$))?/gi,(m,h,ap,d)=>h+' '+(ap.toLowerCase()==='a'?'in the morning':'in the afternoon')+(d||'')],
+  [/\b(\d{1,2}):(\d{2})\s*([ap])\.?m\b(\.(?=\s|$))?/gi,(m,h,mm,ap,d)=>h+' '+mm+' '+(ap.toLowerCase()==='a'?'in the morning':'in the afternoon')+(d||'')],
+  [/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)-(fifteen|thirty|forty-five|fifty|twenty|ten|forty)\b/gi,(m,a,b)=>a+' '+b],
+  [/\bBIP-?39\b/gi,()=>'B I P thirty-nine'],
+  [/\b2FA\b/g,()=>'two factor'],
+  [/\s&\s/g,()=>' and '],
+  [/\b(tear|tears)\s+(it|that|this|the|out|up|off|down)\b/gi,(m,w,b)=>{ const r=w.toLowerCase()==='tears'?'rips':'rip'; return (w[0]==='T'?'R'+r.slice(1):r)+' '+b; }],
+];
+function speechAlias(text){ let t=String(text||''); for(const [re,fn] of SPEECH_ALIASES) t=t.replace(re,fn); return t; }
 async function ttsLine(elKey, spk, text, settings){
+  text=speechAlias(text);
   const v=lockedVoice(fullNarr()?'NARRATOR':spk);
   let last='';
   for(let a=0;a<3;a++){
