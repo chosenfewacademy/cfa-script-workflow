@@ -33,6 +33,10 @@ GRADES = {"cool_low": "eq=brightness=-0.03:saturation=0.82:gamma=0.97,colorbalan
 ROLE_GRADE = {"montage": "sterile", "hook": "cool_low", "tension": "sterile", "turn": "golden", "realization": "golden", "resolve": "golden"}
 DRIFT_MAX = 4.2         # stills longer than this are split into 3-4 s parts with constant slow drift
 PUNCH_ZOOM = 1.28      # punch-in framing (second half of a split still)
+TENSE_MAX = 2.6         # tense beats (hook, turn, montage, crisis words, or the tool marks pace=tense): ~2 s cuts
+TENSE_TARGET = 2.0
+CALM_TARGET = 3.6       # calm beats: 3-4 s parts
+TENSE_WORDS = re.compile(r"\b(gone|now|seconds?|locked|lost|deadline|frozen|failed|wrong|empty|zero|panic|too late|missing|stolen|drained|declined|ran out|run out|hurry|no time)\b", re.I)
 SPLIT_OVER = 4.2       # a still held longer than this (outside the realization) is split wide -> punch-in
 TP_RE = re.compile(r"\b(that'?s why|which is why|so that|the point|realiz\w*|not a price|instead|because|the answer|it meant|that was it|finally|suddenly|clicked|understood|that's the)\b", re.I)
 FONT = "Montserrat"
@@ -673,17 +677,32 @@ def split_punch_ins(shots, words):
     return out
 
 
-def split_drift(shots, words, max_len=DRIFT_MAX):
-    """Resilia pacing: split long stills into ~3-4 s parts at word gaps; each part keeps a constant slow
-    drift and alternates framing (wide drift -> off-centre punch-in left/right). Video/lip-sync untouched."""
+def is_tense(sh, segs=None):
+    """Tense beat: hook/turn role, crisis words in the line, or a beat the tool's director marked pace=tense."""
+    if sh.get("role") in ("hook", "turn", "montage"):
+        return True
+    if TENSE_WORDS.search(str(sh.get("text", ""))):
+        return True
+    for sg in segs or []:
+        if sg.get("pace") == "tense" and sg.get("start") is not None and sh["start"] - 0.3 <= sg["start"] < sh["end"]:
+            return True
+    return False
+
+
+def split_drift(shots, words, max_len=DRIFT_MAX, segs=None):
+    """Resilia pacing: split long stills at word gaps into ~2 s parts on tense beats and ~3-4 s parts on calm
+    beats; each part keeps a constant slow drift and alternates framing (wide drift -> off-centre punch-in
+    left/right). Video/lip-sync untouched."""
     out = []
     drifts = ["pan_right", "zoom_in", "pan_left", "zoom_out"]
     for sh in shots:
         dur = sh["end"] - sh["start"]
-        if sh.get("mediaType") in ("video", "lipsync") or dur <= max_len:
-            out.append(sh)
+        tense = is_tense(sh, segs)
+        lim, target = (TENSE_MAX, TENSE_TARGET) if tense else (max_len, CALM_TARGET)
+        if sh.get("mediaType") in ("video", "lipsync") or dur <= lim:
+            out.append(dict(sh, pace="tense" if tense else "calm"))
             continue
-        n = max(2, int(math.ceil(dur / 3.6)))
+        n = max(2, int(math.ceil(dur / target)))
         gaps = [float(w[1]) for w in words if sh["start"] + 1.2 <= float(w[1]) <= sh["end"] - 1.2]
         cuts = []
         for k in range(1, n):
@@ -694,7 +713,8 @@ def split_drift(shots, words, max_len=DRIFT_MAX):
         edges = [sh["start"]] + cuts + [sh["end"]]
         base_part = sh.get("part", "")
         for k in range(len(edges) - 1):
-            p = dict(sh, start=round(edges[k], 3), end=round(edges[k + 1], 3), duration=round(edges[k + 1] - edges[k], 3))
+            p = dict(sh, start=round(edges[k], 3), end=round(edges[k + 1], 3), duration=round(edges[k + 1] - edges[k], 3),
+                     pace="tense" if tense else "calm")
             if k:
                 p.update(part="b", transition_in="cut", transition_duration=0.0, intensity=0.035)
                 if k % 2:
@@ -1725,7 +1745,7 @@ def main():
         edl["end_card"]["enabled"] = False
     edl["shots"] = split_punch_ins(edl["shots"], words)
     if not a.no_drift_split:
-        edl["shots"] = split_drift(edl["shots"], words)
+        edl["shots"] = split_drift(edl["shots"], words, segs=segs)
     by_media = {s.get("media"): s for s in segs if s.get("mediaType") == "lipsync" and s.get("media")}
     for x in edl["shots"]:
         if x.get("mediaType") == "lipsync" and x.get("media") in by_media:
