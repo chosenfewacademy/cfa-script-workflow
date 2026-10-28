@@ -953,7 +953,7 @@ async def main():
             ctx,pg,errs=await newpage(b,pre="localStorage.setItem('cfa_format','dialogue');")
             fn=await J(pg,"""()=>{const S='JORDAN: It is gone. All of it.\\nNARRATOR: Four thousand dollars, and the landlord wanted it by noon.\\nMARCUS: Sure of what?\\nNARRATOR: Jordan held up the phone.\\nNARRATOR: Day one, nothing.\\nNARRATOR: Day two, still nothing.\\nJORDAN: Found it.';
               return {def:narrMode(), full:fullNarr(), talk:talkOn(), rules:/FULL NARRATION/.test(dialogueRules())&&/in medias res/.test(dialogueRules()),
-                st:{rules:/STORY STRUCTURE/.test(dialogueRules())&&/Escalate/.test(dialogueRules())&&/discovered at the climax/.test(dialogueRules())&&!dialogueRules().includes('Three days earlier, ...'),
+                st:{rules:/STORY STRUCTURE/.test(dialogueRules())&&/Escalate/.test(dialogueRules())&&/arrives at the LOW POINT as the fix/.test(dialogueRules())&&!dialogueRules().includes('Three days earlier, ...'),
                   fb:['NARRATOR: Three hours earlier, Jordan had been fine.','NARRATOR: Two days before, nobody cared.','NARRATOR: It had started that morning.','NARRATOR: Let me take you back.'].map(l=>structureLint(parseDialogue('JORDAN: It is gone.\\n'+l)).some(x=>/Flashback/.test(x))),
                   ok:structureLint(parseDialogue('JORDAN: It is gone.\\nNARRATOR: Four thousand dollars, due by noon.\\nMARCUS: Who has the key?\\nJORDAN: Nobody.\\nNARRATOR: He tried the bank.\\nJORDAN: Closed.')),
                   nostake:structureLint(parseDialogue('JORDAN: Oh no.\\nNARRATOR: Jordan froze.\\nMARCUS: What?\\nJORDAN: Look.\\nNARRATOR: He pointed.\\nMARCUS: Hm.')).some(x=>/stakes/.test(x)),
@@ -964,12 +964,16 @@ async def main():
                 four:dialogueLint('JORDAN: a\\nNARRATOR: b\\nJORDAN: c\\nMARCUS: d\\nJORDAN: e\\nMARCUS: f').some(x=>/Four character lines/.test(x)),
                 noMont:dialogueLint('JORDAN: a\\nNARRATOR: b\\nMARCUS: c').some(x=>/milestone montage/.test(x)),
                 fp:dialogueLint('JORDAN: a\\nNARRATOR: I saw it.\\nMARCUS: c').some(x=>/first person/.test(x)),
-                nr:{rules:/never describes what is on screen/.test(dialogueRules())&&/10 words or fewer/.test(dialogueRules())&&/kind":"fact\|logic\|narrator\|narration/.test(SYS_ACCURACY),
+                nr:{rules:/never describes what is on screen/.test(dialogueRules())&&/heard cold/.test(dialogueRules())&&/QUOTE-THEN-DECODE/.test(dialogueRules())&&/12-16 words/.test(dialogueRules())&&/BUT.THEREFORE/.test(dialogueRules())&&/Subplots must connect/.test(dialogueRules())&&/LOW POINT/.test(dialogueRules())&&/1-3 practical takeaways/.test(dialogueRules())&&!/10 words or fewer/.test(dialogueRules())&&!/by line 4/.test(dialogueRules())&&/safety/.test(SYS_ACCURACY)&&/kind":"fact\|logic\|narrator\|narration/.test(SYS_ACCURACY),
                   acc:(parseAccuracy('{"issues":[{"kind":"narration","line":"x","problem":"describes screen","fix":"y"}]}')||[]).length,
                   vis:narrationLint(parseDialogue('JORDAN: Gone.\\nNARRATOR: Jordan looked at his phone.\\nMARCUS: Hm.\\nNARRATOR: He sat down slowly.\\nJORDAN: No.')).some(x=>/on screen/.test(x)),
                   sub:narrationLint(parseDialogue('JORDAN: Gone.\\nNARRATOR: He had never written the words down.\\nMARCUS: Hm.\\nNARRATOR: Four hundred dollars, and no backup.\\nJORDAN: No.')),
-                  long:narrationLint(parseDialogue('JORDAN: It is gone.\\nNARRATOR: The wallet was empty now and there was no way at all to get any of it back.\\nMARCUS: Hm.')).some(x=>/over 10 words/.test(x)),
-                  calm:narrationLint(parseDialogue('JORDAN: a\\nMARCUS: b\\nJORDAN: c\\nMARCUS: d\\nNARRATOR: The shop smelled of oil and old tyres, the way it had for twenty years.\\nJORDAN: e')).some(x=>/over 10 words/.test(x)),
+                  bare:clarityLint(parseDialogue('DEE: Your fifty is stuck.\\nJORDAN: Four-fifty, she said.')).some(x=>/bare number/.test(x)),
+                  unit:clarityLint(parseDialogue('DEE: Your fifty dollars is stuck.\\nNARRATOR: Twelve words, due at five in the afternoon.')),
+                  jargon:clarityLint(parseDialogue('MARCUS: It is non-custodial.')).some(x=>/Jargon/.test(x)),
+                  shortavg:clarityLint(parseDialogue(Array(10).fill('NARRATOR: Gone. Lost.').join('\\n'))).some(x=>/words per sentence/.test(x)),
+                  unsafe:safetyLint(parseDialogue('MARCUS: Type the seed phrase into the app to test it.\\nNARRATOR: He never typed the twelve words into any phone.')),
+                  wired:dialogueLint('JORDAN: a\\nNARRATOR: b\\nMARCUS: Paste your seed phrase into the support chat.').some(x=>/UNSAFE/.test(x)),
                   vague:narrationLint(parseDialogue('JORDAN: a\\nNARRATOR: He could lose everything.')).some(x=>/Vague stakes/.test(x))},
                 opt:[...document.querySelectorAll('#sm-narr option')].map(o=>o.value)}}""")
             check('full narration: default mode, lip sync off, rules in prompt', fn['def']=='full' and fn['full'] and not fn['talk'] and fn['rules'], fn)
@@ -980,9 +984,10 @@ async def main():
             check('structure: missing stakes and up-front lesson explainer flagged', st['nostake'] and st['upfront'], st)
             check('structure: a time phrase after the opening lines is not flagged', st['laterOk'], st)
             nr=fn['nr']
-            check('narration: rules (no screen description, <=10 words when tense, concrete stakes) in prompt and accuracy audit', nr['rules'] and nr['acc']==1, nr)
+            check('clarity rules (heard cold, quote-then-decode, 12-16 words, but/therefore, subplots connect, lesson at low point, takeaways, safety) replace <=10 words / line-4 rules', nr['rules'] and nr['acc']==1, nr)
             check('narration: Bill describing the picture is flagged; subtext/stakes lines pass', nr['vis'] and nr['sub']==[], nr)
-            check('narration: >10-word narrator line at a tense beat flagged, long calm line allowed', nr['long'] and not nr['calm'], nr)
+            check('clarity lint: bare numbers/jargon/fragment-only narration flagged, unit+owner lines pass', nr['bare'] and nr['jargon'] and nr['shortavg'] and nr['unit']==[], nr)
+            check('safety lint: seed phrase typed into app flagged, "never typed" passes, wired into dialogueLint', len(nr['unsafe'])==1 and nr['wired'], nr)
             check('narration: vague stakes ("lose everything") flagged', nr['vague'], nr)
             check('full narration: lint accepts in-media-res cold open + montage', fn['lint']==[], fn['lint'])
             check('full narration: lint flags narrator cold open, 4 unattributed lines, no montage, narrator first person', fn['badCold'] and fn['four'] and fn['noMont'] and fn['fp'], fn)
