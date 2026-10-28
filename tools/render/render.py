@@ -1270,6 +1270,45 @@ def clamp_music_chunks(chunks, lo=MUSIC_CHUNK_MS[0], hi=MUSIC_CHUNK_MS[1]):
     return out
 
 
+MUSIC_USD_PER_MIN = 0.65      # billed: fal elevenlabs/music/v2 ~$4.2 for 6.7 min (Oct 28), rounded up; EL direct similar
+MUSIC_CAP_DEFAULT = 1.00      # USD per job unless --music-cap; full episodes fall back to cache/library above this
+MUSIC_CACHE = os.environ.get("CFA_MUSIC_CACHE") or os.path.expanduser("~/cfa-render-data/music_cache")
+
+
+def music_cost(total):
+    """Billed-cost estimate (USD) of composing a `total`-second score (plan adds ~1.5 s)."""
+    return round((total + 2.0) / 60.0 * MUSIC_USD_PER_MIN, 3)
+
+
+def music_cache_key(b, style):
+    """One score per episode + style: reruns, re-edits and test clips reuse it (the bed loops / trims to length)."""
+    ep = str(b.get("videoId") or b.get("episode") or b.get("title") or "untitled")
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", "%s__%s" % (ep, style))[:120]
+
+
+def music_cache_get(key, cache=None):
+    p = os.path.join(cache or MUSIC_CACHE, key + ".mp3")
+    return p if os.path.exists(p) and os.path.getsize(p) > 10000 else None
+
+
+def music_cache_put(key, path, cache=None):
+    c = cache or MUSIC_CACHE
+    os.makedirs(c, exist_ok=True)
+    dst = os.path.join(c, key + ".mp3")
+    shutil.copy(path, dst)
+    return dst
+
+
+def music_guard(total, cap, spent=0.0):
+    """(allowed, est_usd, reason). Paid composing only if est + already-spent <= cap."""
+    est = music_cost(total)
+    if cap is None or cap <= 0:
+        return False, est, "music cap is $0 (cache/library only)"
+    if spent + est > cap + 1e-9:
+        return False, est, "est $%.2f + spent $%.2f > cap $%.2f" % (est, spent, cap)
+    return True, est, "ok"
+
+
 def compose_music(total, arc, style, key, work):
     """ElevenLabs Music (music_v2_5) score for this episode. Returns (path, plan) or (None, error)."""
     import requests
@@ -1682,6 +1721,8 @@ def main():
     ap.add_argument("--grok-title", action="store_true", help="let Grok write the title/thumbnail text (default: bundle title only)")
     ap.add_argument("--notes", default="", help="re-edit notes passed to Grok's edit plan")
     ap.add_argument("--no-sfx", action="store_true", help="skip whooshes / riser / impact")
+    ap.add_argument("--music-cap", type=float, default=float(os.environ.get("CFA_MUSIC_CAP", MUSIC_CAP_DEFAULT)),
+                    help="max billed USD for composing a score (0 = cache/library only); cached per episode+style")
     ap.add_argument("--foley", action="store_true", default=FOLEY_DEFAULT_ON, help="add sparse foley hits (typing, pencil, paper, door, tool) from the spoken lines; off by default")
     ap.add_argument("--no-ambience", action="store_true", help="skip per-scene ElevenLabs ambience from the director's sfx text")
     ap.add_argument("--no-end-card", action="store_true")
@@ -1843,24 +1884,41 @@ def main():
     if bmus and os.path.exists(os.path.join(d, bmus)):
         a.music, music_info = os.path.join(d, bmus), {"source": "bundle", "file": bmus}
     elif style != "none" and not a.no_score:
-        el = env_key("ELEVENLABS_API_KEY", a.keys_env)
-        if el:
-            log("stage: composing score (%s)" % style)
-            pth, plan = compose_music(total, edl["arc_times"], style, el, work)
+        ckey = music_cache_key(b, style)
+        cached = music_cache_get(ckey)
+        ok, est, why = music_guard(total, a.music_cap, getattr(a, "spent_usd", 0.0))
+        if cached:
+            a.music = cached
+            shutil.copy(cached, os.path.join(a.out, "score.mp3"))
+            music_info = {"source": "cache", "cache_key": ckey, "style": style, "billed_usd": 0.0}
+        elif not ok:
+            log("music guard: not composing (%s); using %s" % (why, "library track" if a.music else "no music bed"))
+            music_info = {"source": "library" if a.music else None, "guard": why, "est_usd": est, "billed_usd": 0.0}
+        else:
+            el = env_key("ELEVENLABS_API_KEY", a.keys_env)
+            fk = env_key("FAL_KEY", a.keys_env)
+            pth, plan, src, err1 = None, None, None, "no ELEVENLABS_API_KEY"
+            if el:
+                log("stage: composing score (%s, est $%.2f, cap $%.2f)" % (style, est, a.music_cap))
+                pth, plan = compose_music(total, edl["arc_times"], style, el, work)
+                src = "elevenlabs music_v2_5"
+                if not pth:
+                    err1, pth = plan, None
+            if not pth and fk:
+                pth, plan = compose_music_fal(total, edl["arc_times"], style, fk, work)
+                src = "fal elevenlabs/music/v2"
             if pth:
                 a.music = pth
                 shutil.copy(pth, os.path.join(a.out, "score.mp3"))
-                music_info = {"source": "elevenlabs music_v2_5", "style": style, "plan": [(c["text"], c["duration_ms"]) for c in plan]}
+                music_cache_put(ckey, pth)
+                a.spent_usd = getattr(a, "spent_usd", 0.0) + est
+                music_info = {"source": src, "style": style, "cache_key": ckey, "billed_usd": est, "cap_usd": a.music_cap,
+                              "plan": [(c["text"], c["duration_ms"]) for c in plan]}
+                if src.startswith("fal") and el:
+                    music_info["elevenlabs_direct_error"] = str(err1)[:120]
             else:
-                fk = env_key("FAL_KEY", a.keys_env)
-                p2, plan2 = compose_music_fal(total, edl["arc_times"], style, fk, work) if fk else (None, "no FAL_KEY")
-                if p2:
-                    a.music = p2
-                    shutil.copy(p2, os.path.join(a.out, "score.mp3"))
-                    music_info = {"source": "fal elevenlabs/music/v2", "style": style, "elevenlabs_direct_error": plan[:120],
-                                  "plan": [(c["text"], c["duration_ms"]) for c in plan2]}
-                else:
-                    music_info = {"source": "library" if a.music else None, "score_error": [plan[:160], plan2[:160]]}
+                music_info = {"source": "library" if a.music else None, "score_error": [str(err1)[:160], str(plan)[:160] if plan else "no FAL_KEY"],
+                              "billed_usd": 0.0}
     elif style == "none":
         a.music = None
     if a.music and not os.path.exists(a.music):
