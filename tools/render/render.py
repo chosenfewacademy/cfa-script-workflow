@@ -31,13 +31,13 @@ GRADES = {"cool_low": "eq=brightness=-0.03:saturation=0.82:gamma=0.97,colorbalan
           "sterile": "eq=saturation=0.72:contrast=1.04,colorbalance=bs=0.03:gs=0.02:rm=-0.02",
           "golden": "eq=saturation=1.08:brightness=0.02,colorbalance=rs=0.05:rm=0.06:bm=-0.05:bh=-0.03"}
 ROLE_GRADE = {"montage": "sterile", "hook": "cool_low", "tension": "sterile", "turn": "golden", "realization": "golden", "resolve": "golden"}
-DRIFT_MAX = 4.2         # stills longer than this are split into 3-4 s parts with constant slow drift
+DRIFT_MAX = 3.2         # stills longer than this are split into 3-4 s parts with constant slow drift
 PUNCH_ZOOM = 1.28      # punch-in framing (second half of a split still)
 TENSE_MAX = 2.6         # tense beats (hook, turn, montage, crisis words, or the tool marks pace=tense): ~2 s cuts
 TENSE_TARGET = 2.0
-CALM_TARGET = 3.6       # calm beats: 3-4 s parts
+CALM_TARGET = 2.6       # calm beats: 3-4 s parts
 TENSE_WORDS = re.compile(r"\b(gone|now|seconds?|locked|lost|deadline|frozen|failed|wrong|empty|zero|panic|too late|missing|stolen|drained|declined|ran out|run out|hurry|no time)\b", re.I)
-SPLIT_OVER = 4.2       # a still held longer than this (outside the realization) is split wide -> punch-in
+SPLIT_OVER = 3.2       # a still held longer than this (outside the realization) is split wide -> punch-in
 TP_RE = re.compile(r"\b(that'?s why|which is why|so that|the point|realiz\w*|not a price|instead|because|the answer|it meant|that was it|finally|suddenly|clicked|understood|that's the)\b", re.I)
 FONT = "Montserrat"
 
@@ -892,6 +892,97 @@ def fill_graph(box, W, H):
             "[b]scale=%d:%d:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1" % (w, h, x, y, W, H, W, H, W, H))
 
 
+# ── 2.5D depth parallax for stills (replaces the Ken Burns fallback; Oct 28 motion audit) ──
+STILL_MOTION = os.environ.get("CFA_STILL_MOTION", "parallax")   # "parallax" | "kenburns"
+DEPTH_PY = os.environ.get("CFA_DEPTH_PY") or next((p for p in ("/workspace/.venv_depth/bin/python",) if os.path.exists(p)), None)
+PARALLAX_PX_S = 48.0      # foreground lateral travel at 1280 px wide (px/s); background ~0
+PARALLAX_ZOOM_S = 0.05   # depth-scaled dolly per second
+PARALLAX_OVERSCAN = 1.12
+
+
+def depth_maps(pairs, work):
+    """[(src_png, dst_png)] -> {src: depth_png or None}. One model load for all stills; falls back to None ($0)."""
+    out = {s: None for s, _ in pairs}
+    todo = [(s, d) for s, d in pairs if not os.path.exists(d)]
+    if todo and DEPTH_PY:
+        helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "depth_maps.py")
+        try:
+            subprocess.run([DEPTH_PY, helper] + [x for p in todo for x in p], check=True, timeout=1800,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            log("depth maps unavailable (%s); parallax uses a synthetic depth" % str(e)[:80])
+    for s, d in pairs:
+        out[s] = d if os.path.exists(d) else None
+    return out
+
+
+def synthetic_depth(h, w):
+    """No depth model: lower frame and centre read as nearer (works for most character shots)."""
+    import numpy as np
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    v = yy / max(1, h - 1)
+    r = 1 - np.clip((((xx - w / 2) / (w / 2)) ** 2 + ((yy - h * 0.55) / (h / 2)) ** 2) ** 0.5, 0, 1)
+    return np.clip(0.55 * v + 0.45 * r, 0, 1)
+
+
+def parallax_frames(img, depth, W, H, frames, motion="zoom_in", focus=(0.5, 0.5), punch=1.0):
+    """Yield W x H BGR frames: depth-scaled dolly + lateral truck (near pixels move more). img/depth are overscanned."""
+    import numpy as np, cv2
+    h, w = img.shape[:2]
+    d = cv2.GaussianBlur(cv2.resize(depth.astype(np.float32), (w, h)), (0, 0), 6)
+    d = (d - d.min()) / (d.max() - d.min() + 1e-6)
+    dur = frames / float(FPS)
+    sc = W / 1280.0
+    lat = PARALLAX_PX_S * dur * sc * {"pan_left": -1.0, "pan_right": 1.0}.get(motion, 0.6 if focus[0] <= 0.5 else -0.6)
+    zr = PARALLAX_ZOOM_S * dur * (-1.0 if motion == "zoom_out" else 1.0)
+    vert = 0.25 * abs(lat) * (-1.0 if motion == "pan_up" else 1.0 if motion == "pan_down" else 0.0)
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    cx, cy = w * focus[0], h * focus[1]
+    ox, oy = min(max(cx - W / 2 / punch, 0), w - W / punch), min(max(cy - H / 2 / punch, 0), h - H / punch)
+    gx, gy = ox + xx / punch, oy + yy / punch          # output pixel -> overscanned source (static framing)
+    dd = cv2.remap(d, gx, gy, cv2.INTER_LINEAR)
+    pcx, pcy = ox + W / 2 / punch, oy + H / 2 / punch
+    for i in range(frames):
+        t = i / max(1, frames - 1)
+        t = t * t * (3 - 2 * t)
+        z = 1.0 + (zr * t if zr > 0 else -zr * (1 - t)) * (0.3 + 1.2 * dd)
+        sx, sy = (t - 0.5) * lat * dd, (t - 0.5) * vert * dd
+        mx = (gx - pcx) / z + pcx - sx
+        my = (gy - pcy) / z + pcy - sy
+        yield cv2.remap(img, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+
+
+def render_still_parallax(src, shot, W, H, out, frames, fit_vf, depth_png=None):
+    """Still -> overscanned graded base (ffmpeg, same crop/reframe/lift/grade as Ken Burns) -> parallax frames -> h264."""
+    import numpy as np, cv2
+    Wo, Ho = int(W * PARALLAX_OVERSCAN) // 2 * 2, int(H * PARALLAX_OVERSCAN) // 2 * 2
+    base = out + ".base.png"
+    run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vf", fit_vf(Wo, Ho) + grade_vf(shot), "-frames:v", "1", base])
+    img = cv2.imread(base)
+    dm = None
+    if depth_png and os.path.exists(depth_png):   # same crop/reframe as the picture
+        dbase = out + ".depth.png"
+        run(["ffmpeg", "-y", "-v", "error", "-i", depth_png, "-vf", fit_vf(Wo, Ho), "-frames:v", "1", dbase])
+        dm = cv2.imread(dbase, cv2.IMREAD_GRAYSCALE)
+        os.remove(dbase)
+    depth = dm.astype(np.float32) / 255.0 if dm is not None else synthetic_depth(Ho, Wo)
+    m = shot.get("motion") or "zoom_in"
+    punch = PUNCH_ZOOM if m == "punch_in" else 1.0
+    focus = FOCI.get(shot.get("focus"), (0.5, 0.5)) if m == "punch_in" else (0.5, 0.5)
+    p = subprocess.Popen(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", "%dx%d" % (W, H), "-r", str(FPS),
+                          "-i", "-", "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast", "-crf", "14",
+                          "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", out], stdin=subprocess.PIPE)
+    try:
+        for fr in parallax_frames(img, depth, W, H, frames, m, focus, punch):
+            p.stdin.write(np.ascontiguousarray(fr).tobytes())
+    finally:
+        p.stdin.close()
+        p.wait()
+    os.remove(base)
+    if p.returncode:
+        raise RuntimeError("parallax encode failed")
+
+
 def render_shot(src, kind, shot, W, H, out, frames):
     """Render one shot to an intermediate (video only) of exactly `frames` frames."""
     dur = frames / FPS
@@ -936,6 +1027,12 @@ def render_shot(src, kind, shot, W, H, out, frames):
               "tpad=stop_mode=clone:stop_duration=%.2f,setsar=1%s" % (speed, FPS, fit, dur + 1, push)) + grade_vf(shot)
         run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
         return
+    if STILL_MOTION == "parallax":
+        try:
+            render_still_parallax(src, shot, W, H, out, frames, cover, shot.get("_depth"))
+            return
+        except Exception as e:
+            log("parallax failed (%s); Ken Burns fallback" % str(e)[:80])
     # still: Ken Burns on a 2x canvas for smooth sub-pixel motion
     m, k = shot["motion"], shot["intensity"]
     W2, H2 = W * 2, H * 2
@@ -1383,6 +1480,7 @@ def lip_offsets(shots, d, voice, work):
 
 
 TRANSITION_POLICY = True
+HARD_CUTS = os.environ.get("CFA_HARD_CUTS", "1") != "0"
 MUSIC_UNDER_DB = (15.0, 19.0, 17.0)  # music (ducked) sits this many dB under the voice: min, max, target (was 18-22: too quiet to notice)
 
 
@@ -1403,6 +1501,8 @@ def smooth_transitions(shots):
             sh["transition_in"], sh["transition_duration"] = "cut", 0.0
         elif sh.get("role") == "turn" and sh.get("transition_in") == "whip":
             pass
+        elif HARD_CUTS and sh.get("role") not in ("realization", "resolve"):
+            sh["transition_in"], sh["transition_duration"] = "cut", 0.0   # hard cuts (Oct 28 motion audit: dissolves hid the cuts)
         elif sh.get("transition_in") in ("whip", "cut", "fadeblack") and not (sh.get("role") == "turn"):
             sh["transition_in"], sh["transition_duration"] = "dissolve", 0.45
     return shots
@@ -1728,6 +1828,9 @@ def main():
     ap.add_argument("--no-sfx", action="store_true", help="skip whooshes / riser / impact")
     ap.add_argument("--music-cap", type=float, default=float(os.environ.get("CFA_MUSIC_CAP", MUSIC_CAP_DEFAULT)),
                     help="max billed USD for composing a score (0 = cache/library only); cached per episode+style")
+    ap.add_argument("--i2v", choices=["off"] + sorted(I2V_MODELS), default=os.environ.get("CFA_I2V", "off"),
+                    help="idle micro-motion image-to-video on stills via fal (paid; default off)")
+    ap.add_argument("--i2v-cap", type=float, default=float(os.environ.get("CFA_I2V_CAP", "0")), help="max est. USD for i2v clips")
     ap.add_argument("--foley", action="store_true", default=FOLEY_DEFAULT_ON, help="add sparse foley hits (typing, pencil, paper, door, tool) from the spoken lines; off by default")
     ap.add_argument("--no-ambience", action="store_true", help="skip per-scene ElevenLabs ambience from the director's sfx text")
     ap.add_argument("--no-end-card", action="store_true")
@@ -1827,6 +1930,33 @@ def main():
     # shots
     clips, last_media = [], None
     shots = edl["shots"]
+    i2v_info = {"mode": a.i2v, "clips": 0, "est_usd": 0.0}
+    if a.i2v != "off":
+        pick, est = i2v_plan(shots, a.i2v, a.i2v_cap)
+        fk = env_key("FAL_KEY", a.keys_env)
+        i2v_info.update(planned=len(pick), est_usd=est)
+        made = {}
+        for m in pick if fk else []:
+            try:
+                made[m] = i2v_clip(os.path.join(d, m), a.i2v, fk, os.path.join(work, "i2v_%s.mp4" % re.sub(r"\W", "_", m)))
+                a.spent_usd = getattr(a, "spent_usd", 0.0) + I2V_MODELS[a.i2v][1]
+            except Exception as e:
+                i2v_info.setdefault("errors", []).append(str(e)[:120])
+        for x in shots:
+            if x.get("media") in made:
+                x["media"], x["mediaType"] = made[x["media"]], "video"
+        i2v_info["clips"] = len(made)
+    if STILL_MOTION == "parallax":
+        import hashlib
+        dc = os.path.expanduser(os.environ.get("CFA_DEPTH_CACHE", "~/cfa-render-data/depth_cache"))
+        os.makedirs(dc, exist_ok=True)
+        srcs = sorted({os.path.join(d, x["media"]) for x in shots if x.get("media") and (x.get("mediaType") or "image") == "image"})
+        pairs = [(sp, os.path.join(dc, hashlib.sha1(open(sp, "rb").read()).hexdigest()[:16] + ".png")) for sp in srcs if os.path.exists(sp)]
+        log("stage: depth maps for %d stills (%s)" % (len(pairs), "model" if DEPTH_PY else "synthetic"))
+        dmap = depth_maps(pairs, work)
+        for x in shots:
+            if x.get("media"):
+                x["_depth"] = dmap.get(os.path.join(d, x["media"]))
     for i, shot in enumerate(shots):
         nxt = shots[i + 1]["transition_duration"] if i + 1 < len(shots) else 0.0
         src, kind = None, "image"
@@ -1996,7 +2126,9 @@ def main():
             log("motion QA: %d near-frozen shot(s), %d jarring cut(s)" % (len(mqa["frozen"]), len(mqa["jarring_cuts"])))
     except Exception as e:
         mqa = {"error": str(e)[:160]}
-    report = {"final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
+    gate = motion_gate(final)
+    log("motion gate:", "PASS" if gate["pass"] else "FAIL " + "; ".join(gate["fails"]))
+    report = {"motion_gate": gate, "i2v": i2v_info, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
               "audio_streams": len(au), "lufs": measure_lufs(final), "edl_source": source,
               "edl_problems": problems, "grok_usage": usage, "beats": len(segs),
@@ -2016,6 +2148,102 @@ def main():
     if not a.keep_work:
         shutil.rmtree(work, ignore_errors=True)
     log("done: %s (%.2fs, voice %.2fs, %s LUFS) in %ss" % (final, report["duration"], total, report["lufs"], report["render_seconds"]))
+
+
+
+
+GATE_MEDIAN_SHOT_MAX = 4.0     # s: fail if the median visible shot is longer
+GATE_CUT_DIFF = 18.0           # mean grey-level jump that reads as a cut (same-palette stills)
+GATE_MOTION_MIN = 6.0          # px/s median in-frame motion, full 1280-px-wide frame (optical flow, cut samples excluded)
+
+
+def motion_gate(path, maxsec=240):
+    """Measure the final cut like a viewer: histogram cuts (Bhattacharyya > 0.35) and optical-flow motion between cuts."""
+    import cv2, numpy as np
+    cap = cv2.VideoCapture(path)
+    fps = cap.get(5) or FPS
+    step = max(1, round(fps / 6))
+    prev = ph = None
+    i, cuts, flow = 0, [0.0], []
+    while True:
+        ok, f = cap.read()
+        if not ok or i / fps > maxsec:
+            break
+        if i % step == 0:
+            g = cv2.cvtColor(cv2.resize(f, (320, 180)), cv2.COLOR_BGR2GRAY)
+            h = cv2.calcHist([g], [0], None, [32], [0, 256]); cv2.normalize(h, h)
+            if prev is not None:
+                if cv2.compareHist(ph, h, cv2.HISTCMP_BHATTACHARYYA) > 0.35 or float(cv2.absdiff(prev, g).mean()) > GATE_CUT_DIFF:
+                    cuts.append(i / fps)
+                else:
+                    fl = cv2.calcOpticalFlowFarneback(prev, g, None, .5, 3, 15, 3, 5, 1.2, 0)
+                    flow.append(float(np.linalg.norm(fl, axis=2).mean()) * fps / step * 4.0)
+            prev, ph = g, h
+        i += 1
+    cap.release()
+    cuts.append(i / fps)
+    d = [b - a for a, b in zip(cuts, cuts[1:]) if b - a > 0.3]
+    med = float(np.median(d)) if d else 0.0
+    mot = float(np.median(flow)) if flow else 0.0
+    fails = []
+    if med > GATE_MEDIAN_SHOT_MAX:
+        fails.append("median shot %.1fs > %.1fs" % (med, GATE_MEDIAN_SHOT_MAX))
+    if mot < GATE_MOTION_MIN:
+        fails.append("in-frame motion %.1f px/s < %.1f" % (mot, GATE_MOTION_MIN))
+    return {"pass": not fails, "fails": fails, "median_shot_s": round(med, 2), "shots": len(d),
+            "motion_px_s": round(mot, 2), "static_pct": round(100.0 * sum(1 for x in flow if x < 1.2) / max(1, len(flow)), 1)}
+
+
+# ── Idle micro-motion image-to-video (optional, default OFF until the user's test; paid via the fal queue) ──
+I2V_MODELS = {   # est. USD per clip (~5-6 s); estimates, check fal pricing before raising caps
+    "wan": ("fal-ai/wan/v2.2-a14b/image-to-video", 0.40),
+    "hailuo": ("fal-ai/minimax/hailuo-02/standard/image-to-video", 0.27),
+}
+I2V_PROMPT = ("Subtle idle motion only: slow breathing, a blink, slight head and hand movement, gentle camera drift. "
+              "Mouth stays closed, no talking, same 3D Pixar style, same character, no text.")
+
+
+def i2v_plan(shots, mode, cap):
+    """Which stills get an idle i2v clip and the estimated cost; never over `cap` (USD)."""
+    if mode in (None, "off") or mode not in I2V_MODELS:
+        return [], 0.0
+    _, unit = I2V_MODELS[mode]
+    pick, est = [], 0.0
+    seen = set()
+    for x in shots:
+        m = x.get("media")
+        if not m or (x.get("mediaType") or "image") != "image" or m in seen:
+            continue
+        if est + unit > (cap or 0) + 1e-9:
+            break
+        seen.add(m); pick.append(m); est += unit
+    return pick, round(est, 2)
+
+
+def i2v_clip(img_path, mode, key, out, fetch=None):
+    """One fal queue i2v job -> mp4 at `out`. `fetch(model, payload)` can be injected for tests."""
+    import base64
+    model, _ = I2V_MODELS[mode]
+    uri = "data:image/png;base64," + base64.b64encode(open(img_path, "rb").read()).decode()
+    payload = {"image_url": uri, "prompt": I2V_PROMPT}
+    if fetch:
+        data = fetch(model, payload)
+    else:
+        import requests, time as _t
+        h = {"Authorization": "Key " + key}
+        j = requests.post("https://queue.fal.run/" + model, headers=h, json=payload, timeout=60).json()
+        t0 = _t.time()
+        while _t.time() - t0 < 600:
+            st = requests.get(j["status_url"], headers=h, timeout=30).json()
+            if st.get("status") == "COMPLETED":
+                break
+            if st.get("status") in ("FAILED", "ERROR"):
+                raise RuntimeError("i2v failed")
+            _t.sleep(4)
+        res = requests.get(j["response_url"], headers=h, timeout=60).json()
+        data = requests.get((res.get("video") or {})["url"], timeout=180).content
+    open(out, "wb").write(data)
+    return out
 
 
 if __name__ == "__main__":

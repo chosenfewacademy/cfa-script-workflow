@@ -30,7 +30,7 @@ def durs(i): return [round(s["end"] - s["start"], 2) for s in parts(out, i)]
 
 h, c, t, m, v = durs(0), durs(1), durs(2), durs(3), durs(4)
 check("tense hook split into ~2 s cuts", len(h) >= 3 and max(h) <= 2.9 and min(h) >= 1.2, h)
-check("calm beat split into 3-4 s parts", len(c) >= 3 and all(2.6 <= d <= 4.3 for d in c), c)
+check("calm beat split into ~2-3.2 s parts (fix 5 pacing)", len(c) >= 3 and all(2.0 <= d <= 3.3 for d in c), c)
 check("crisis words ('empty') make a tension beat tense", max(t) <= 2.9 and len(t) >= 3, t)
 check("tool-marked pace=tense beat gets ~2 s cuts", max(m) <= 2.9 and len(m) >= 3, m)
 check("video shots are never split", v == [10.0], v)
