@@ -2510,6 +2510,7 @@ function smSaveModels(){
 function smSaveOpenAI(){ saveSessionKey('cfa_openai_key','sm-oai-key','sm-oai-ok'); }
 function smSaveRender(){
   const u=document.getElementById('sm-render-url'); u.value=u.value.trim().replace(/\/+$/,'');
+  if(renderUrlBlocked(u.value)){ alert(RENDER_URL_BLOCKED_MSG); u.focus(); return; }
   saveSessionKey('cfa_render_url','sm-render-url','sm-render-ok'); saveSessionKey('cfa_render_token','sm-render-token','sm-render-ok');
   const d=document.getElementById('sm-ks-render'); if(d) d.className='ks-dot '+(renderServiceReady()?'ok':'miss');
 }
@@ -3993,7 +3994,7 @@ function fbMerge(serverItems){
   fbSetItems(a); return fresh;
 }
 async function fbPoll(){
-  if(!renderServiceReady()) { const e=document.getElementById('fb-sync'); if(e) e.textContent='(connect the render service in Settings to sync)'; return; }
+  if(!renderServiceReady()) { const e=document.getElementById('fb-sync'); if(e) e.textContent=renderUrlBlocked(sessionStorage.getItem('cfa_render_url'))?'(render URL is 127.0.0.1/localhost, which the browser blocks here: use the public tunnel URL in Settings)':'(connect the render service in Settings to sync)'; return; }
   try{
     const r=await renderFetch('/feedback?since='+encodeURIComponent(fbSince));
     if(!r.ok) throw new Error('HTTP '+r.status);
@@ -5173,7 +5174,13 @@ async function buildFinalEditZip(say){
 // ═══ GROK BOT RENDER SERVICE (send → timer → review) ═════════════════════════
 const RENDER_STAGES=['queued','planning edit','rendering','captions','mixing','encoding','done'];
 let renderJob=null, renderPoll=null, renderTick=null, renderT0=0, renderLast=null, renderVideoURL=null;
-function renderServiceReady(){ return !!(sessionStorage.getItem('cfa_render_url')&&sessionStorage.getItem('cfa_render_token')); }
+// Chrome (Private Network Access) blocks the public github.io page from calling loopback/LAN addresses,
+// so the live tool must use the render service's public tunnel URL (https://….ngrok-free.dev), not 127.0.0.1.
+function renderUrlBlocked(u, pageHost){ try{ const h=new URL(String(u||'').trim()).hostname.replace(/^\[|\]$/g,''), ph=pageHost==null?location.hostname:pageHost;
+  const local=x=>/^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|::1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/i.test(x)||/\.local$/i.test(x);
+  return local(h) && !(local(ph)||ph===''||(pageHost==null&&location.protocol==='file:')); }catch(e){ return false; } }
+const RENDER_URL_BLOCKED_MSG='That render URL is a local address (127.0.0.1 / localhost), which Chrome blocks from the live tool. Use the render service\u2019s public tunnel URL (https://\u2026.ngrok-free.dev) instead.';
+function renderServiceReady(){ const u=sessionStorage.getItem('cfa_render_url'); return !!(u&&sessionStorage.getItem('cfa_render_token')&&!renderUrlBlocked(u)); }
 function renderBase(){ return String(sessionStorage.getItem('cfa_render_url')||'').trim().replace(/\/+$/,''); }
 async function renderFetch(path, opts){
   opts=opts||{}; opts.headers=Object.assign({'Authorization':'Bearer '+sessionStorage.getItem('cfa_render_token'),'ngrok-skip-browser-warning':'1'}, opts.headers||{});
@@ -5216,6 +5223,7 @@ function clipBeatsHoldingStills(){
 async function sendToGrokRender(){
   const st=document.getElementById('fe-status');
   const say=m=>{ if(st){ st.style.display=m?'':'none'; st.textContent=m; } };
+  if(renderUrlBlocked(sessionStorage.getItem('cfa_render_url'))){ say(RENDER_URL_BLOCKED_MSG); openSettings(); return; }
   if(!renderServiceReady()){ say('Add the Grok Bot render service URL and access token in ⚙ Settings first (or use 🎬 Export for final edit and send the .zip in chat).'); openSettings(); return; }
   const btn=document.getElementById('btn-send-grok'), up=document.getElementById('rs-upload'), bar=document.getElementById('rs-upload-bar'), txt=document.getElementById('rs-upload-txt');
   const missing=sceneData.map((x,i)=>x.resultURL?0:i+1).filter(Boolean);
