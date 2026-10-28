@@ -59,6 +59,7 @@ async def xai_route(route):
     if 'director and cinematographer' in sysmsg:
         cnt['director']=cnt.get('director',0)+1; SC['lastDirector']=user
         v=SC.get('dirOut')
+        if isinstance(v,list): v=v.pop(0) if len(v)>1 else v[0]
         if v is None: content='no shot list today'
         else: content=v if isinstance(v,str) else json.dumps(v)
         return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'choices':[{'message':{'content':content},'finish_reason':'stop'}],'usage':{}}))
@@ -777,6 +778,26 @@ async def main():
             await J(pgd,"()=>{segScript='1. Jordan checked the payment.\\n2. Marcus walked in.';enterSceneGeneration();}"); await pgd.wait_for_timeout(2500)
             sd=await J(pgd,"()=>sceneData.map(x=>({p:x.prompt,d:!!x.directed}))")
             check('director: junk reply falls back for every beat', all(x['p'] and not x['d'] for x in sd), sd)
+            # shot variety + line/shot match + pace (Oct 28)
+            r=await J(pgd,"""()=>{ const data=[{line:'1. The clock read 11:52.',characters:'NONE'},{line:'2. Jordan felt his stomach drop.',characters:'JORDAN'},{line:'3. Marcus had warned him.',characters:'MARCUS'},{line:'4. The phone buzzed again.',characters:'JORDAN'},{line:'5. He typed the words.',characters:'JORDAN'},{line:'6. The shop was silent.',characters:'NONE'}];
+              const same=data.map((x,i)=>({n:i+1,shot:'MCU',image:'Jordan sits at a desk.'}));
+              const good=[{n:1,shot:'INSERT',image:'Wall clock above the workbench, hands near midnight.'},{n:2,shot:'CU',image:'Jordan, jaw tight.'},{n:3,shot:'OTS',image:'Over Jordan\\'s shoulder: Marcus in the doorway.'},{n:4,shot:'ECU',image:'The phone on the desk lights up.'},{n:5,shot:'INSERT',image:'Hands on the keyboard of the laptop.'},{n:6,shot:'WIDE',image:'The empty shop at night.'}];
+              const a=shotPlanIssues(same,data), g=shotPlanIssues(good,data);
+              return {a:a.issues, am:a.mismatched, g:g.issues, ns:[normShot('close-up'),normShot('Over the shoulder'),normShot('wide'),normShot('weird')]}; }""")
+            check('shots: 3 identical shot types in a row, missing INSERT and few types flagged', any('rotate' in x for x in r['a']) and any('INSERT' in x for x in r['a']), r['a'])
+            check('shots: line/shot match flags beats whose frame ignores the clock, Marcus, phone, typing', set([1,3,4,5])<=set(r['am']), r['am'])
+            check('shots: varied plan that shows each line passes clean', r['g']==[], r['g'])
+            check('shots: shot type names normalised', r['ns']==['CU','OTS','WIDE',''], r['ns'])
+            bad={'look':{},'shots':[{'n':i,'shot':'MCU','pace':'calm','place':'shop','image':'Jordan sits at a desk.','motion':'','sfx':'','overlay':''} for i in (1,2,3)]}
+            fixed={'look':{},'shots':[{'n':1,'shot':'INSERT','pace':'tense','place':'shop','image':'Wall clock, hands at 11:52.','motion':'','sfx':'','overlay':''},{'n':2,'shot':'CU','pace':'tense','place':'shop','image':'Jordan, jaw tight.','motion':'','sfx':'','overlay':''},{'n':3,'shot':'WIDE','pace':'calm','place':'shop','image':'Marcus in the quiet shop.','motion':'','sfx':'','overlay':''}]}
+            SC['dirOut']=[bad,fixed]; d0=cnt.get('director',0)
+            await J(pgd,"()=>{segScript='1. The clock read 11:52.\\n2. Jordan felt it.\\n3. Marcus had warned him.';enterSceneGeneration();}"); await pgd.wait_for_timeout(2500)
+            sd=await J(pgd,"()=>sceneData.map(x=>({p:x.prompt,shot:x.shot,pace:x.pace}))")
+            check('shots: a monotone / mismatched plan triggers one targeted redo with the problems listed', cnt.get('director',0)-d0==2 and 'FIX THESE PROBLEMS' in (SC.get('lastDirector') or ''), (cnt.get('director',0)-d0, (SC.get('lastDirector') or '')[-300:]))
+            check('shots: redo plan applied: shot label leads the prompt, pace stored', sd[0]['p'].startswith('Insert shot.') and sd[0]['shot']=='INSERT' and sd[0]['pace']=='tense' and sd[2]['pace']=='calm', sd)
+            ok=await J(pgd,"()=>/shot:s\\.shot\\|\\|''/.test(document.documentElement.outerHTML)&&/pace:s\\.pace\\|\\|''/.test(document.documentElement.outerHTML)")
+            check('shots: shot type and pace are shipped to the renderer bundle', ok, ok)
+            SC['dirOut']=None
             check('director: no page errors', not [e for e in errsd if 'pageerror' in e], errsd[:3])
             await ctxd.close()
             # ── overlay-only text ──

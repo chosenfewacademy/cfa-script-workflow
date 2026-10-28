@@ -5173,7 +5173,7 @@ async function buildFinalEditZip(say){
       const sp=splitTag(s.line);
       segs.push({index:i+1,text:sp.text,tag:s.tag,characters:s.characters||'',
         speaker:sp.speaker||(dialogueOn()?'NARRATOR':null), voice_id:sp.speaker?lockedVoice(sp.speaker).voiceId:(dialogueOn()?lockedVoice('NARRATOR').voiceId:null),
-        media, mediaType:media?(kind==='video'&&s.lipsync?'lipsync':kind):'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'',
+        media, mediaType:media?(kind==='video'&&s.lipsync?'lipsync':kind):'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'', shot:s.shot||'', pace:s.pace||'',
         start:t?t.start:null, end:t?t.end:null});
     }
     say('Packing bundle…');
@@ -5687,19 +5687,51 @@ Rules:
 - ALWAYS MOVING (action-video feel): every shot has visible motion that ACTS OUT its line: the action being described, the speaker's gesture (points at the phone, shrugs, leans in, counts on fingers), or the listener's reaction (eyebrows up, a slow exhale, a laugh). Never "static"; a camera move alone is not enough.
 - CONTINUITY: consecutive shots in the same place use the SAME "place" text exactly (the next clip starts from the previous clip's last frame); keep screen direction (who is left/right) and the camera's travel direction ("dir": left|right|in|out|up|down|hold) consistent inside a place, and cut on motion (the next shot continues the movement). Lighting stays the episode LOOK unless the place or time changes.
 - Dialogue coverage: alternate speaker close-ups with LISTENER REACTION shots on punchlines, surprises and the reveal; give each character line a "gesture" that fits the words.
+- SHOT VARIETY (required): give every shot a "shot" type from ECU (extreme close-up: eyes, a fingertip, a single key), CU (face), MCU, OTS (over-the-shoulder onto the phone/laptop/other person), INSERT (the object the line is about: a clock face, a phone screen seen as shapes and colours, hands on a keyboard, a wallet, a notebook), WIDE (the place, people moving in it). Rotate them: never the same type 3 shots in a row, at least one INSERT every 6 shots, WIDE only to establish or breathe.
+- EVERY SHOT DEPICTS ITS LINE: the frame shows the specific person, object or action the line is about (a line about the clock shows the clock; a line about Marcus's warning shows Marcus); never a generic shot of someone sitting.
+- PACE: mark each shot "pace":"tense" (crisis, complication, countdown, climax, montage) or "calm" (setup, reflection, resolution). Tense beats are cut at about 2 seconds, calm beats hold 3-4 seconds with a slow drift.
 - Pacing (viral story rules): something visibly changes every 3-5 seconds; open with a fast, tense first frame on the problem; hold steady on the reveal beat (the turn) and give it the most striking frame of the episode.
-Return ONLY JSON: {"look":{"lighting":"...","palette":"...","mood":"..."},"shots":[{"n":1,"place":"4-8 word setting","image":"...","motion":"...","dir":"in","gesture":"","sfx":"...","overlay":""}]}`;
+Return ONLY JSON: {"look":{"lighting":"...","palette":"...","mood":"..."},"shots":[{"n":1,"shot":"CU","pace":"tense","place":"4-8 word setting","image":"...","motion":"...","dir":"in","gesture":"","sfx":"...","overlay":""}]}`;
 function parseDirector(t){
   try{ const m=String(t||'').match(/\{[\s\S]*\}/); if(!m) return null; const j=JSON.parse(m[0]);
     return j&&Array.isArray(j.shots)?j:null; }catch(e){ return null; }
 }
 function directorOn(){ return safeGetItem('cfa_director')!=='0'; }
 let sceneLook=null;
+// Shot variety + line/shot match (Oct 28 audit: almost every shot was a medium close-up that did not show its line)
+const SHOT_TYPES=['ECU','CU','MCU','OTS','INSERT','WIDE'];
+const SHOT_LABEL={ECU:'Extreme close-up',CU:'Close-up',MCU:'Medium close-up',OTS:'Over-the-shoulder shot',INSERT:'Insert shot',WIDE:'Wide shot'};
+const LINE_OBJECTS=[['clock',/\b(clock|o'clock|midnight|noon|minutes?|seconds?|deadline|time)\b/i,/\b(clock|watch|time|wall clock|timer|countdown)\b/i],
+  ['phone',/\b(phone|text|app|notification|screen|message)\b/i,/\b(phone|screen|notification|app)\b/i],
+  ['laptop',/\b(laptop|computer|keyboard|typed|typing)\b/i,/\b(laptop|computer|keyboard|screen|typing)\b/i],
+  ['hands',/\b(hands?|fingers?|grip|held|holding|signed|wrote)\b/i,/\b(hands?|fingers?|grip)\b/i],
+  ['notebook',/\b(notebook|paper|card|words|wrote|written|seed phrase|list)\b/i,/\b(notebook|paper|card|page|sheet|note)\b/i],
+  ['wallet',/\b(wallet|hardware wallet|device|ledger)\b/i,/\b(wallet|device|ledger)\b/i],
+  ['money',/\$\s?\d|\b(cash|money|dollars|rent|balance|account)\b/i,/\b(cash|money|bill|balance|account|number|envelope|screen)\b/i]];
+function normShot(x){ x=String(x||'').toUpperCase().replace(/[^A-Z]/g,''); return x==='CLOSEUP'?'CU':x==='EXTREMECLOSEUP'?'ECU':x==='MEDIUMCLOSEUP'?'MCU':x==='OVERTHESHOULDER'?'OTS':x==='ESTABLISHING'?'WIDE':SHOT_TYPES.includes(x)?x:''; }
+function shotPlanIssues(shots, data){
+  const out=[], types=shots.map(sh=>normShot(sh.shot));
+  for(let i=2;i<types.length;i++) if(types[i]&&types[i]===types[i-1]&&types[i]===types[i-2]){ out.push('shots '+(i-1)+'-'+(i+1)+' are all '+types[i]+' — rotate shot types'); break; }
+  if(types.filter(Boolean).length<types.length) out.push((types.length-types.filter(Boolean).length)+' shot(s) missing a "shot" type');
+  if(shots.length>=12 && new Set(types.filter(Boolean)).size<4) out.push('only '+new Set(types.filter(Boolean)).size+' shot types used — use ECU, CU, OTS, INSERT and WIDE');
+  for(let i=0;i+6<=types.length;i+=6) if(!types.slice(i,i+6).includes('INSERT')){ out.push('no INSERT shot in shots '+(i+1)+'-'+(i+6)+' (clock, phone screen, hands)'); break; }
+  const miss=[]; shots.forEach(sh=>{ const i=(parseInt(sh.n,10)||0)-1, x=data[i]; if(!x) return; const ln=String(x.line||'').replace(/^\s*\d+\.\s*/,''), img=String(sh.image||'');
+    { const hit=LINE_OBJECTS.filter(([nm,inLine])=>inLine.test(ln)&&!/\b(not|never|no)\s*$/i.test(ln.split(inLine)[0].slice(-12))); if(hit.length&&!hit.some(([nm,,inImg])=>inImg.test(img))) miss.push((i+1)+' ('+hit[0][0]+')'); }
+    for(const who of ['Jordan','Marcus','Dee','Priya','Okafor']) if(new RegExp('\\b'+who+'\\b').test(ln)&&!new RegExp('\\b'+who+'\\b').test(img)&&x.characters!=='NONE'&&!/^\s*(JORDAN|MARCUS|DEE|PRIYA|MR\. OKAFOR):/.test(ln)){ if(!miss.some(m=>m.startsWith((i+1)+' '))) miss.push((i+1)+' ('+who+')'); break; } });
+  if(miss.length) out.push('shot does not show what its line is about: beats '+miss.slice(0,8).join(', '));
+  return {issues:out, mismatched:miss.map(m=>parseInt(m,10))};
+}
 async function directorPass(data){
   const beats=data.map((x,i)=>'['+(i+1)+'] '+x.tag+' | on screen: '+(x.characters||'NONE')+(castInScene(x).length?', '+castInScene(x).join(', '):'')+' | '+String(x.line).replace(/^\s*\d+\.\s*/,''));
   const user=(V[selId]?'EPISODE: '+V[selId].title+'\n':'')+'BEATS:\n'+beats.join('\n');
   const r=await llmComplete({role:'fast', system:SYS_DIRECTOR+DIRECTOR_RESILIA+(fullNarr()?DIRECTOR_FULL:'')+fbBlock(['registry','shotlist','clips','lipsync','narration','edit']), user, maxTokens:Math.min(16000,900+data.length*260), effort:'low'});
-  const j=parseDirector(r.text); if(!j) throw new Error('director returned no shot list');
+  let j=parseDirector(r.text); if(!j) throw new Error('director returned no shot list');
+  let chk=shotPlanIssues(j.shots,data);
+  if(chk.issues.length){ // one targeted redo with the concrete problems; keep the better plan
+    try{ const r2=await llmComplete({role:'fast', system:SYS_DIRECTOR+DIRECTOR_RESILIA+(fullNarr()?DIRECTOR_FULL:''), user:user+'\n\nFIX THESE PROBLEMS IN YOUR PREVIOUS SHOT LIST:\n- '+chk.issues.join('\n- '), maxTokens:Math.min(16000,900+data.length*260), effort:'low'});
+      const j2=parseDirector(r2.text); if(j2){ const c2=shotPlanIssues(j2.shots,data); if(c2.issues.length<=chk.issues.length && c2.mismatched.length<=chk.mismatched.length){ j=j2; chk=c2; } } }catch(e){}
+  }
+  data.shotPlanIssues=chk.issues;
   if(sceneData!==data) return 0;
   sceneLook=j.look||null;
   const look=j.look?(' Lighting: '+(j.look.lighting||'')+'. Palette: '+(j.look.palette||'')+'. Mood: '+(j.look.mood||'')+'.'):'';
@@ -5709,7 +5741,8 @@ async function directorPass(data){
     if(!x || x.locked&&x.prompt || !String(sh.image||'').trim()) continue;
     const img=String(sh.image).trim().replace(/\bcrypto\w*/gi,'digital asset');
     const mot=String(sh.motion||'').trim();
-    x.prompt=(x.tag==='VIDEO'&&mot? img+' Motion: '+mot+(sh.dir&&sh.dir!=='hold'?' Camera travels '+sh.dir+'.':'') : img)+look;
+    const st=normShot(sh.shot); x.shot=st; x.pace=/tense/i.test(sh.pace)?'tense':(/calm/i.test(sh.pace)?'calm':'');
+    x.prompt=(st?SHOT_LABEL[st]+'. ':'')+(x.tag==='VIDEO'&&mot? img+' Motion: '+mot+(sh.dir&&sh.dir!=='hold'?' Camera travels '+sh.dir+'.':'') : img)+look;
     x.motion=mot; x.dir=String(sh.dir||'').trim(); x.gesture=String(sh.gesture||'').trim().slice(0,160); x.sfx=String(sh.sfx||'').trim(); x.overlay=String(sh.overlay||'').trim().split(/\s+/).slice(0,6).join(' ');
     x.sceneDesc=String(sh.place||'').trim()||x.sceneDesc; x.directed=true; x.promptFailed=false;
     if(x.characters==='NONE'){ const pc=promptOnScreenCast(x.prompt); if(pc!=='NONE'){ x.characters=pc; x.castFromPrompt=true; } }
