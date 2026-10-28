@@ -25,6 +25,13 @@ TRANS_RANGE = {"whip": (0.2, 0.35), "dissolve": (0.5, 1.0), "fadeblack": (0.5, 1
 FOCI = {"center": (0.5, 0.5), "left": (0.25, 0.45), "right": (0.75, 0.45), "top": (0.5, 0.25), "bottom": (0.5, 0.75)}
 ROLES = ["hook", "tension", "turn", "realization", "resolve"]
 CAPTION_STYLES = ["bold_pop", "clean_lower", "boxed"]
+# Resilia-style per-beat grades (layered under the shared LUT): cool & low for the cold open,
+# sterile for the struggle, golden from the turn on.
+GRADES = {"cool_low": "eq=brightness=-0.03:saturation=0.82:gamma=0.97,colorbalance=bs=0.06:bm=0.04:rh=-0.03",
+          "sterile": "eq=saturation=0.72:contrast=1.04,colorbalance=bs=0.03:gs=0.02:rm=-0.02",
+          "golden": "eq=saturation=1.08:brightness=0.02,colorbalance=rs=0.05:rm=0.06:bm=-0.05:bh=-0.03"}
+ROLE_GRADE = {"montage": "sterile", "hook": "cool_low", "tension": "sterile", "turn": "golden", "realization": "golden", "resolve": "golden"}
+DRIFT_MAX = 4.2         # stills longer than this are split into 3-4 s parts with constant slow drift
 PUNCH_ZOOM = 1.28      # punch-in framing (second half of a split still)
 SPLIT_OVER = 4.2       # a still held longer than this (outside the realization) is split wide -> punch-in
 TP_RE = re.compile(r"\b(that'?s why|which is why|so that|the point|realiz\w*|not a price|instead|because|the answer|it meant|that was it|finally|suddenly|clicked|understood|that's the)\b", re.I)
@@ -594,6 +601,78 @@ def split_punch_ins(shots, words):
     return out
 
 
+def split_drift(shots, words, max_len=DRIFT_MAX):
+    """Resilia pacing: split long stills into ~3-4 s parts at word gaps; each part keeps a constant slow
+    drift and alternates framing (wide drift -> off-centre punch-in left/right). Video/lip-sync untouched."""
+    out = []
+    drifts = ["pan_right", "zoom_in", "pan_left", "zoom_out"]
+    for sh in shots:
+        dur = sh["end"] - sh["start"]
+        if sh.get("mediaType") in ("video", "lipsync") or dur <= max_len:
+            out.append(sh)
+            continue
+        n = max(2, int(math.ceil(dur / 3.6)))
+        gaps = [float(w[1]) for w in words if sh["start"] + 1.2 <= float(w[1]) <= sh["end"] - 1.2]
+        cuts = []
+        for k in range(1, n):
+            t = sh["start"] + dur * k / n
+            c = min(gaps, key=lambda g: abs(g - t)) - 0.05 if gaps else t
+            if (not cuts or c - cuts[-1] >= 1.2) and c - sh["start"] >= 1.2 and sh["end"] - c >= 1.2:
+                cuts.append(round(c, 3))
+        edges = [sh["start"]] + cuts + [sh["end"]]
+        base_part = sh.get("part", "")
+        for k in range(len(edges) - 1):
+            p = dict(sh, start=round(edges[k], 3), end=round(edges[k + 1], 3), duration=round(edges[k + 1] - edges[k], 3))
+            if k:
+                p.update(part="b", transition_in="cut", transition_duration=0.0, intensity=0.035)
+                if k % 2:
+                    p.update(motion="punch_in", focus="left" if (k // 2) % 2 == 0 else "right")
+                else:
+                    p.update(motion=drifts[k % len(drifts)])
+            else:
+                p["part"] = base_part
+                if p.get("motion") in (None, "static"):
+                    p["motion"] = "zoom_in"
+            out.append(p)
+    for k, sh in enumerate(out):
+        sh["index"] = k + 1
+    return out
+
+
+MONTAGE_RE = re.compile(r"\b(day|days|week|weeks|hour|hours|night|morning|attempt|try|tries|again|then|by|first|second|third|one|two|three|four|five|\d+)\b", re.I)
+
+
+def detect_montage(segs, total):
+    """Milestone montage beats: explicit role, else a run of 2-4 consecutive short NARRATOR lines that count
+    progress (days, attempts, numbers) in the middle of the episode."""
+    exp = [sg for sg in segs if sg.get("role") == "montage" and sg.get("start") is not None]
+    if exp:
+        return exp
+    run_, best = [], []
+    for sg in segs + [{}]:
+        ok = (sg.get("speaker") == "NARRATOR" and sg.get("start") is not None and total
+              and 0.2 <= sg["start"] / total <= 0.85 and len(str(sg.get("text", "")).split()) <= 14
+              and MONTAGE_RE.search(str(sg.get("text", ""))))
+        if ok:
+            run_.append(sg)
+        else:
+            if 2 <= len(run_) and len(run_) > len(best):
+                best = run_[:4]
+            run_ = []
+    return best
+
+
+def assign_grades(shots, on=True):
+    for sh in shots:
+        sh["grade"] = ROLE_GRADE.get(sh.get("role"), "") if on else ""
+    return shots
+
+
+def grade_vf(shot):
+    g = GRADES.get(shot.get("grade") or "")
+    return ("," + g) if g else ""
+
+
 # ── sound design ─────────────────────────────────────────────────────────────
 def make_sfx(work):
     """Synthesised, license-free whoosh / riser / impact (one family)."""
@@ -750,7 +829,7 @@ def render_shot(src, kind, shot, W, H, out, frames):
         off = max(0.0, float(shot.get("lip_offset") or 0.0))
         fit = cover(W, H)
         vf = ("fps=%d,%s,tpad=start_mode=clone:start_duration=%.3f:stop_mode=clone:stop_duration=%.2f,setsar=1"
-              % (FPS, fit, off, dur + 1))
+              % (FPS, fit, off, dur + 1)) + grade_vf(shot)
         run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
         return
     if kind in ("video", "lipsync"):
@@ -762,7 +841,7 @@ def render_shot(src, kind, shot, W, H, out, frames):
                 % (min(k, 0.06), max(1, frames - 1), W, H, FPS)) if k else ""
         fit = cover(W, H)
         vf = ("setpts=PTS/%.4f,fps=%d,%s,"
-              "tpad=stop_mode=clone:stop_duration=%.2f,setsar=1%s" % (speed, FPS, fit, dur + 1, push))
+              "tpad=stop_mode=clone:stop_duration=%.2f,setsar=1%s" % (speed, FPS, fit, dur + 1, push)) + grade_vf(shot)
         run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
         return
     # still: Ken Burns on a 2x canvas for smooth sub-pixel motion
@@ -792,7 +871,7 @@ def render_shot(src, kind, shot, W, H, out, frames):
         z, x, y = "1+%.3f*%s" % (k, ease), "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
     fit = cover(W2, H2)
     vf = (fit + ","
-          "zoompan=z='%s':x='%s':y='%s':d=%d:s=%dx%d:fps=%d" % (z, x, y, frames, W, H, FPS))
+          "zoompan=z='%s':x='%s':y='%s':d=%d:s=%dx%d:fps=%d" % (z, x, y, frames, W, H, FPS)) + grade_vf(shot)
     run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", src, "-vf", vf, "-frames:v", str(frames)] + enc + [out])
 
 
@@ -999,11 +1078,12 @@ def music_plan(total, arc, style):
     hook = min(max(arc.get("hook_end") or 0.0, 3.0), total - 6) if total > 12 else total / 3
     turn = arc.get("turn") or total * 0.68
     turn = min(max(turn, hook + 3), total - 3)
-    cut = [(0.0, hook, "Cold open", ["tense", "curious", "sparse pulse", "suspended"]),
-           (hook, max(hook + 3, turn - 4), "Dialogue bed", ["calm", "warm", "understated", "steady"]),
-           (max(hook + 3, turn - 4), turn, "Build", ["building", "rising", "anticipation"]),
-           (turn, min(total, turn + 6), "Reveal swell", ["emotional swell", "uplifting", "full strings"]),
-           (min(total, turn + 6), total + 1.5, "Resolve", ["resolving", "warm", "gentle", "hopeful ending"])]
+    # per-beat cues (Resilia): each section changes instrumentation, not just intensity
+    cut = [(0.0, hook, "Cold open cue", ["solo low piano", "tense", "suspended", "sparse"]),
+           (hook, max(hook + 3, turn - 4), "Struggle cue", ["muted percussion pulse", "sterile", "understated", "steady"]),
+           (max(hook + 3, turn - 4), turn, "Build cue", ["rising synth pad", "building", "anticipation"]),
+           (turn, min(total, turn + 6), "Triumph cue", ["warm orchestra swell", "golden", "uplifting", "full strings"]),
+           (min(total, turn + 6), total + 1.5, "Resolve cue", ["gentle piano and strings", "warm", "hopeful ending"])]
     chunks, carry = [], 0.0
     for a, b, name, mood in cut:
         d = b - a + carry
@@ -1103,6 +1183,9 @@ def smooth_transitions(shots):
             continue
         prev = shots[i - 1]
         if sh.get("part") == "b":
+            continue
+        if sh.get("role") == "montage":  # milestone montage: quick hard cuts
+            sh["transition_in"], sh["transition_duration"] = "cut", 0.0
             continue
         dlg = sh.get("mediaType") == "lipsync" and prev.get("mediaType") == "lipsync"
         if dlg:
@@ -1409,6 +1492,8 @@ def main():
     ap.add_argument("--vertical", action="store_true", help="1080x1920 instead of 1920x1080")
     ap.add_argument("--music-style", default=None, help="score style: " + ", ".join(MUSIC_STYLES) + ", none")
     ap.add_argument("--no-score", action="store_true", help="do not compose an ElevenLabs score (use --music file if given)")
+    ap.add_argument("--no-beat-grades", action="store_true", help="one grade for the whole episode (no per-beat cool/sterile/golden)")
+    ap.add_argument("--no-drift-split", action="store_true", help="keep long stills as one shot (no 3-4 s drift parts)")
     ap.add_argument("--no-whisper", action="store_true", help="skip the Whisper caption alignment / line check")
     ap.add_argument("--raw-transitions", action="store_true", help="use the EDL transitions as-is (no smoothing policy)")
     ap.add_argument("--music", help="optional background music file (ducked under the voice)")
@@ -1487,6 +1572,8 @@ def main():
     if a.no_end_card:
         edl["end_card"]["enabled"] = False
     edl["shots"] = split_punch_ins(edl["shots"], words)
+    if not a.no_drift_split:
+        edl["shots"] = split_drift(edl["shots"], words)
     by_media = {s.get("media"): s for s in segs if s.get("mediaType") == "lipsync" and s.get("media")}
     for x in edl["shots"]:
         if x.get("mediaType") == "lipsync" and x.get("media") in by_media:
@@ -1506,6 +1593,13 @@ def main():
             elif x["start"] - 0.3 <= bt["start"] < x["end"] and x.get("part") != "b":
                 x["role"] = "turn"
         edl["shots"] = smooth_transitions(edl["shots"]) if not a.raw_transitions else edl["shots"]
+    mont = detect_montage(segs, total)
+    for x in edl["shots"]:
+        if x.get("role") in ("tension", "resolve") and any(x["start"] - 0.3 <= sg["start"] < x["end"] for sg in mont):
+            x["role"] = "montage"
+    if mont and not a.raw_transitions:
+        edl["shots"] = smooth_transitions(edl["shots"])
+    assign_grades(edl["shots"], not a.no_beat_grades)
     edl["source"] = source
     edl["pauses_added"] = round(added, 3)
     json.dump(edl, open(os.path.join(a.out, "edl.json"), "w"), indent=1)
