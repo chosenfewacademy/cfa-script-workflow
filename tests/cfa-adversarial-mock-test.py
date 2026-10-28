@@ -989,6 +989,9 @@ async def main():
             check('clarity lint: bare numbers/jargon/fragment-only narration flagged, unit+owner lines pass', nr['bare'] and nr['jargon'] and nr['shortavg'] and nr['unit']==[], nr)
             check('safety lint: seed phrase typed into app flagged, "never typed" passes, wired into dialogueLint', len(nr['unsafe'])==1 and nr['wired'], nr)
             check('narration: vague stakes ("lose everything") flagged', nr['vague'], nr)
+            al=await J(pg,"""()=>[speechAlias('Your $50 is due at 4:50 pm.'),speechAlias('Four-fifty. Tear that page out.'),speechAlias('BIP-39 & Spoke & Chain'),speechAlias('The tears in her eyes.'),String(ttsLine).includes('speechAlias(text)')]""")
+            check('pronunciation: alias pass before TTS ($50, 4:50 pm, four-fifty, tear->rip, BIP-39, &), heteronym untouched, wired into ttsLine',
+                  al==['Your 50 dollars is due at 4 50 in the afternoon.','Four fifty. Rip that page out.','B I P thirty-nine and Spoke and Chain','The tears in her eyes.',True], al)
             check('full narration: lint accepts in-media-res cold open + montage', fn['lint']==[], fn['lint'])
             check('full narration: lint flags narrator cold open, 4 unattributed lines, no montage, narrator first person', fn['badCold'] and fn['four'] and fn['noMont'] and fn['fp'], fn)
             check('full narration: Hybrid and Sparse still selectable', fn['opt']==['full','sparse','hybrid'], fn['opt'])

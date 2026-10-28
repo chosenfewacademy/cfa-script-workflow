@@ -1481,8 +1481,13 @@ def _tok(t):
     t = t.lower().replace("’", "'")
     t = re.sub(r"[^a-z0-9'%$]+", "", t)
     if t.isdigit() and len(t) <= 3:
-        return _num_words(int(t))
-    return t
+        t = _num_words(int(t))
+    if re.fullmatch(r"[a-z]+hundred[a-z]+", t or ""):
+        t = t.replace("hundred", "")       # "450" heard for "four-fifty" -> "fourfifty"
+    return HOMOPHONES.get(t, t)
+
+
+HOMOPHONES = {"d": "dee", "dea": "dee", "tier": "tear", "oclock": "o'clock"}   # Whisper spellings of the same sound
 
 
 _ONES = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
