@@ -127,7 +127,7 @@ async def fal_route(route):
             job['polls']+=1
             if (SC.get('qStatusNetFail') or 0)>0: SC['qStatusNetFail']-=1; return await route.abort('timedout')
             if SC.get('qMode')=='failed': return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'status':'FAILED','error':'model crashed'}))
-            st='COMPLETED' if job['polls']>(SC.get('qPolls') or 2) else 'IN_PROGRESS'
+            st='COMPLETED' if job['polls']>(0 if job.get('img') else (SC.get('qPolls') or 2)) else 'IN_PROGRESS'
             if SC.get('qMode')=='never': st='IN_QUEUE'
             return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'status':st}))
         return await route.fulfill(status=200,content_type='application/json',body=json.dumps(job['result']))
@@ -139,13 +139,15 @@ async def fal_route(route):
     if m in('429','500','422','401'):
         st=int(m); b={'detail':[{'msg':'field required','loc':['body','prompt']}]} if st==422 else ({'detail':'Invalid key'} if st==401 else {})
         return await route.fulfill(status=st,content_type='application/json',body=json.dumps(b))
-    if m=='empty': return await route.fulfill(status=200,content_type='application/json',body='{}')
     n=cnt['falgen']
+    if m=='empty' and not u.startswith('https://queue.fal.run/'): return await route.fulfill(status=200,content_type='application/json',body='{}')
     if u.startswith('https://queue.fal.run/'):
         rid='req%d'%n; ep=u.split('queue.fal.run/')[1].split('?')[0]; app='/'.join(ep.split('/')[:2])
         res={'video':{'url':f'https://v3b.fal.media/files/v{n}.mp4'}} if ('video' in u or 'avatar' in u or 'talk' in u or 'sync' in u) else {'images':[{'url':f'https://v3b.fal.media/files/g{n}.png'}]}
         if not SC.get('falQ'): SC['falQ']={}
-        SC['falQ'][rid]={'polls':0,'result':res}
+        isimg='images' in res
+        if m=='empty': res={}
+        SC['falQ'][rid]={'polls':0,'result':res,'img':isimg}
         return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'request_id':rid,'status_url':f'https://queue.fal.run/{app}/requests/{rid}/status','response_url':f'https://queue.fal.run/{app}/requests/{rid}'}))
     if 'video' in u: return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'video':{'url':f'https://v3b.fal.media/files/v{n}.mp4'}}))
     return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'images':[{'url':f'https://v3b.fal.media/files/g{n}.png'}]}))
@@ -402,6 +404,7 @@ async def main():
             SC['qPolls']=3; r=await pg.evaluate("()=>Promise.all(Array.from({length:25},(_,i)=>falQueuePost('fal-ai/kling-video/v1.6/pro/text-to-video',{i},{pollMs:15}))).then(a=>new Set(a.map(d=>d.video.url)).size)")
             check('queue stress: 25 concurrent clips all resolve to their own result', r==25, r)
             src=await J(pg,"()=>generateScene.toString()") if await J(pg,"()=>typeof generateScene==='function'") else ''
+            check('queue: still image endpoints (Kling O1 image, Gemini, Nano Banana) use the queue too', not re.search(r"falPost\('fal-ai/(kling-image|gemini-3-pro|nano-banana)", await J(pg,"()=>document.documentElement.outerHTML")), '')
             check('queue: no video endpoint left on synchronous fal.run', not re.search(r"falPost\('fal-ai/(kling-video|veo3)", await J(pg,"()=>document.documentElement.outerHTML")) , '')
             await ctx.close()
         if want('vo'):

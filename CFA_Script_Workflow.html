@@ -7097,17 +7097,19 @@ async function falQueuePost(endpoint, body, opts){
   if(!rr.ok) throw new Error(await apiErrorMessage(rr));
   return rr.json();
 }
+// Stills also go through fal's queue (Oct 28 live run: sync fal.run image calls hung ~15 min then ERR_TIMED_OUT under load).
+const IMG_Q={pollMs:1500, maxMs:8*60*1000};
 async function falImageRequest(model, prompt, refImages){
   prompt=fitClipPrompt(prompt); // fal image endpoints share the 2500-char prompt limit
   let data;
   if(model==='kling-o1'){
-    data=await falPost('fal-ai/kling-image/o1',{prompt,aspect_ratio:frameAR(),num_images:1,image_urls:refImages});
+    data=await falQueuePost('fal-ai/kling-image/o1',{prompt,aspect_ratio:frameAR(),num_images:1,image_urls:refImages},IMG_Q);
   } else if(model==='gemini-3pro'){
-    data=await falPost('fal-ai/gemini-3-pro-image-preview/edit',{prompt,aspect_ratio:frameAR(),num_images:1,image_urls:refImages,resolution:'2K',
-      system_prompt:lookify('2D illustrated style. Bold clean outlines, flat color shading, consistent line weight throughout. No photorealism.')});
+    data=await falQueuePost('fal-ai/gemini-3-pro-image-preview/edit',{prompt,aspect_ratio:frameAR(),num_images:1,image_urls:refImages,resolution:'2K',
+      system_prompt:lookify('2D illustrated style. Bold clean outlines, flat color shading, consistent line weight throughout. No photorealism.')},IMG_Q);
   } else {
     // Nano Banana text-to-image (replaces fal-ai/imagen4, retired by fal; internal id stays 'imagen4')
-    data=await falPost('fal-ai/nano-banana',{prompt:prompt+lookify('  2D illustrated style. Bold clean outlines, flat color shading. No photorealism.'),aspect_ratio:frameAR(),num_images:1});
+    data=await falQueuePost('fal-ai/nano-banana',{prompt:prompt+lookify('  2D illustrated style. Bold clean outlines, flat color shading. No photorealism.'),aspect_ratio:frameAR(),num_images:1},IMG_Q);
   }
   const url=data.images?.[0]?.url||data.image?.url||'';
   if(!url) throw new Error('No result returned — try again.');
