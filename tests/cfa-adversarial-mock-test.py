@@ -936,6 +936,13 @@ async def main():
                 four:dialogueLint('JORDAN: a\\nNARRATOR: b\\nJORDAN: c\\nMARCUS: d\\nJORDAN: e\\nMARCUS: f').some(x=>/Four character lines/.test(x)),
                 noMont:dialogueLint('JORDAN: a\\nNARRATOR: b\\nMARCUS: c').some(x=>/milestone montage/.test(x)),
                 fp:dialogueLint('JORDAN: a\\nNARRATOR: I saw it.\\nMARCUS: c').some(x=>/first person/.test(x)),
+                nr:{rules:/never describes what is on screen/.test(dialogueRules())&&/10 words or fewer/.test(dialogueRules())&&/kind":"fact\|logic\|narrator\|narration/.test(SYS_ACCURACY),
+                  acc:(parseAccuracy('{"issues":[{"kind":"narration","line":"x","problem":"describes screen","fix":"y"}]}')||[]).length,
+                  vis:narrationLint(parseDialogue('JORDAN: Gone.\\nNARRATOR: Jordan looked at his phone.\\nMARCUS: Hm.\\nNARRATOR: He sat down slowly.\\nJORDAN: No.')).some(x=>/on screen/.test(x)),
+                  sub:narrationLint(parseDialogue('JORDAN: Gone.\\nNARRATOR: He had never written the words down.\\nMARCUS: Hm.\\nNARRATOR: Four hundred dollars, and no backup.\\nJORDAN: No.')),
+                  long:narrationLint(parseDialogue('JORDAN: It is gone.\\nNARRATOR: The wallet was empty now and there was no way at all to get any of it back.\\nMARCUS: Hm.')).some(x=>/over 10 words/.test(x)),
+                  calm:narrationLint(parseDialogue('JORDAN: a\\nMARCUS: b\\nJORDAN: c\\nMARCUS: d\\nNARRATOR: The shop smelled of oil and old tyres, the way it had for twenty years.\\nJORDAN: e')).some(x=>/over 10 words/.test(x)),
+                  vague:narrationLint(parseDialogue('JORDAN: a\\nNARRATOR: He could lose everything.')).some(x=>/Vague stakes/.test(x))},
                 opt:[...document.querySelectorAll('#sm-narr option')].map(o=>o.value)}}""")
             check('full narration: default mode, lip sync off, rules in prompt', fn['def']=='full' and fn['full'] and not fn['talk'] and fn['rules'], fn)
             st=fn['st']
@@ -944,6 +951,11 @@ async def main():
             check('structure: forward cold open with concrete stakes passes clean', st['ok']==[], st['ok'])
             check('structure: missing stakes and up-front lesson explainer flagged', st['nostake'] and st['upfront'], st)
             check('structure: a time phrase after the opening lines is not flagged', st['laterOk'], st)
+            nr=fn['nr']
+            check('narration: rules (no screen description, <=10 words when tense, concrete stakes) in prompt and accuracy audit', nr['rules'] and nr['acc']==1, nr)
+            check('narration: Bill describing the picture is flagged; subtext/stakes lines pass', nr['vis'] and nr['sub']==[], nr)
+            check('narration: >10-word narrator line at a tense beat flagged, long calm line allowed', nr['long'] and not nr['calm'], nr)
+            check('narration: vague stakes ("lose everything") flagged', nr['vague'], nr)
             check('full narration: lint accepts in-media-res cold open + montage', fn['lint']==[], fn['lint'])
             check('full narration: lint flags narrator cold open, 4 unattributed lines, no montage, narrator first person', fn['badCold'] and fn['four'] and fn['noMont'] and fn['fp'], fn)
             check('full narration: Hybrid and Sparse still selectable', fn['opt']==['full','sparse','hybrid'], fn['opt'])
