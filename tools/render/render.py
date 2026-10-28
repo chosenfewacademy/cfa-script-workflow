@@ -50,9 +50,81 @@ def run(cmd, **kw):
     r = subprocess.run(cmd, capture_output=True, text=True, **kw)
     if r.returncode:
         sys.stderr.write(r.stderr[-4000:])
-        raise RuntimeError("command failed: " + " ".join(map(str, cmd[:6])) + " ...")
+        why = ""
+        if r.returncode < 0:
+            why = " (killed by signal %d%s)" % (-r.returncode, ", likely out of memory" if r.returncode == -9 else "")
+        raise RuntimeError("command failed%s: " % why + " ".join(map(str, cmd[:6])) + " ...")
     return r
 
+
+
+ENCODE_CHUNK = int(os.environ.get("CFA_ENCODE_CHUNK", "16"))
+
+
+def _t(x):
+    return round(x * FPS) / FPS
+
+
+def chain_graph(n, shots, base, first_label=0):
+    """xfade/concat chain over n inputs; shots[k] describes input k; offsets relative to base."""
+    fc, prev = ["[0:v]settb=1/%d[b0]" % FPS], "[b0]"
+    for i in range(1, n):
+        shot = shots[i]
+        tr = TRANSITIONS[shot["transition_in"]]
+        lab = "[x%d]" % i
+        if tr is None:
+            fc.append("%s[%d:v]concat=n=2:v=1:a=0,settb=1/%d%s" % (prev, i, FPS, lab))
+        else:
+            fc.append("[%d:v]settb=1/%d[in%d]" % (i, FPS, i))
+            fc.append("%s[in%d]xfade=transition=%s:duration=%.3f:offset=%.3f%s" % (
+                prev, i, tr, shot["transition_duration"], _t(shot["start"]) - base, lab))
+        prev = lab
+    return fc, prev
+
+
+def chunk_groups(n, size):
+    size = max(2, size)
+    groups = [list(range(k, min(n, k + size))) for k in range(0, n, size)]
+    if len(groups) > 1 and len(groups[-1]) == 1:
+        last = groups.pop()
+        groups[-1] = groups[-1] + last
+    return groups
+
+
+def encode_video(clips, shots, total, tail_filter, audio, final, work, chunk=None):
+    """Encode the shot chain. Long edits are pre-joined in chunks so ffmpeg never holds
+    more than `chunk` decoders at once (a single 100+ input graph got OOM-killed)."""
+    chunk = chunk or ENCODE_CHUNK
+    srcs, sshots = list(clips), list(shots)
+    if len(clips) > chunk:
+        groups = chunk_groups(len(clips), chunk)
+        log("encoding %d shots in %d chunks of <=%d" % (len(clips), len(groups), chunk))
+        srcs, sshots = [], []
+        for gi, g in enumerate(groups):
+            base = _t(shots[g[0]]["start"])
+            fc, prev = chain_graph(len(g), [shots[k] for k in g], base)
+            fc.append("%snull[v]" % prev)
+            gfile = os.path.join(work, "graph_chunk_%02d.txt" % gi)
+            open(gfile, "w").write(";\n".join(fc))
+            out = os.path.join(work, "chunk_%02d.mp4" % gi)
+            ins = []
+            for k in g:
+                ins += ["-i", clips[k]]
+            run(["ffmpeg", "-y", "-v", "error"] + ins + ["-filter_complex_script", gfile, "-map", "[v]",
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-pix_fmt", "yuv420p", "-r", str(FPS), out])
+            srcs.append(out)
+            sshots.append(shots[g[0]])
+    fc, prev = chain_graph(len(srcs), sshots, 0.0)
+    fc.append("%s%s[v]" % (prev, tail_filter))
+    fcs = os.path.join(work, "graph.txt")
+    open(fcs, "w").write(";\n".join(fc))
+    inputs = []
+    for c in srcs:
+        inputs += ["-i", c]
+    run(["ffmpeg", "-y", "-v", "error"] + inputs + ["-i", audio, "-filter_complex_script", fcs,
+         "-map", "[v]", "-map", "%d:a" % len(srcs), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+         "-profile:v", "high", "-pix_fmt", "yuv420p", "-r", str(FPS), "-c:a", "copy", "-t", "%.3f" % total,
+         "-movflags", "+faststart", final])
 
 def ensure_ffmpeg():
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):
@@ -1643,22 +1715,9 @@ def main():
         except Exception as e:
             whisper["voice_pass_error"] = str(e)[:200]
     cues = build_ass(words, segs, edl, W, H, total, ass)
-    inputs, fc, prev = [], ["[0:v]settb=1/%d[b0]" % FPS], "[b0]"
-    for c in clips:
-        inputs += ["-i", c]
-    for i in range(1, len(clips)):
-        shot = edl["shots"][i]
-        tr = TRANSITIONS[shot["transition_in"]]
-        lab = "[x%d]" % i
-        if tr is None:
-            fc.append("%s[%d:v]concat=n=2:v=1:a=0,settb=1/%d%s" % (prev, i, FPS, lab))
-        else:
-            fc.append("[%d:v]settb=1/%d[in%d]" % (i, FPS, i))
-            fc.append("%s[in%d]xfade=transition=%s:duration=%.3f:offset=%.3f%s" % (prev, i, tr, shot["transition_duration"], round(shot["start"] * FPS) / FPS, lab))
-        prev = lab
     ass_esc_path = ass.replace("\\", "/").replace(":", "\\:")
     grade = ("lut3d=file='%s':interp=tetrahedral," % LUT_PATH.replace("'", r"\'")) if LUT_PATH else ""
-    fc.append("%sfps=%d,trim=0:%.3f,setpts=PTS-STARTPTS,%ssubtitles='%s'[v]" % (prev, FPS, total, grade, ass_esc_path))
+    tail_filter = "fps=%d,trim=0:%.3f,setpts=PTS-STARTPTS,%ssubtitles='%s'" % (FPS, total, grade, ass_esc_path)
     audio = os.path.join(work, "audio.m4a")
     log("stage: mixing")
     events = [] if a.no_sfx else sfx_events(edl["shots"], edl["arc_times"])
@@ -1721,12 +1780,7 @@ def main():
     build_audio(voice, a.music, total, audio, work, sfx, edl["arc_times"].get("turn"))
     final = os.path.join(a.out, "final.mp4")
     log("stage: encoding")
-    fcs = os.path.join(work, "graph.txt")
-    open(fcs, "w").write(";\n".join(fc))
-    run(["ffmpeg", "-y", "-v", "error"] + inputs + ["-i", audio, "-filter_complex_script", fcs,
-         "-map", "[v]", "-map", "%d:a" % len(clips), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-         "-profile:v", "high", "-pix_fmt", "yuv420p", "-r", str(FPS), "-c:a", "copy", "-t", "%.3f" % total,
-         "-movflags", "+faststart", final])
+    encode_video(clips, edl["shots"], total, tail_filter, audio, final, work)
 
     # thumbnail: chosen shot (caption-free intermediate), big title text
     th = edl["thumbnail"]
