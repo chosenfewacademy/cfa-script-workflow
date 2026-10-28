@@ -1101,6 +1101,66 @@ def scene_ambience(shots, segs, key, work, cache=None):
     return out, info
 
 
+FOLEY_KINDS = [  # (kind, keyword regex on the line + shot prompt, ElevenLabs prompt)
+    ("phone", r"\b(phone|text(ed)?|message|notification|buzz(ed|ing)?|screen|app)\b", "single smartphone vibration buzz on a wooden desk, close"),
+    ("typing", r"\b(typ(e|ed|ing)|keyboard|laptop|keys)\b", "short burst of laptop keyboard typing, close"),
+    ("writing", r"\b(wr(ite|ote|iting)|pen|pencil|notebook|scribbl\w*)\b", "pencil scribbling on paper notebook, close"),
+    ("paper", r"\b(paper|invoice|envelope|receipt|page|card)\b", "paper sheet rustle and slide on a desk"),
+    ("door", r"\b(door|bell|walked in|came in)\b", "small shop door bell jingle as a door opens"),
+    ("tool", r"\b(wrench|tool|bench|bolt|chain|spoke|bike)\b", "metal wrench set down on a wooden workbench, single clink"),
+]
+FOLEY_GAIN, FOLEY_GAP, FOLEY_MAX = 0.45, 4.0, 40
+
+
+def foley_plan(shots, segs):
+    """One foley hit per shot at most, from the shot's line/prompt keywords; spaced >= FOLEY_GAP s apart."""
+    by_idx = {sg["index"]: sg for sg in segs}
+    plan, last = [], -99.0
+    for sh in shots:
+        txt = " ".join(str(by_idx[i].get(k) or "") for i in sh.get("beats", []) if i in by_idx for k in ("text", "prompt", "sfx")).lower()
+        kind = next((k for k, rx, _ in FOLEY_KINDS if re.search(rx, txt)), None)
+        t = sh["start"] + min(0.4, sh["duration"] / 4)
+        if kind and t - last >= FOLEY_GAP and len(plan) < FOLEY_MAX:
+            plan.append((kind, round(t, 3)))
+            last = t
+    return plan
+
+
+def scene_foley(shots, segs, key, work, fetch=None):
+    """Generate (cached, one per kind) and place foley hits. Returns ([(path, t, gain, dur)], info)."""
+    import urllib.request
+    plan = foley_plan(shots, segs)
+    info = {"planned": len(plan), "generated": 0, "errors": []}
+    if not plan or not key:
+        return [], info
+    def _fetch(prompt):
+        body = json.dumps({"text": prompt + ", sound effect only, no music, no voices", "duration_seconds": 1.5, "prompt_influence": 0.6}).encode()
+        req = urllib.request.Request("https://api.elevenlabs.io/v1/sound-generation", data=body, method="POST",
+                                     headers={"xi-api-key": key, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
+    fetch = fetch or _fetch
+    prompts = {k: pr for k, _, pr in FOLEY_KINDS}
+    paths, out = {}, []
+    for kind, t in plan:
+        if kind not in paths:
+            paths[kind] = None
+            try:
+                data = fetch(prompts[kind])
+                if len(data) < 500:
+                    raise ValueError("empty audio")
+                pth = os.path.join(work, "foley_%s.mp3" % kind)
+                open(pth, "wb").write(data)
+                paths[kind] = pth
+                info["generated"] += 1
+            except Exception as e:
+                info["errors"].append("%s: %s" % (kind, str(e)[:100]))
+        if paths[kind]:
+            out.append((paths[kind], t, FOLEY_GAIN, 1.5))
+    info["placed"] = len(out)
+    return out, info
+
+
 def build_sfx_track(events, total, work, ambience=None):
     ambience = ambience or []
     if not events and not ambience:
@@ -1167,7 +1227,27 @@ def music_plan(total, arc, style):
                        "positive_styles": [base] + mood, "negative_styles": ["vocals", "singing", "lyrics", "harsh", "aggressive drums"]})
     if carry and chunks:
         chunks[-1]["duration_ms"] += int(carry * 1000)
-    return chunks
+    return clamp_music_chunks(chunks)
+
+
+MUSIC_CHUNK_MS = (3000, 120000)  # ElevenLabs composition_plan limits per chunk (422 above 120 s)
+
+
+def clamp_music_chunks(chunks, lo=MUSIC_CHUNK_MS[0], hi=MUSIC_CHUNK_MS[1]):
+    """Split any section longer than the API limit into equal parts (<= hi) and keep every part >= lo."""
+    out = []
+    for c in chunks:
+        d = int(c["duration_ms"])
+        n = max(1, -(-d // hi))
+        for k in range(n):
+            part = dict(c, positive_styles=list(c.get("positive_styles", [])), negative_styles=list(c.get("negative_styles", [])))
+            part["duration_ms"] = d // n + (d % n if k == n - 1 else 0)
+            if n > 1:
+                part["text"] = c["text"].rstrip("]") + (" (continues)]" if k else "]")
+            out.append(part)
+    for c in out:
+        c["duration_ms"] = max(lo, min(hi, int(c["duration_ms"])))
+    return out
 
 
 def compose_music(total, arc, style, key, work):
@@ -1244,7 +1324,7 @@ def lip_offsets(shots, d, voice, work):
 
 
 TRANSITION_POLICY = True
-MUSIC_UNDER_DB = (18.0, 22.0, 20.0)  # music (ducked) sits this many dB under the voice: min, max, target
+MUSIC_UNDER_DB = (15.0, 19.0, 17.0)  # music (ducked) sits this many dB under the voice: min, max, target (was 18-22: too quiet to notice)
 
 
 def smooth_transitions(shots):
@@ -1728,6 +1808,13 @@ def main():
             amb_info.update(inf)
         except Exception as e:
             amb_info["errors"].append(str(e)[:160])
+    foley_info = {"skipped": "off"}
+    if not a.no_sfx:
+        try:
+            fol, foley_info = scene_foley(shots, segs, env_key("ELEVENLABS_API_KEY", a.keys_env), work)
+            amb = list(amb) + fol
+        except Exception as e:
+            foley_info = {"errors": [str(e)[:160]]}
     sfx = build_sfx_track(events, total, work, amb)
     music_info = {"source": None}
     bmus = b.get("music")
@@ -1833,7 +1920,7 @@ def main():
               "shots": [{"index": x["index"], "beats": x["beats"], "media": x["media"], "type": x["mediaType"],
                          "start": x["start"], "duration": x["duration"], "motion": x["motion"], "role": x.get("role"),
                          "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"]} for x in shots],
-              "arc": edl.get("arc"), "arc_times": edl.get("arc_times"), "sfx_events": [list(e) for e in events], "ambience": dict(amb_info, placed=len(amb)),
+              "arc": edl.get("arc"), "arc_times": edl.get("arc_times"), "sfx_events": [list(e) for e in events], "ambience": dict(amb_info, placed=len(amb)), "foley": foley_info,
               "punch_ins": sum(1 for x in shots if x.get("part") == "b"),
               "shot_lengths": sorted(round(x["duration"], 2) for x in shots),
               "avg_shot": round(total / len(shots), 3), "min_shot": min(x["duration"] for x in shots),
