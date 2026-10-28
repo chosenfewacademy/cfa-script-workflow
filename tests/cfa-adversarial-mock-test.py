@@ -215,9 +215,12 @@ async def main():
             await go_seg(pg); check('happy: segments', await J(pg,"()=>(segScript.match(/^\\d+\\./gm)||[]).length")>=3)
             await go_scenes(pg)
             st=await J(pg,"()=>({n:sceneData.length,consec:sceneData.some((s,i)=>i&&s.tag==='VIDEO'&&sceneData[i-1].tag==='VIDEO'),prompts:sceneData.every(s=>s.prompt)})")
+            kb=await J(pg,"()=>{const K=keyBeats(sceneData);return {def:motionMode(),ok:sceneData.every((s,i)=>s.tag===(K.has(i)?'VIDEO':'IMAGE')||s.tag==='TALK'),n:sceneData.length,k:[...K]}}")
+            check('happy: key-beat motion is the default (clips only on key beats, near-stills elsewhere)', kb['def']=='keybeat' and kb['ok'] and 0 in kb['k'] and kb['n']-1 in kb['k'], kb)
+            await J(pg,"()=>setMotionMode('full')")
             st2=await J(pg,"()=>({full:motionMode()==='full'&&sceneData.every(s=>s.tag==='VIDEO'||s.tag==='TALK'),ui:document.getElementById('s6-motion').value,opts:[...document.getElementById('s6-motion').options].map(o=>o.textContent)})")
-            check('happy: classified+prompts (fully animated default: every non-talking beat is a clip)', st['n']>=3 and st['prompts'] and st2['full'] and st2['ui']=='full', [st,st2])
-            check('motion selector shows both modes with a per-episode cost', '$' in st2['opts'][0] and st2['opts'][0].startswith('Fully animated (recommended)') and st2['opts'][1].startswith('Mixed (cheaper)'), st2['opts'])
+            check('happy: classified+prompts (fully animated selectable: every non-talking beat is a clip)', st['n']>=3 and st['prompts'] and st2['full'] and st2['ui']=='full', [st,st2])
+            check('motion selector shows all three modes with a per-episode cost', '$' in st2['opts'][0] and st2['opts'][0].startswith('Key-beat motion (recommended)') and st2['opts'][1].startswith('Fully animated') and st2['opts'][2].startswith('Mixed (cheaper)'), st2['opts'])
             st3=await J(pg,"()=>{setMotionMode('mixed');const r={consec:sceneData.some((s,i)=>i&&s.tag==='VIDEO'&&sceneData[i-1].tag==='VIDEO'&&!s.resultURL)};setMotionMode('full');return r}")
             check('mixed mode: never two consecutive generated clips', not st3['consec'], st3)
             await J(pg,"()=>startSceneGeneration()")
@@ -299,7 +302,7 @@ async def main():
             SC['cls']='I cannot do that.'
             await J(pg,"()=>{document.getElementById('sgo').value='1. Marcus waits.\\n2. Jordan sends.\\n3. A chart.';onSegEd();}")
             await go_scenes(pg)
-            check('garbage classification: all IMAGE (animated in full mode)', await J(pg,"()=>sceneData.every(s=>s.origTag==='IMAGE' && s.tag===(motionMode()==='full'?'VIDEO':'IMAGE'))"))
+            check('garbage classification: all IMAGE (animated in full mode)', await J(pg,"()=>sceneData.every(s=>s.origTag==='IMAGE' && s.tag===(motionMode()==='full'||(motionMode()==='keybeat'&&keyBeats(sceneData).has(sceneData.indexOf(s)))?'VIDEO':'IMAGE'))"))
             SC['cls']=None
             check('inputs: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
@@ -330,7 +333,7 @@ async def main():
             check('fal errors: no spend charged', sp0==0, sp0)
             # Rapid scene switching while uploads are slow → slots must match the scene shown
             SC['falDelay']=0.4; up0=cnt['upload']
-            for k in ['Marcus','Jordan']: await J(pg,f"()=>{{delete charUploadCache['{k}']}}")
+            await J(pg,"()=>{for(const k of Object.keys(charUploadCache)) delete charUploadCache[k]}")
             await J(pg,"()=>{for(const i of [1,0,3,2,1,0,3]){currentScene=i;loadScene(i);}}")
             await pg.wait_for_timeout(2500)
             st=await J(pg,"()=>({cur:currentScene,subj:document.querySelector('#slot-subject img')?.alt||'',co:document.querySelector('#slot-cosubject img')?.alt||'',subjUrl:!!sceneRefs.subject?.url?.startsWith('https'),coUrl:!!sceneRefs.cosubject?.url?.startsWith('https'),uploading:!!document.getElementById('slot-subject').dataset.uploading})")
@@ -339,12 +342,12 @@ async def main():
             SC['falDelay']=0
             # Upload failure path
             SC['fal']='uploadfail'
-            for k in ['Marcus','Jordan']: await J(pg,f"()=>{{delete charUploadCache['{k}']}}")
+            await J(pg,"()=>{for(const k of Object.keys(charUploadCache)) delete charUploadCache[k]}")
             await J(pg,"()=>{currentScene=0;loadScene(0);}"); await pg.wait_for_timeout(500)
             await J(pg,"()=>generateScene()"); await pg.wait_for_timeout(300)
             check('upload fail: generation blocked with message', 'uploading' in (await J(pg,"()=>document.getElementById('e6').textContent")).lower() or 'character' in (await J(pg,"()=>document.getElementById('e6').textContent")).lower(), await J(pg,"()=>document.getElementById('e6').textContent"))
             SC['fal']='ok'
-            for k in ['Marcus','Jordan']: await J(pg,f"()=>{{delete charUploadCache['{k}']}}")
+            await J(pg,"()=>{for(const k of Object.keys(charUploadCache)) delete charUploadCache[k]}")
             # Generate scene 0, switch away mid-flight
             SC['delay']=0.8
             await J(pg,"()=>{currentScene=0;loadScene(0);}"); await pg.wait_for_timeout(400)
@@ -450,6 +453,7 @@ async def main():
             check('timing: SRT well-formed', srt.startswith('1\n00:00:00,000 --> ') and srt.count('-->')>=3, srt[:200])
             SC['cls']='[1] IMAGE\n[2] VIDEO\n[3] IMAGE\n[4] VIDEO\n[5] IMAGE'
             await go_scenes(pg); SC['cls']=None
+            await J(pg,"()=>setMotionMode('full')")
             st=await J(pg,"()=>sceneData.map(s=>[s.tag,s.tStart,s.tEnd])")
             check('timing: every scene timed, monotonic', all(x[1] is not None for x in st) and all(st[i][1]>=st[i-1][2]-1e-6 for i in range(1,len(st))), st)
             await J(pg,"()=>{sceneData[1].tStart=0;sceneData[1].tEnd=7.3;startSceneGeneration();}"); await pg.wait_for_timeout(300)
@@ -611,7 +615,7 @@ async def main():
             gl=[json.loads(b)['prompt'] for u,b in SC['falLog'] if 'upload' not in u]
             body=SC.get('oaiBody',b'').decode('latin1')
             check('gpt text: beat that needs words allows them and gets the GPT cleanup', gl and 'NO WRITING' not in gl[0] and 'Only the specific words' in gl[0] and cnt.get('oai',0)==o0+1 and '+ GPT' in await J(pg,"()=>sceneData[0].resultModel"), gl[:1])
-            check('gpt text: edit keeps style/characters and gets the seen words', 'Octobr 2008' in body and 'flat 2D cartoon' in body and 'gpt-image' in body, body[:200])
+            check('gpt text: edit keeps style/characters and gets the seen words', 'Octobr 2008' in body and '3D animated' in body and 'flat 2D' not in body and 'gpt-image' in body, body[:200])
             await J(pg,"()=>{setQaToggle('cfa_gpt_text',false);sceneData[0].resultURL='';}")
             o0=cnt.get('oai',0); SC['vision']=[{'style_score':9,'style_match':True,'has_text':True,'text':['X'],'identity':[{'name':'Jordan','visible':True,'score':9}]}]
             await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
@@ -866,6 +870,14 @@ async def main():
             check('full narration: lint accepts in-media-res cold open + montage', fn['lint']==[], fn['lint'])
             check('full narration: lint flags narrator cold open, 4 unattributed lines, no montage, narrator first person', fn['badCold'] and fn['four'] and fn['noMont'] and fn['fp'], fn)
             check('full narration: Hybrid and Sparse still selectable', fn['opt']==['full','sparse','hybrid'], fn['opt'])
+            lk=await J(pg,"""()=>{const r={def:look3d(), ref3d:MARCUS_B64===MARCUS_B64_3D&&DEE_B64===DEE_B64_3D&&RECURRING_CAST.Dee.b64===DEE_B64_3D, qa3:/3D animated/.test(STYLE_QA_SYS)&&!/the same flat 2D cartoon/.test(STYLE_QA_SYS)&&/3D animated/.test(SYS_KLING_VIDEO)&&!/flat 2D cartoon illustration/.test(STYLE_SPEC),
+                idw:/Wardrobe and hair/.test(IDENTITY_QA_SYS), dir:/OFF-CENTER/.test(DIRECTOR_RESILIA)&&/in media res/.test(DIRECTOR_RESILIA)&&/hoodie/.test(DIRECTOR_RESILIA)};
+              localStorage.setItem('cfa_look','2d'); applyLook(); r.back2d=MARCUS_B64===MARCUS_B64_2D&&/flat 2D cartoon/.test(STYLE_QA_SYS)&&/2D illustrated/.test(SYS_KLING_IMAGE);
+              localStorage.removeItem('cfa_look'); applyLook(); r.again3d=MARCUS_B64===MARCUS_B64_3D&&/3D animated/.test(STYLE_QA_SYS);
+              r.opts=[...document.querySelectorAll('#sm-look option')].map(o=>o.value); return r}""")
+            check('3D look: default, 3D model sheets for all five characters, QA/prompt text swapped', lk['def'] and lk['ref3d'] and lk['qa3'], lk)
+            check('3D look: identity QA checks wardrobe/hair; director close-ups, off-centre, in media res, wardrobe lock', lk['idw'] and lk['dir'], lk)
+            check('3D look: 2D kept behind the Look setting and switches cleanly both ways', lk['back2d'] and lk['again3d'] and lk['opts']==['3d','2d'], lk)
             script="JORDAN: It's gone. The whole payment.\nNARRATOR: An hour earlier, Jordan had pressed send.\nMARCUS: Sent is not arrived.\nDEE: Nothing on my phone.\nNARRATOR: Ten minutes passed. Then twenty.\nPRIYA: Check the confirmations.\nJORDAN: Twelve confirmations. It's there."
             SC['elCalls']=[]; SC['elReal']=True
             await J(pg,"(t)=>{finalScript=t;segScript=dialogueSegments(t);goVO();}",script)
@@ -935,17 +947,18 @@ async def main():
               const keep=sceneData; selId=selId||'v02';
               sceneData=[{line:'1. NARRATOR: The shop was quiet.',tag:'IMAGE',origTag:'IMAGE',sceneDesc:'corner shop'},{line:'2. JORDAN: Wait—',tag:'TALK',sceneDesc:'corner shop'},{line:'3. NARRATOR: Rain hit the window.',tag:'VIDEO',origTag:'VIDEO',sceneDesc:'Corner shop!'},{line:'4. NARRATOR: Later.',tag:'IMAGE',origTag:'IMAGE',sceneDesc:'street'}];
               localStorage.removeItem(motionKey());
-              const def=motionMode(); applyMotionMode(); const fullTags=sceneData.map(x=>x.tag).join(',');
+              const def=motionMode(); applyMotionMode(); const kbTags=sceneData.map(x=>x.tag).join(',');
+              safeSetItem(motionKey(),'full'); applyMotionMode(); const fullTags=sceneData.map(x=>x.tag).join(',');
               const f=motionCostEstimate('full').usd, mx=motionCostEstimate('mixed').usd;
               safeSetItem(motionKey(),'mixed'); applyMotionMode(); const mixTags=sceneData.map(x=>x.tag).join(',');
               const other=(()=>{ const s=selId; selId='v99'; const r=motionMode(); selId=s; return r; })();
               const sp=samePlace(sceneData[0],sceneData[2]) && !samePlace(sceneData[0],sceneData[3]);
               localStorage.removeItem(motionKey()); sceneData=keep;
-              return {def,fullTags,mixTags,f,mx,other,sp};
+              return {def,kbTags,fullTags,mixTags,f,mx,other,sp};
             }""")
-            check('motion: fully animated is the default and every non-talking beat becomes a clip', m['def']=='full' and m['fullTags']=='VIDEO,TALK,VIDEO,VIDEO', m)
+            check('motion: key-beat default; fully animated makes every non-talking beat a clip', m['def']=='keybeat' and m['fullTags']=='VIDEO,TALK,VIDEO,VIDEO' and m['kbTags'].split(',')[0]=='VIDEO' and m['kbTags'].split(',')[-1]=='VIDEO', m)
             check('motion: mixed restores the classifier mix', m['mixTags']=='IMAGE,TALK,VIDEO,IMAGE', m)
-            check('motion: per-episode choice, full costs more than mixed', m['other']=='full' and m['f']>m['mx']>0, m)
+            check('motion: per-episode choice, full costs more than mixed', m['other']=='keybeat' and m['f']>m['mx']>0, m)
             check('motion: same-place continuity match ignores case/punctuation', m['sp'], m)
             bad="Jordan looked at the screen for a long while and wondered what had gone wrong with it.\nBOB: Hi there.\nNARRATOR: "+("calm "*400)+"\nMARCUS: "+("long "*45)+"\nMARCUS: one\nMARCUS: two"
             li=await J(pg,"(t)=>{localStorage.setItem('cfa_narr_mode','sparse');const r=dialogueLint(t).join(' | ');localStorage.removeItem('cfa_narr_mode');return r}",bad)
