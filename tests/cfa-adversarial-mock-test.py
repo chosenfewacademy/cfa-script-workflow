@@ -118,8 +118,20 @@ async def fal_route(route):
     if 'upload.mock' in u: return await route.fulfill(status=200,body='')
     if 'fal.media' in u and u.split('?')[0].endswith('.mp4'): return await route.fulfill(status=200,content_type='video/mp4',headers={'Access-Control-Allow-Origin':'*'},body=CLIP)
     if 'fal.media' in u: return await route.fulfill(status=200,content_type='image/png',body=PNG)
+    if u.startswith('https://queue.fal.run/') and '/requests/' in u:
+        rid=u.split('/requests/')[1].split('/')[0]; Q=SC.get('falQ') or {}; job=Q.get(rid)
+        if job is None: return await route.fulfill(status=404,content_type='application/json',body='{"detail":"not found"}')
+        if u.split('?')[0].endswith('/status'):
+            job['polls']+=1
+            if (SC.get('qStatusNetFail') or 0)>0: SC['qStatusNetFail']-=1; return await route.abort('timedout')
+            if SC.get('qMode')=='failed': return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'status':'FAILED','error':'model crashed'}))
+            st='COMPLETED' if job['polls']>(SC.get('qPolls') or 2) else 'IN_PROGRESS'
+            if SC.get('qMode')=='never': st='IN_QUEUE'
+            return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'status':st}))
+        return await route.fulfill(status=200,content_type='application/json',body=json.dumps(job['result']))
     cnt['falgen']+=1
-    SC.setdefault('falLog',[]).append((u,route.request.post_data or ''))
+    if SC.get('falLog') is None: SC['falLog']=[]
+    SC['falLog'].append((u,route.request.post_data or ''))
     if SC['delay']: await asyncio.sleep(SC['delay'])
     m=SC['fal']
     if m in('429','500','422','401'):
@@ -127,6 +139,12 @@ async def fal_route(route):
         return await route.fulfill(status=st,content_type='application/json',body=json.dumps(b))
     if m=='empty': return await route.fulfill(status=200,content_type='application/json',body='{}')
     n=cnt['falgen']
+    if u.startswith('https://queue.fal.run/'):
+        rid='req%d'%n; ep=u.split('queue.fal.run/')[1].split('?')[0]; app='/'.join(ep.split('/')[:2])
+        res={'video':{'url':f'https://v3b.fal.media/files/v{n}.mp4'}} if ('video' in u or 'avatar' in u or 'talk' in u or 'sync' in u) else {'images':[{'url':f'https://v3b.fal.media/files/g{n}.png'}]}
+        if not SC.get('falQ'): SC['falQ']={}
+        SC['falQ'][rid]={'polls':0,'result':res}
+        return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'request_id':rid,'status_url':f'https://queue.fal.run/{app}/requests/{rid}/status','response_url':f'https://queue.fal.run/{app}/requests/{rid}'}))
     if 'video' in u: return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'video':{'url':f'https://v3b.fal.media/files/v{n}.mp4'}}))
     return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'images':[{'url':f'https://v3b.fal.media/files/g{n}.png'}]}))
 async def el_route(route):
@@ -164,7 +182,7 @@ async def newpage(b, keys=True, pre=None):
     await ctx.route('**/*',other_route)
     await ctx.route(re.compile(r'http://127\.0\.0\.1:9/.*'),down_route)
     await ctx.route('https://api.x.ai/**',xai_route)
-    await ctx.route(re.compile(r'https://(fal\.run|rest\.alpha\.fal\.ai|upload\.mock|v3b\.fal\.media)/.*'),fal_route)
+    await ctx.route(re.compile(r'https://(fal\.run|queue\.fal\.run|rest\.alpha\.fal\.ai|upload\.mock|v3b\.fal\.media)/.*'),fal_route)
     await ctx.route('https://api.elevenlabs.io/**',el_route)
     await ctx.route('https://api.openai.com/**',oai_route)
     async def bal_route(route):
@@ -362,6 +380,28 @@ async def main():
             check('fal: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
 
+        if want('queue'):
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
+            ctx,pg,errs=await newpage(b)
+            await J(pg,"()=>sessionStorage.setItem('cfa_fal_key','k')")
+            run="(a)=>falQueuePost(a[0],{prompt:'x'},{pollMs:20,maxMs:a[1]||5000}).then(d=>({ok:d}),e=>({err:e.message}))"
+            SC['qPolls']=2; r=await pg.evaluate(run,['fal-ai/kling-video/v1.6/pro/image-to-video',0])
+            check('queue: Kling video submits to queue.fal.run, polls, returns the video', (r.get('ok') or {}).get('video',{}).get('url','').endswith('.mp4') and any(u.startswith('https://queue.fal.run/fal-ai/kling-video/v1.6/pro/image-to-video') for u,_ in SC.get('falLog',[])), r)
+            SC['fal']='401'; r=await pg.evaluate(run,['fal-ai/kling-video/v1.6/pro/image-to-video',0]); SC['fal']='ok'
+            check('queue: bad key on submit -> clear error, no polling', 'err' in r and 'network' not in r['err'].lower(), r)
+            SC['qMode']='failed'; r=await pg.evaluate(run,['fal-ai/kling-video/v1.6/pro/image-to-video',0]); SC['qMode']=None
+            check('queue: FAILED status surfaces fal error', 'model crashed' in r.get('err',''), r)
+            SC['qStatusNetFail']=3; r=await pg.evaluate(run,['fal-ai/kling-video/v1.6/pro/image-to-video',0])
+            check('queue: transient status network errors are retried (no "Network error")', 'ok' in r, r)
+            SC['qMode']='never'; r=await pg.evaluate(run,['fal-ai/kling-video/v1.6/pro/image-to-video',400]); SC['qMode']=None
+            check('queue: stuck job stops after maxMs with a check-the-dashboard message', 'dashboard' in r.get('err',''), r)
+            SC['qMode']='never'; r=await pg.evaluate("()=>{const c=new AbortController();const p=falQueuePost('fal-ai/kling-video/v1.6/pro/image-to-video',{},{pollMs:20,signal:c.signal}).then(()=>'done',e=>e.name);setTimeout(()=>c.abort(),60);return p;}")
+            SC['qMode']=None; check('queue: abort signal stops polling', r=='AbortError', r)
+            SC['qPolls']=3; r=await pg.evaluate("()=>Promise.all(Array.from({length:25},(_,i)=>falQueuePost('fal-ai/kling-video/v1.6/pro/text-to-video',{i},{pollMs:15}))).then(a=>new Set(a.map(d=>d.video.url)).size)")
+            check('queue stress: 25 concurrent clips all resolve to their own result', r==25, r)
+            src=await J(pg,"()=>generateScene.toString()") if await J(pg,"()=>typeof generateScene==='function'") else ''
+            check('queue: no video endpoint left on synchronous fal.run', not re.search(r"falPost\('fal-ai/(kling-video|veo3)", await J(pg,"()=>document.documentElement.outerHTML")) , '')
+            await ctx.close()
         if want('vo'):
             for m,exp in [('401','Invalid API key'),('429','Rate limit'),('empty','Empty audio'),('ok','')]:
                 SC['el']=m
