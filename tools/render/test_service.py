@@ -63,12 +63,12 @@ def main():
         check(J("/feedback", "POST", {"step": "script", "kind": "other", "comment": "x"})[0] == 400, "feedback: unknown kind -> 400")
         check(J("/feedback", "POST", {"step": "script", "kind": "tool", "comment": "  "})[0] == 400, "feedback: empty comment -> 400")
         check(J("/feedback", "POST", ["not", "an", "object"])[0] == 400, "feedback: non-object body -> 400")
-        steps = ["research", "script", "voices", "registry", "shotlist", "stills", "clips", "lipsync", "music", "edit", "final"]
+        steps = ["research", "script", "voices", "registry", "shotlist", "stills", "clips", "lipsync", "narration", "music", "edit", "final"]
         made = [J("/feedback", "POST", {"step": st, "kind": "episode" if i % 2 else "tool", "rating": 9 if i == 0 else i % 6, "comment": "note for " + st + "\x07", "ref": "shot 2", "episode": "Ep 1"}) for i, st in enumerate(steps)]
-        check(all(c == 201 and it["status"] == "submitted" for c, it in made), "feedback: accepted on all 11 steps")
+        check(all(c == 201 and it["status"] == "submitted" for c, it in made), "feedback: accepted on all %d steps (incl. full-narration Narration)" % len(steps))
         check(made[0][1]["rating"] == 5 and "\x07" not in made[0][1]["comment"] and made[0][1]["reviewer"] == "Chris", "feedback: rating clamped, control chars stripped, reviewer defaults to Chris")
         inbox = [json.loads(l) for l in open(os.path.join(fbd, "inbox.jsonl"))]
-        check(len(inbox) == 11 and [x["step"] for x in inbox] == steps, "feedback: every item appended to inbox.jsonl")
+        check(len(inbox) == len(steps) and [x["step"] for x in inbox] == steps, "feedback: every item appended to inbox.jsonl")
         fid = made[1][1]["id"]
         c, it = J("/feedback/%s/status" % fid, "POST", {"status": "in_progress", "resolution": "working"})
         check(c == 200 and it["status"] == "in_progress" and it["resolution"] == "working", "feedback: status -> in_progress")
@@ -88,7 +88,7 @@ def main():
         c, it = J("/feedback/%s/status" % fid, "POST", {"status": "in_progress", "resolution": "working"})
         r = subprocess.run([sys.executable, os.path.join(HERE, "fb.py"), "set", fid, "ready", "--resolution", "done by routine"], env=env, capture_output=True, text=True)
         r2 = subprocess.run([sys.executable, os.path.join(HERE, "fb.py"), "inbox"], env=env, capture_output=True, text=True)
-        check(r.returncode == 0 and J("/feedback/" + fid)[1]["status"] == "ready" and fid not in r2.stdout and len(r2.stdout.strip().splitlines()) == 9, "feedback: routine CLI marks ready; inbox lists only open items")
+        check(r.returncode == 0 and J("/feedback/" + fid)[1]["status"] == "ready" and fid not in r2.stdout and len(r2.stdout.strip().splitlines()) == len(steps) - 2, "feedback: routine CLI marks ready; inbox lists only open items")
         check(req(base, "/health", origin=None)[0] == 200, "health is open")
         check(req(base, "/jobs", "POST", body)[0] == 401, "upload without token -> 401")
         check(req(base, "/jobs", "POST", body, token="wrong")[0] == 401, "wrong token -> 401")
@@ -122,7 +122,7 @@ def main():
         # restart while job 3 is queued/running: it must resume
         p.terminate(); p.wait()
         p = start(env)
-        check(len(J("/feedback")[1]["items"]) == 11 and len(J("/feedback/memory")[1]["memory"]) == 1, "feedback: survives a restart")
+        check(len(J("/feedback")[1]["items"]) == len(steps) and len(J("/feedback/memory")[1]["memory"]) == 1, "feedback: survives a restart")
         st3, _ = wait(base, tok, j3["id"])
         check(st3["state"] == "done", "job interrupted by a restart re-runs and finishes")
         log = open(os.path.join(d, "data", "jobs", j3["id"], "render.log")).read()
