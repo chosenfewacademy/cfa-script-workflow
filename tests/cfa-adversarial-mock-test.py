@@ -64,6 +64,7 @@ async def xai_route(route):
         return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'choices':[{'message':{'content':content},'finish_reason':'stop'}],'usage':{}}))
     if 'character-continuity supervisor' in sysmsg:
         cnt['idcheck']=cnt.get('idcheck',0)+1
+        SC['idBodies']=(SC.get('idBodies') or [])+[route.request.post_data or '']
         q=SC.get('idq') or []
         v=q.pop(0) if q else {'differences':[],'visible':True,'score':10,'verdict':'same'}
         return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'choices':[{'message':{'content':json.dumps(v)},'finish_reason':'stop'}],'usage':{}}))
@@ -683,6 +684,30 @@ async def main():
             gl=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
             qa=await J(pg,"()=>sceneData[0].styleQA")
             check('identity: strict model-sheet check catches an off-model face the combined check passed', len(gl)==2 and 'larger eyes' in gl[1]['prompt'] and qa['identityMatch'] is True and cnt.get('idcheck',0)-i0>=2, (len(gl),qa))
+            # Character lock (Oct 28): attributes + negatives in every prompt; duplicates / wrong age / forbidden attributes rejected
+            if True:
+                p0=gl[0]['prompt']
+                check('charlock: image prompt carries Jordan attributes, negatives and draw-once rule', 'CHARACTER LOCK' in p0 and 'slate-blue pullover hoodie' in p0 and 'never: glasses' in p0 and 'exactly ONCE' in p0, p0[-600:])
+                ib=' '.join(SC.get('idBodies') or [])
+                check('charlock: identity check is told Jordan\'s forbidden attributes', 'FORBIDDEN for Jordan' in ib and 'child, toddler or teenager' in ib, ib[:200])
+                v=await J(pg,"""()=>[identityVerdict('Jordan',{visible:true,score:9,count:2}), identityVerdict('Jordan',{visible:true,score:9,age_ok:false}), identityVerdict('Jordan',{visible:true,score:9,forbidden_seen:['glasses']}), identityVerdict('Jordan',{visible:true,score:9,count:1,age_ok:true,forbidden_seen:['none']})]""")
+                check('charlock: duplicate / wrong age / forbidden attribute cap the score below the pass mark; clean passes', all(x['score']<7 for x in v[:3]) and v[0]['duplicate'] and 'duplicate' in v[0]['problems'] and 'wrong age' in v[1]['problems'] and 'glasses' in v[2]['problems'] and v[3]['score']==9 and v[3]['forbidden']==[], v)
+                await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;}")
+                SC['falLog']=[]; SC['vision']=[]; SC['idq']=[{'differences':[],'visible':True,'count':2,'age_ok':True,'forbidden_seen':[],'score':9,'verdict':'same'}]
+                await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+                gl2=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
+                qa=await J(pg,"()=>sceneData[0].styleQA")
+                check('charlock: a duplicated Jordan is regenerated within the style budget, retry names the duplicate', len(gl2)==2 and 'duplicate' in gl2[1]['prompt'] and 'never has glasses' in gl2[1]['prompt'] and qa['identityMatch'] is True, (len(gl2),qa))
+                await J(pg,"()=>{sceneData[0].resultURL='';sceneData[0].done=false;}")
+                SC['falLog']=[]; SC['idq']=[{'differences':['looks about 6 years old'],'visible':True,'count':1,'age_ok':False,'forbidden_seen':[],'score':8,'verdict':'drift'}]
+                await J(pg,"async()=>{await generateAllImages();}"); await pg.wait_for_timeout(300)
+                gl2=[json.loads(b) for u,b in SC['falLog'] if 'upload' not in u]
+                check('charlock: child-age Jordan is rejected and retried', len(gl2)==2 and 'wrong age for Jordan' in gl2[1]['prompt'], len(gl2))
+                r=await J(pg,"()=>[characterLockText({line:'Marcus taps the ledger.',characters:'MARCUS'}), characterLockText({line:'Dee waves.',characters:'NONE'}), characterLockText({line:'Empty room.',characters:'NONE'})]")
+                check('charlock: Marcus always glasses+beard, Dee compact puff, no-character beats get no lock text', 'black rectangular glasses (always on)' in r[0] and 'full short black beard' in r[0] and 'compact high puff' in r[1] and 'oversized' in r[1] and r[2]=='', r)
+                r=await J(pg,"()=>{ const s={line:'1. Jordan stares at the screen.',tag:'IMAGE',characters:'JORDAN',prompt:'Jordan stares'}; const p=fitClipPrompt(composeScenePrompt(s,'Jordan stares',{})+CLIP_IDENTITY_GUARD); return [p.includes('CHARACTER LOCK'), p.length<=CLIP_PROMPT_MAX, /Bill|lip|speech bubble/i.test(characterLockText(s))]; }")
+                check('charlock: clip prompts keep the lock within the clip prompt limit; no lip-sync/speech content added', r==[True,True,False], r)
+                SC['idq']=[]
             lu=await J(pg,"""async()=>{ const mk=c=>{ const k=document.createElement('canvas'); k.width=k.height=8; const x=k.getContext('2d'); x.fillStyle=c; x.fillRect(0,0,8,8); return k.toDataURL(); };
               return [await imageLuma(mk('#0a0a0a')), await imageLuma(mk('#e0e0e0')), DARK_LUMA]; }""")
             check('darkness: canvas luma measures dark vs bright stills', lu[0] < lu[2] < lu[1], lu)
