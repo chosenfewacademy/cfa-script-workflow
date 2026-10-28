@@ -2135,8 +2135,8 @@ select option{background:var(--surface2)}
         <div class="settings-section-desc"><b>Dialogue</b> (default): characters speak on screen with lip-synced talking shots; light narration. <b>Narrated</b>: one narrator over images and clips.</div>
         <div class="settings-row" style="gap:8px;flex-wrap:wrap">
           <label style="font-size:11px">Format <select class="inp" id="sm-format" onchange="smSaveFormat()" aria-label="Episode format"><option value="dialogue">Dialogue (live action)</option><option value="narration">Narrated</option></select></label>
-          <label style="font-size:11px">Talking shots <select class="inp" id="sm-talk" onchange="smSaveFormat()" aria-label="Talking shots"><option value="all">Lip-sync every character line</option><option value="off">Off (stills only)</option></select></label>
-          <label style="font-size:11px">Narration <select class="inp" id="sm-narr" onchange="smSaveFormat()" aria-label="Narration ratio"><option value="sparse">Sparse (≤15% narrator)</option><option value="hybrid">Hybrid (25–35%: narrated cold open, bridges, closing)</option></select></label>
+          <label style="font-size:11px">Talking shots <select class="inp" id="sm-talk" onchange="smSaveFormat()" aria-label="Talking shots"><option value="all">Lip-sync every character line (Hybrid/Sparse only)</option><option value="off">Off (stills only)</option></select></label>
+          <label style="font-size:11px">Narration <select class="inp" id="sm-narr" onchange="smSaveFormat()" aria-label="Narration ratio"><option value="full">Full narration (Bill narrates 100%, quoting characters)</option><option value="sparse">Sparse (≤15% narrator)</option><option value="hybrid">Hybrid (25–35%: narrated cold open, bridges, closing)</option></select></label>
           <label style="font-size:11px">Music <select class="inp" id="sm-music" onchange="smSaveFormat()" aria-label="Music style"><option value="cinematic">Cinematic (piano + strings)</option><option value="lofi">Lo-fi</option><option value="orchestral">Orchestral</option><option value="acoustic">Acoustic</option><option value="electronic">Soft electronic</option><option value="none">No music</option></select></label>
         </div>
         <div style="font-size:10.5px;color:var(--muted);margin:6px 0 2px">Character voices are <b>locked</b> (ElevenLabs eleven_v4). Every line is voiced with its speaker&rsquo;s locked voice.</div>
@@ -3247,7 +3247,7 @@ async function startGen(){
       }catch(e){ if(e.name==='AbortError'||genAbort!==ctrl) throw e; console.warn('Final fit failed:',e.message); }
     }
     // Hook guard: the opening sentence must be a short, problem-first hook
-    if(fullPasses && text.trim() && !(dialogueOn()&&narrMode()==='hybrid') && hookNeedsWork(text)){
+    if(fullPasses && text.trim() && !(dialogueOn()&&narrMode()!=='sparse') && hookNeedsWork(text)){
       try{
         const sep=dialogueOn()?'\n':'\n\n';
         const paras=dialogueOn()?text.trim().split(/\n/):text.trim().split(/\n\s*\n/);
@@ -3488,9 +3488,12 @@ function splitTag(line){
 function stripTags(t){ return String(t||'').split('\n').map(l=>l.replace(SPK_TAG_RE,'')).join('\n'); }
 function scriptFormat(){ return safeGetItem('cfa_format')==='narration'?'narration':'dialogue'; }
 function dialogueOn(){ return scriptFormat()==='dialogue'; }
-const NARR_DEFAULT='hybrid';
-function narrMode(){ const m=safeGetItem('cfa_narr_mode'); return m==='hybrid'||m==='sparse'?m:NARR_DEFAULT; }
-function narrRange(){ return narrMode()==='hybrid'?[0.22,0.38]:[0,0.35]; }
+const NARR_DEFAULT='full';
+function narrMode(){ const m=safeGetItem('cfa_narr_mode'); return m==='full'||m==='hybrid'||m==='sparse'?m:NARR_DEFAULT; }
+function fullNarr(){ return dialogueOn()&&narrMode()==='full'; }
+// Lip-sync (Kling AI Avatar) only in Hybrid/Sparse with talking shots on; never in full narration.
+function talkOn(){ return dialogueOn()&&narrMode()!=='full'&&talkMode()!=='off'; }
+function narrRange(){ const m=narrMode(); return m==='full'?[0.35,0.68]:m==='hybrid'?[0.22,0.38]:[0,0.35]; }
 function talkMode(){ return safeGetItem('cfa_talk_mode')==='off'?'off':'all'; }
 const MUSIC_STYLES=['cinematic','lofi','orchestral','acoustic','electronic','none'];
 function musicStyle(){ const m=safeGetItem('cfa_music_style'); return MUSIC_STYLES.includes(m)?m:'cinematic'; }
@@ -3517,8 +3520,10 @@ ${personaRules()}
 - RHYTHM & FOCUS: vary line length like real talk — mix 3-8 word reactions with fuller 12-28 word lines; average about 12 words per character line; never more than 4 clipped (<7 word) lines in a row. The lesson is the A-story: at least 60% of lines move the topic forward, and the human problem (deadline, money, relationship) exists to force the lesson, never to replace it — when the problem is solved it is solved BY understanding the topic. The first 3 lines state a sharp, specific question or stake tied to the topic. Escalate once mid-episode (a surprise, a wrong assumption exposed). Close on a felt payoff line from a character, not a bare question and not a recap list.
 - Length: 650-900 spoken words (speaker tags do not count). Keep every SPEAKER: tag exactly as written when revising.`;
 const HYBRID_MOSTLY="- HYBRID STRUCTURE: 25-35% of spoken words are NARRATOR (Bill), 65-75% character dialogue. Bill opens with a narrated cold open of 40-70 words (third person, past tense) that sets the place, the person and a concrete stake or loss happening right now. Characters then carry each scene in natural dialogue. Between scenes Bill gives a 1-2 sentence bridge (time or place moving, what changed). Bill closes with a short reflection (1-3 sentences) that calls back to an image from the cold open. Bill never explains the lesson in his own words and never quotes a character; he shows, characters teach.";
+const FULL_MOSTLY="- FULL NARRATION (Resilia style): Bill (NARRATOR) tells the whole story and voices EVERY line, including the characters' quoted words; characters never get their own voices. NARRATOR lines are 35-65% of spoken words: third person, past tense, outside the story, never I/me/my/we/us/our/you. Before a character line that changes speaker, a NARRATOR line names who speaks and how, through action (\"Marcus set down the wrench. He didn't look up.\"), so a listener always knows who is talking; never more than 3 character lines in a row without a NARRATOR line. Character lines are the exact quoted words, first person, present tense, in that character's own vocabulary and rhythm (every character must still sound different on the page). Show feelings through faces and actions the narrator describes (a jaw tightening, a slow exhale), never by naming the emotion. Include one MILESTONE MONTAGE: 2-4 short NARRATOR lines in a row counting visible progress (days, attempts, numbers) before the final turn.";
+const FULL_COLD="- Cold open (in media res): the FIRST line is a CHARACTER line at the peak of the conflict, at most 14 words; the SECOND line is NARRATOR stepping back (\"Three days earlier, ...\" or \"It had started that morning.\") and the story builds back up to that moment, which is replayed near the turn.";
 const HYBRID_COLD="- Cold open: the FIRST line is Bill's narrated cold open (one NARRATOR line, 40-70 words, concrete loss with a number or named object). The first character line follows it and drops straight into the conflict.";
-function dialogueRules(){ const h=narrMode()==='hybrid'; return DIALOGUE_RULES_BASE.replace('@@MOSTLY@@', h?HYBRID_MOSTLY:"- Mostly dialogue: at least 75% of the spoken words are character lines. NARRATOR (Bill) is sparse: a short time/place line, a bridge between scenes, at most one closing line. Never more than 2 NARRATOR lines in a row.").replace('@@COLD@@', h?HYBRID_COLD:"- Cold open (Resilia style): the FIRST line drops us into a conflict already happening, at most 12 words. No greeting, no setup, no lesson."); }
+function dialogueRules(){ const m=narrMode(), h=m==='hybrid'; if(m==='full') return DIALOGUE_RULES_BASE.replace('@@MOSTLY@@',FULL_MOSTLY).replace('@@COLD@@',FULL_COLD).replace('Natural exchanges: most character lines','Natural exchanges (quoted by Bill): most character lines').replace('the same character never speaks more than 2 lines in a row','the same character never has more than 2 quoted lines in a row'); return DIALOGUE_RULES_BASE.replace('@@MOSTLY@@', h?HYBRID_MOSTLY:"- Mostly dialogue: at least 75% of the spoken words are character lines. NARRATOR (Bill) is sparse: a short time/place line, a bridge between scenes, at most one closing line. Never more than 2 NARRATOR lines in a row.").replace('@@COLD@@', h?HYBRID_COLD:"- Cold open (Resilia style): the FIRST line drops us into a conflict already happening, at most 12 words. No greeting, no setup, no lesson."); }
 function fmtSys(sys){ return (dialogueOn()? sys+'\n\n'+dialogueRules() : sys)+fbBlock(['research','script','voices']); }
 function parseDialogue(text){
   return String(text||'').split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
@@ -3536,13 +3541,19 @@ function dialogueLint(text){
   if(untagged.length) issues.push(untagged.length+' line(s) without a speaker tag (e.g. "'+untagged[0].raw.slice(0,50)+'")');
   if(unknown.length) issues.push('Unknown speaker(s): '+[...new Set(unknown.map(x=>x.unknown))].join(', ')+' — only NARRATOR, JORDAN, MARCUS, DEE, PRIYA, MR. OKAFOR have locked voices');
   const narr=L.filter(x=>x.speaker==='NARRATOR').reduce((a,x)=>a+words(x),0);
-  { const [lo,hi]=narrRange(); if(total && narr/total>hi) issues.push('Too much narration: '+Math.round(100*narr/total)+'% of words (keep it under '+Math.round(hi*100)+'%)'); if(total && lo>0 && narr/total<lo) issues.push('Too little narration for Hybrid: '+Math.round(100*narr/total)+'% of words (aim 25-35%)'); }
+  { const [lo,hi]=narrRange(); if(total && narr/total>hi) issues.push('Too much narration: '+Math.round(100*narr/total)+'% of words (keep it under '+Math.round(hi*100)+'%)'); if(total && lo>0 && narr/total<lo) issues.push('Too little narration for '+(narrMode()==='full'?'Full narration':'Hybrid')+': '+Math.round(100*narr/total)+'% of words (aim '+(narrMode()==='full'?'35-65':'25-35')+'%)'); }
   if(new Set(L.filter(x=>x.speaker&&x.speaker!=='NARRATOR').map(x=>x.speaker)).size<2) issues.push('Needs at least two speaking characters');
   const long=L.filter(x=>x.speaker&&x.speaker!=='NARRATOR'&&words(x)>40);
   if(long.length) issues.push(long.length+' monologue line(s) over 40 words (split them into an exchange)');
-  if(narrMode()==='hybrid'){ if(L[0]&&(L[0].speaker!=='NARRATOR'||words(L[0])<30||words(L[0])>80)) issues.push('Hybrid cold open: the first line should be one NARRATOR line of 40-70 words'); }
+  if(narrMode()==='full'){
+    if(L[0]&&(!L[0].speaker||L[0].speaker==='NARRATOR'||words(L[0])>14)) issues.push('Full-narration cold open: the first line should be a CHARACTER line at the peak of the conflict, 14 words or fewer');
+    if(L[1]&&L[1].speaker!=='NARRATOR') issues.push('Full-narration cold open: the second line should be Bill stepping back (NARRATOR)');
+    for(let i=3;i<L.length;i++) if([0,1,2,3].every(k=>L[i-k].speaker&&L[i-k].speaker!=='NARRATOR')){ issues.push('Four character lines in a row near line '+(i+1)+' — Bill must attribute who speaks (NARRATOR line)'); break; }
+    { let run=0,best=0; L.forEach(x=>{ run=x.speaker==='NARRATOR'?run+1:0; best=Math.max(best,run); }); if(best<2) issues.push('No milestone montage: 2-4 NARRATOR lines in a row counting progress before the turn'); if(best>4) issues.push(best+' NARRATOR lines in a row — at most 4 (montage)'); }
+  }
+  else if(narrMode()==='hybrid'){ if(L[0]&&(L[0].speaker!=='NARRATOR'||words(L[0])<30||words(L[0])>80)) issues.push('Hybrid cold open: the first line should be one NARRATOR line of 40-70 words'); }
   else if(L[0] && words(L[0])>12) issues.push('Cold open is '+words(L[0])+' words — the first line should be a conflict in 12 words or fewer');
-  for(let i=2;i<L.length;i++) if(L[i].speaker==='NARRATOR'&&L[i-1].speaker==='NARRATOR'&&L[i-2].speaker==='NARRATOR'){ issues.push('Three NARRATOR lines in a row near line '+(i+1)); break; }
+  if(narrMode()!=='full') for(let i=2;i<L.length;i++) if(L[i].speaker==='NARRATOR'&&L[i-1].speaker==='NARRATOR'&&L[i-2].speaker==='NARRATOR'){ issues.push('Three NARRATOR lines in a row near line '+(i+1)); break; }
   for(let i=2;i<L.length;i++) if(L[i].speaker&&L[i].speaker!=='NARRATOR'&&L[i].speaker===L[i-1].speaker&&L[i].speaker===L[i-2].speaker){ issues.push(L[i].speaker+' speaks 3 lines in a row near line '+(i+1)); break; }
   { const lastC=[...L].reverse().find(x=>x.speaker&&x.speaker!=='NARRATOR'); if(lastC&&/\?\s*$/.test(lastC.text)) issues.push('Ends on a question ("'+lastC.text.slice(-60)+'") — the last character line must be a payoff statement'); }
   if(total<650||total>900) issues.push('Spoken length '+total+' words (target 650-900)');
@@ -3589,7 +3600,7 @@ const TALK_MODEL='fal-ai/kling-video/ai-avatar/v2/standard', TALK_COST_PER_S=0.0
 const TALK_PROMPT='Natural conversational talking, subtle head movement and blinking, keeps the exact same character look and art style, no text.';
 let voLines=[]; // [{speaker, voiceId, text, start (line audio start), end (last word), dur, blob}]
 async function ttsLine(elKey, spk, text, settings){
-  const v=lockedVoice(spk);
+  const v=lockedVoice(fullNarr()?'NARRATOR':spk);
   let last='';
   for(let a=0;a<3;a++){
     let resp;
@@ -3670,9 +3681,9 @@ async function generateDialogueVO(){
   collapseVS(); showErr('e5','');
   try{
     const res=new Array(lines.length); let next=0, done=0;
-    setVOProgress(5,'Voicing '+lines.length+' lines with the locked character voices…');
+    setVOProgress(5,(fullNarr()?'Voicing '+lines.length+' lines in Bill\'s narrator voice…':'Voicing '+lines.length+' lines with the locked character voices…'));
     const worker=async()=>{ while(next<lines.length){ const i=next++; res[i]=await ttsLine(elKey, lines[i].speaker, lines[i].text, settings); done++;
-      setVOProgress(5+85*done/lines.length,'Voiced line '+done+' of '+lines.length+' ('+lockedVoice(lines[i].speaker).name+')…'); } };
+      setVOProgress(5+85*done/lines.length,'Voiced line '+done+' of '+lines.length+' ('+lockedVoice(fullNarr()?'NARRATOR':lines[i].speaker).name+')…'); } };
     await Promise.all([worker(),worker(),worker()]);
     trackVoiceSpend(chars*m.perChar);
     setVOProgress(93,'Stitching lines with natural pauses…');
@@ -3685,7 +3696,7 @@ async function generateDialogueVO(){
     const audio=document.getElementById('vo-audio'); audio.src=voAudioURL;
     const dl=document.getElementById('vo-download'); dl.href=voAudioURL;
     dl.download=(V[selId]?V[selId].title:'CFA_Script').replace(/[^a-z0-9]/gi,'_')+'_Dialogue.'+(st.gaps?'wav':'mp3');
-    document.getElementById('vo-model-chip').textContent='Dialogue · '+lines.length+' lines · locked voices';
+    document.getElementById('vo-model-chip').textContent=(fullNarr()?'Full narration · '+lines.length+' lines · Bill':'Dialogue · '+lines.length+' lines · locked voices');
     refreshVOTimingUI();
     if(sceneData.length){ assignBeatTimes(); saveWorkflowState(); }
     document.getElementById('s5-generating').style.display='none';
@@ -3768,7 +3779,7 @@ function updateMotionUI(){
 }
 function setMotionMode(v){ safeSetItem(motionKey(), v==='mixed'?'mixed':'full'); applyMotionMode(); try{ renderClassificationList(); }catch(e){} updateMotionUI(); saveWorkflowState(); }
 function tagLabel(t){ return t==='TALK'?'🗣 TALK':t==='IMAGE'?'🖼 IMAGE':'🎬 VIDEO'; }
-function nextTag(x){ const sp=splitTag(x.line).speaker; const talk=sp&&sp!=='NARRATOR';
+function nextTag(x){ const sp=splitTag(x.line).speaker; const talk=sp&&sp!=='NARRATOR'&&talkOn();
   return x.tag==='IMAGE'?'VIDEO':(x.tag==='VIDEO'&&talk?'TALK':'IMAGE'); }
 function renderVoiceLockUI(){
   const box=document.getElementById('sm-voice-lock'); if(!box) return;
@@ -4708,7 +4719,7 @@ function getSavedWorkflowState(){
     state.sceneData = state.sceneData
       .filter(x=>x && typeof x==='object' && typeof x.line==='string' && x.line.trim())
       .map(x=>({
-        line:x.line, tag:x.tag==='VIDEO'?'VIDEO':(x.tag==='TALK'&&splitTag(x.line).speaker&&splitTag(x.line).speaker!=='NARRATOR'?'TALK':'IMAGE'),
+        line:x.line, tag:x.tag==='VIDEO'?'VIDEO':(x.tag==='TALK'&&talkOn()&&splitTag(x.line).speaker&&splitTag(x.line).speaker!=='NARRATOR'?'TALK':'IMAGE'),
         speaker:splitTag(x.line).speaker||'', lipsync:!!x.lipsync&&x.resultType==='video', talkStill:url(x.talkStill), lineAudioURL:url(x.lineAudioURL),
         characters:CHARS.includes(x.characters)?x.characters:detectCharacters(x.line),
         prompt:str(x.prompt), sceneDesc:str(x.sceneDesc), styleDesc:str(x.styleDesc), sfx:str(x.sfx), overlay:str(x.overlay).slice(0,80), motion:str(x.motion), directed:!!x.directed,
@@ -5485,7 +5496,8 @@ async function enterSceneGeneration(){
     }
     sceneData.forEach(x=>{ x.origTag=x.tag; });
     if(dialogueOn()) sceneData.forEach(x=>{ const sp=splitTag(x.line).speaker; x.speaker=sp||'NARRATOR';
-      if(sp && sp!=='NARRATOR' && talkMode()!=='off'){ x.tag='TALK'; const c=CHARACTER_REGISTRY.speakers[sp]?.cast; if(c && c!=='NONE') x.characters=c; } });
+      if(sp && sp!=='NARRATOR' && fullNarr()){ const c=CHARACTER_REGISTRY.speakers[sp]?.cast; if(c && c!=='NONE') x.characters=c; }
+      if(sp && sp!=='NARRATOR' && talkOn()){ x.tag='TALK'; const c=CHARACTER_REGISTRY.speakers[sp]?.cast; if(c && c!=='NONE') x.characters=c; } });
     sceneData.forEach((x,i)=>{ const p=prevByLine.get(normLine(x.line)); if(p){ sceneData[i]=Object.assign({},p,{line:x.line,locked:true}); } });
     applyMotionMode();
     assignBeatTimes(); // VO timings (if the voiceover was generated) → per-scene start/end
@@ -5565,6 +5577,7 @@ function updateClassSummary(){
 // Per-beat prompting drifted (lighting, place and mood changed shot to shot). The director sees every
 // beat at once and returns, per scene, an image prompt, a motion/camera prompt and an ambient SFX
 // prompt, under one shared look (lighting, palette, mood). Any beat it misses falls back to per-beat.
+const DIRECTOR_FULL=`\n\nFULL NARRATION OVERRIDE (this episode has no lip sync; Bill narrates every line): NO talking shots and no one speaks on screen. Every character's mouth stays closed. A character-line beat is a close-up or medium close-up ACTING shot of that character (or the listener's reaction), framed off-center, the expression and gesture carrying the line. Narrator beats stay animated wide/establishing or object B-roll.`;
 const SYS_DIRECTOR=`You are the director and cinematographer of one episode of Chosen Few Academy, a calm story series about digital assets (never write "crypto"). You receive every numbered beat of the narration with its shot type (IMAGE = still, VIDEO = short animated clip) and who is on screen. Plan the WHOLE shot list in one pass so it plays as one continuous film.
 Rules:
 - One shared LOOK for the episode: lighting, colour palette, mood and time of day that follow the story; change them only when the story moves place or time.
@@ -5588,7 +5601,7 @@ let sceneLook=null;
 async function directorPass(data){
   const beats=data.map((x,i)=>'['+(i+1)+'] '+x.tag+' | on screen: '+(x.characters||'NONE')+(castInScene(x).length?', '+castInScene(x).join(', '):'')+' | '+String(x.line).replace(/^\s*\d+\.\s*/,''));
   const user=(V[selId]?'EPISODE: '+V[selId].title+'\n':'')+'BEATS:\n'+beats.join('\n');
-  const r=await llmComplete({role:'fast', system:SYS_DIRECTOR+fbBlock(['registry','shotlist','clips','lipsync','edit']), user, maxTokens:Math.min(16000,900+data.length*260), effort:'low'});
+  const r=await llmComplete({role:'fast', system:SYS_DIRECTOR+(fullNarr()?DIRECTOR_FULL:'')+fbBlock(['registry','shotlist','clips','lipsync','edit']), user, maxTokens:Math.min(16000,900+data.length*260), effort:'low'});
   const j=parseDirector(r.text); if(!j) throw new Error('director returned no shot list');
   if(sceneData!==data) return 0;
   sceneLook=j.look||null;
@@ -7118,8 +7131,9 @@ async function generateScene(){
   const sfActionEl=document.getElementById('startframe-action');
   if(sfActionEl) sfActionEl.style.display='none';
 
+  const fullFrame=(fullNarr()&&s.speaker&&s.speaker!=='NARRATOR')?('Close-up acting shot of '+lockedVoice(s.speaker).name+', mouth closed (not speaking), face and body acting the emotion of the line through expression and gesture, framed off-center. '):(fullNarr()?'Any people have mouths closed (no one is speaking). ':'');
   const talkFrame=s.tag==='TALK'?('Medium close-up talking shot of '+lockedVoice(s.speaker||'NARRATOR').name+' alone in frame, facing the camera at a slight three-quarter angle, mouth closed, head and shoulders clearly visible, face well lit. '):'';
-  const finalPrompt=talkFrame+composeScenePrompt(s, prompt, {
+  const finalPrompt=fullFrame+talkFrame+composeScenePrompt(s, prompt, {
     sceneText: sceneRefs['scene']?.text, styleText: sceneRefs['style']?.text,
     camera: isVideo ? document.getElementById('s6-camera').value : ''
   });
@@ -7254,7 +7268,7 @@ async function generateScene(){
       resultType='video';
     }
 
-    if(s.tag==='TALK' && resultType==='image' && resultURL && talkMode()!=='off'){
+    if(s.tag==='TALK' && resultType==='image' && resultURL && talkOn()){
       const lbl=document.getElementById('s6-gen-label');
       const t=await talkClip(idx, s, resultURL, x=>{ if(lbl&&stillHere()) lbl.textContent=x; });
       s.talkStill=resultURL; s.lipsync=true; resultURL=t.url; resultType='video'; modelLabel=t.label;
