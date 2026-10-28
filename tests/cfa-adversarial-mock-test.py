@@ -145,6 +145,10 @@ async def oai_route(route):
     cnt['oai']=cnt.get('oai',0)+1
     SC['oaiBody']=route.request.post_data_buffer or b''
     return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'data':[{'b64_json':base64.b64encode(PNG).decode()}]}))
+async def down_route(route):
+    # explicit mock: render service unreachable (connection refused), counted
+    SC.setdefault('downHits',[]).append(route.request.method+' '+route.request.url.split('127.0.0.1:9')[1])
+    return await route.abort('connectionrefused')
 async def other_route(route):
     u=route.request.url
     if u.startswith(('file:','data:','blob:',_ORIGIN)): return await route.continue_()
@@ -158,6 +162,7 @@ async def newpage(b, keys=True, pre=None):
     pg.on('console',lambda m: errs.append(m.type+': '+m.text) if m.type=='error' else None)
     pg.on('dialog',lambda d: (SC.setdefault('dialogs',[]).append(d.message), asyncio.ensure_future(d.dismiss() if SC.get('dismiss') else d.accept())))
     await ctx.route('**/*',other_route)
+    await ctx.route(re.compile(r'http://127\.0\.0\.1:9/.*'),down_route)
     await ctx.route('https://api.x.ai/**',xai_route)
     await ctx.route(re.compile(r'https://(fal\.run|rest\.alpha\.fal\.ai|upload\.mock|v3b\.fal\.media)/.*'),fal_route)
     await ctx.route('https://api.elevenlabs.io/**',el_route)
@@ -1095,10 +1100,13 @@ async def main():
             SC['el']='ok'; SC['elReal']=False
             # render service down
             await J(pg,"()=>{sessionStorage.setItem('cfa_render_url','http://127.0.0.1:9');sessionStorage.setItem('cfa_render_token','t');}")
+            SC['downHits']=[]
             await J(pg,"()=>fbPoll()")
-            check('stress: render service down -> feedback sync shows failure, no crash', 'sync failed' in await J(pg,"()=>document.getElementById('fb-sync')?document.getElementById('fb-sync').textContent:'sync failed'"))
+            sy=await J(pg,"()=>{const e=document.getElementById('fb-sync');return e?e.textContent:null}")
+            check('stress: render service down -> feedback sync shows failure, no crash', sy is not None and 'sync failed' in sy and any(h.startswith('GET /feedback?since=') for h in SC['downHits']), (sy,SC['downHits']))
+            SC['downHits']=[]
             await J(pg,"()=>{fbOpen();document.getElementById('fb-comment').value='x';return fbSubmit()}")
-            check('stress: render service down -> feedback submit shows an error, nothing saved', 'Could not send' in await J(pg,"()=>document.getElementById('fb-err').textContent") and await J(pg,"()=>fbItems().length")==0)
+            check('stress: render service down -> feedback submit shows an error, nothing saved', 'Could not send' in await J(pg,"()=>document.getElementById('fb-err').textContent") and await J(pg,"()=>fbItems().length")==0 and 'POST /feedback' in SC['downHits'], SC['downHits'])
             check('stress: no page errors', not [x for x in errs if 'pageerror' in x], errs[:5])
             await ctx.close()
         if want('export'):
