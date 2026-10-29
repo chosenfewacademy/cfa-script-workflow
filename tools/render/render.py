@@ -2582,7 +2582,7 @@ def main():
                          "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"], "plan_motion": x.get("plan_motion"), "plan_link": x.get("plan_link"), "plan_shot": x.get("plan_shot"), "one_char": x.get("one_char")} for x in shots],
               "arc": edl.get("arc"), "arc_times": edl.get("arc_times"), "sfx_events": [list(e) for e in events], "ambience": dict(amb_info, placed=len(amb)), "foley": foley_info,
               "punch_ins": sum(1 for x in shots if x.get("part") == "b"),
-              "shot_lengths": sorted(round(x["duration"], 2) for x in shots),
+              "shot_lengths": sorted(round(x["duration"], 2) for x in shots), "held_neighbour": [i for i, x in enumerate(shots) if x.get("held_neighbour")], "fallback_same_line": [i for i, x in enumerate(shots) if x.get("fallback_same_line")],
               "avg_shot": round(total / len(shots), 3), "min_shot": min(x["duration"] for x in shots),
               "interpolated_beats": [s["index"] for s in segs if s.get("interpolated")],
               "caption_cues": cues, "padded_words": words, "render_seconds": round(time.time() - t0, 1),
