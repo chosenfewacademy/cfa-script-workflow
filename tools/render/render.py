@@ -1126,6 +1126,16 @@ def one_character_gate(segs, limit_beats=None):
     return {"pass": not bad, "fails": bad}
 
 
+# One motion model per episode (every character): mixing Kling-ref clips with stills changed the render look (Oct 29).
+# Hailuo matched the baseline test_clip_vision look. Override per bundle (i2vModel) or env CFA_MOTION_MODEL.
+EPISODE_MOTION_MODEL = os.environ.get("CFA_MOTION_MODEL", "hailuo")
+
+
+def episode_motion_model(b, a):
+    m = (b or {}).get("i2vModel") or (a.i2v if getattr(a, "i2v", "off") != "off" else EPISODE_MOTION_MODEL)
+    return m if m in I2V_MODELS else EPISODE_MOTION_MODEL
+
+
 def action_i2v_plan(shots, mode, cap):
     """Phrase plan: only shots whose line is physical action get image-to-video, never over `cap`."""
     if mode not in I2V_MODELS:
@@ -2254,7 +2264,7 @@ def main():
     shots = edl["shots"]
     i2v_info = {"mode": a.i2v, "clips": 0, "est_usd": 0.0}
     if PHRASE:
-        mode = b.get("i2vModel") or (a.i2v if a.i2v != "off" else ("kling-ref" if isinstance(b.get("charRefs"), dict) and b.get("charRefs") else "hailuo"))
+        mode = episode_motion_model(b, a)
         reserve = music_reserve(b, a)
         cap = max(0.0, (a.total_cap - getattr(a, "spent_usd", 0.0) - reserve) if a.total_cap else a.i2v_cap)
         acts, est = action_i2v_plan(shots, mode, cap)
