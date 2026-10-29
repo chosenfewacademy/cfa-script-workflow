@@ -5893,12 +5893,25 @@ function planLinkFor(prev,cur,prevSpk,curSpk){
   if(shared.length>=2) return 'match';                              // same object carries across: match cut
   return 'cut';                                                     // new information: hard cut
 }
+// Still length cap: no single still holds longer than STILL_MAX_S; a long phrase becomes 2+ distinct shots (2-4 s each).
+const STILL_MAX_S=4, STILL_MIN_S=2;
+function voWordRate(){ if(voWords.length>8){ const d=voWords[voWords.length-1][2]-voWords[0][1]; if(d>1) return Math.min(4,Math.max(1.8,voWords.length/d)); } return 2.6; }
+function capStillPiece(text){
+  const r=voWordRate(), maxW=Math.max(5,Math.floor(STILL_MAX_S*r)), minW=Math.max(3,Math.round(STILL_MIN_S*r));
+  const w=String(text).trim().split(/\s+/); if(w.length<=maxW) return [String(text).trim()];
+  const n=Math.ceil(w.length/maxW), out=[]; let st=0;
+  for(let k=1;k<n;k++){ const tgt=Math.round(w.length*k/n); let best=tgt, bs=-1;
+    for(let j=Math.max(st+minW,tgt-3);j<=Math.min(w.length-minW,tgt+3);j++){ const sc=(/[,;:—–.!?]$/.test(w[j-1])?3:0)+(/^(and|then|so|but|when|while|where|that|because)$/i.test(w[j])?2:0)+(/^(by|in|to|after|before|with|for|on|at|from|into)$/i.test(w[j])?1:0)-(/^(the|a|an|to|of|his|her|their|its|my|your|and|in|on|at|by)$/i.test(w[j-1])?4:0)-Math.abs(j-tgt)*0.5; if(sc>bs){bs=sc;best=j;} }
+    if(best-st<minW||w.length-best<minW) continue; out.push(w.slice(st,best).join(' ')); st=best; }
+  out.push(w.slice(st).join(' ')); return out; }
+function stillLengthViolations(from,to){ const bad=[]; for(let i=from||0;i<(to==null?sceneData.length:to);i++){ const x=sceneData[i]; if(x.tag==='IMAGE' && x.planShot!=='action' && beatLen(x)>STILL_MAX_S+0.5) bad.push([i,+beatLen(x).toFixed(2)]); } return bad; }
 // Rewrites sceneData (first `limit` beats) into phrase shots; keeps media of a beat's first phrase and its VIDEO beats.
 function applyPhraseShots(limit){
   const lim=limit==null?sceneData.length:limit, out=[]; let n=0;
   sceneData.forEach((s,i)=>{
     const sp=splitTag(s.line), num=String(s.line).match(/^\s*(\d+)\./), pre=(num?num[1]+'. ':'')+(sp.speaker?sp.speaker+': ':'');
-    const pieces=(i<lim && s.tag==='IMAGE' && (!sp.speaker||sp.speaker==='NARRATOR'))?phrasePieces(sp.text):[sp.text];
+    const acts=sp.speaker&&sp.speaker!=='NARRATOR'&&planShotFor(sp.text,sp.speaker)==='action';   // an acted line stays one moving shot
+    const pieces=(i<lim && s.tag==='IMAGE')?((!sp.speaker||sp.speaker==='NARRATOR')?phrasePieces(sp.text):[sp.text]).flatMap(p=>acts?[p]:capStillPiece(p)):[sp.text];
     pieces.forEach((p,k)=>{
       const x=k===0?s:{tag:'IMAGE',characters:s.characters,prompt:'',sceneDesc:'',shot:'',pace:s.pace||'',phraseOf:i};
       if(k>0||pieces.length>1){ x.line=pre+p; if(k===0) x.phraseOf=i; }
@@ -5926,6 +5939,7 @@ function planShots(){
     const sp=splitTag(x.line), pv=i?splitTag(sceneData[i-1].line):null;
     x.planMotion=planMotionFor(sp.text,sp.speaker);
     x.planLink=planLinkFor(pv&&pv.text,sp.text,pv&&pv.speaker,sp.speaker);
+    if(i && x.phraseOf!=null && x.phraseOf===sceneData[i-1].phraseOf && x.planLink==='cut') x.planLink='match';   // same line continues: carry the motion across
     if(x.charsOrig==null) x.charsOrig=x.characters;
     const oc=oneCharFor(x,prevChar,sp.speaker);
     if(oc){ if(oc!==x.characters){ x.characters=oc; } x.oneChar=oc;
@@ -5949,7 +5963,7 @@ function phraseShotNote(i){
   const pv=i?sceneData[i-1]:null, nw=pv?psNew(splitTag(pv.line).text,splitTag(s.line).text):[];
   return '\n[NEW SHOT: show the new visual information in this line'+(nw.length?' ('+nw.slice(0,6).join(', ')+')':'')+' as its own subject and composition'+
     (pv&&(pv.sceneDesc||pv.prompt)?'. It must NOT be a re-angle or re-crop of the previous shot ('+String(pv.sceneDesc||pv.prompt).slice(0,160)+')':'')+
-    (s.distinctNote?'. '+s.distinctNote:'')+(s.oneChar?'. ONE CHARACTER ONLY: show '+s.oneChar[0]+s.oneChar.slice(1).toLowerCase()+' alone in frame (no second person, not even partly visible)':'')+(s.planShot==='action'?'. Pose them mid-action, clearly doing what the line describes':'')+'. No written words, signs or labels anywhere. Keep the character exactly as in the reference sheet (same face, hair, skin tone, outfit), mouth closed.]';
+    (s.distinctNote?'. '+s.distinctNote:'')+(s.oneChar?'. ONE CHARACTER ONLY: show '+s.oneChar[0]+s.oneChar.slice(1).toLowerCase()+' alone in frame (no second person, not even partly visible)':'')+'. '+emotionNote(s)+(s.planShot==='action'?'. Pose them mid-action, clearly doing what the line describes':'')+(beatNeedsText(s)?'. Writing only if the line needs it: at most one or two short words, large, clear and correctly spelled':'. No written words, signs or labels anywhere')+'. Crisp and clean: correct anatomy and hands, no distortion. Keep the character exactly as in the reference sheet (same face, hair, skin tone, outfit), mouth closed.]';
 }
 // Similarity check on generated images (8x8 difference hash); consecutive pairs below the threshold are re-angles.
 const PS_SIM_MIN=10;
@@ -7066,16 +7080,21 @@ function identityVerdict(name, o){
     problems:hard.concat(diffs?[diffs]:[]).join('; ').slice(0,240), verdict:String(o.verdict||'')};
 }
 // Phrase plan: count the people in a frame, name the background, list any visible writing (one cheap vision call).
-async function visionPeopleCount(url){
+// Intended emotion of a line (drives prompts and the emotion score).
+const EMO_MAP=[[/\b(afraid|fear\w*|panic\w*|scared|froze|worried|slipped|lost|miss\w*|wait)\b/i,'tense, worried'],[/\b(relie\w*|calm\w*|finally|safe)\b/i,'relieved, calm'],[/\b(knew|realiz\w*|understood)\b/i,'focused realisation'],[/\b(hope\w*|smil\w*|glad)\b/i,'hopeful'],[/\b(hang on|quick\w*|hurr\w*|rush\w*|after)\b/i,'hurried, impatient'],[/\b(guilt\w*|sank|stomach)\b/i,'uneasy, guilty']];
+function lineEmotion(s){ const t=splitTag(String(s?.line||'')).text; for(const [re,e] of EMO_MAP) if(re.test(t)) return e; return 'quietly attentive'; }
+function emotionNote(s){ const e=lineEmotion(s); return (s.oneChar||castInScene(s).length)?'EMOTION: '+e+' — show it in the face (eyes, brows) and body language (posture, hands), mouth closed':'MOOD: '+e+' — carry it with lighting, colour and composition (no people)'; }
+const LINE_MATCH_MIN=6, EMOTION_MIN=6, QUALITY_MIN=7;
+async function visionPeopleCount(url, ctx){
   const key=llmKey(); if(!key) return null;
   const body={model:VISION_MODEL,max_tokens:250,response_format:{type:'json_object'},messages:[
-    {role:'system',content:'You audit one animation frame. Count DISTINCT PEOPLE visible (a face, head or torso counts, even partly at the frame edge or blurred in the background; hands or arms alone do not). Describe the background setting in at most 8 words (walls, props, place). List any readable writing (signs, labels, screens, paper). JSON only: {"people":<int>,"who":["short description"],"background":"...","text":["..."]}'},
+    {role:'system',content:'You audit one animation frame. Count DISTINCT PEOPLE visible (a face, head or torso counts, even partly at the frame edge or blurred in the background; hands or arms alone do not). Describe the background setting in at most 8 words (walls, props, place). List any readable writing (signs, labels, screens, paper).'+(ctx&&ctx.line?' The frame illustrates this narration line: "'+ctx.line+'". Score 0-10 how clearly the picture shows what the line says (subject, objects, action, place); list what is missing. Intended emotion: '+ctx.emotion+'. Score 0-10 how well it carries that emotion: with people, facial expression and body language (mouth closed); with no people, lighting, colour and composition.':'')+' Transcribe every piece of writing EXACTLY as drawn, letter by letter (do not correct it); set garbled_text true if any writing is misspelled, malformed or pseudo-letters. Score image quality 0-10: 10 = crisp and clean; lower for warped or melted faces, extra/fused fingers or broken hands, deformed bodies, melted or merged objects, blur, smears, noise or generation artifacts; list the defects. JSON only: {"people":<int>,"who":["short description"],"background":"...","text":["..."],"garbled_text":<bool>,"quality":<0-10>,"defects":["..."]'+(ctx&&ctx.line?',"line_match":<0-10>,"missing":["..."],"emotion_match":<0-10>':'')+'}'},
     {role:'user',content:[{type:'image_url',image_url:{url}}]}]};
   const resp=await fetch(GROK.url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify(body)});
   if(!resp.ok) throw new Error('people check: '+await apiErrorMessage(resp));
   const d=await resp.json(); trackTextSpend(0.002);
   const t=(d.choices?.[0]?.message?.content||''); const o=JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1));
-  return {people:Math.max(0,parseInt(o.people,10)||0), who:(o.who||[]).map(String), background:String(o.background||''), text:(Array.isArray(o.text)?o.text:[]).filter(Boolean).map(String)};
+  return {people:Math.max(0,parseInt(o.people,10)||0), who:(o.who||[]).map(String), background:String(o.background||''), text:(Array.isArray(o.text)?o.text:[]).filter(Boolean).map(String), line_match:o.line_match==null?null:Number(o.line_match), missing:(Array.isArray(o.missing)?o.missing:[]).map(String), emotion_match:o.emotion_match==null?null:Number(o.emotion_match), garbled:o.garbled_text===true, quality:o.quality==null?null:Number(o.quality), defects:(Array.isArray(o.defects)?o.defects:[]).map(String)};
 }
 function expectedPeople(s){ return s&&s.oneChar?1:0; }
 const BG_WORDS_MIN=0.5;   // narrator stills: share of background words in common that counts as the same background
@@ -7084,12 +7103,19 @@ function bgSame(a,b){ const w=x=>new Set(String(x||'').toLowerCase().match(/[a-z
 function prevNarratorStill(i){ for(let j=i-1;j>=0&&j>=i-3;j--){ const x=sceneData[j]; if(x.resultURL && x.resultType!=='video' && !x.oneChar) return x; if(x.oneChar) return null; } return null; }
 function sceneShotAudit(i, pc){ const s=sceneData[i], exp=expectedPeople(s), pv=!s.oneChar?prevNarratorStill(i):null;
   const r={people:pc.people, expected:exp, people_ok:pc.people===exp, bg:pc.background, bg_repeat:!!(pv&&pv.bgDesc&&bgSame(pv.bgDesc,pc.background)), text:pc.text};
-  r.text_ok=!pc.text.length || beatNeedsText(s); r.ok=r.people_ok&&!r.bg_repeat&&r.text_ok; return r; }
+  r.text_ok=!pc.text.length || beatNeedsText(s);
+  r.line_match=pc.line_match; r.missing=pc.missing||[]; r.match_ok=pc.line_match==null||pc.line_match>=LINE_MATCH_MIN;
+  r.emotion=lineEmotion(s); r.emotion_match=pc.emotion_match; r.emotion_ok=pc.emotion_match==null||pc.emotion_match>=EMOTION_MIN;
+  // in-scene writing: only when the line needs it, kept minimal (<=2 items, <=4 words each), and it must read correctly
+  if(pc.text.length && beatNeedsText(s)) r.text_ok=!pc.garbled && pc.text.length<=2 && pc.text.every(t=>String(t).split(/\s+/).length<=4);
+  r.garbled=!!pc.garbled; r.quality=pc.quality; r.defects=pc.defects||[]; r.quality_ok=pc.quality==null||pc.quality>=QUALITY_MIN;
+  r.ok=r.people_ok&&!r.bg_repeat&&r.text_ok&&r.match_ok&&r.emotion_ok&&r.quality_ok; return r; }
+function shotVisionCtx(i){ const s=sceneData[i]; return {line:splitTag(String(s?.line||'')).text.slice(0,220), emotion:lineEmotion(s)}; }
 // Audit every generated still/clip in a window (clips: their first frame). Returns the failing beats.
 async function shotVisionAudit(from,to){ const out=[];
   for(let i=from;i<to;i++){ const s=sceneData[i]; if(!s||!s.resultURL) continue;
     let u=s.resultURL; if(s.resultType==='video'){ try{ u=await lastFrameUrl(s.resultURL,true); }catch(e){ u=null; } }
-    if(!u) continue; let pc=null; try{ pc=await visionPeopleCount(u); }catch(e){}
+    if(!u) continue; let pc=null; try{ pc=await visionPeopleCount(u, shotVisionCtx(i)); }catch(e){}
     if(!pc) continue; const a=sceneShotAudit(i,pc); s.shotAudit=a; s.bgDesc=pc.background; out.push(Object.assign({i},a)); }
   return out; }
 async function visionStyleCheck(url, people, ctx){
@@ -7157,7 +7183,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(styleOnly.length) styleNote=' '+styleOnly.map(n=>'@Image'+n).join(' and ')+(styleOnly.length>1?' are':' is')+' an ART-STYLE reference only: copy the drawing style exactly but do NOT draw '+(styleOnly.length>1?'those people':'that person')+' unless the scene names them.';
   }catch(e){}
   let r=null, check=null, attempts=0, cost=0, checkErr='', best=null;
-  const rank=c=>!c?-1:(c.too_dark?0:2)+(c.logic_ok!==false?3:0)+(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(c.people_bad?0:5)+(c.bg_repeat?0:2)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
+  const rank=c=>!c?-1:(c.too_dark?0:2)+(c.logic_ok!==false?3:0)+(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(c.people_bad?0:5)+(c.bg_repeat?0:2)+(c.line_bad?0:4)+(c.emotion_bad?0:3)+(c.quality_bad?0:5)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
   const people=sceneIdentityRefs(s), needsText=beatNeedsText(s), lctx=sceneLogicCtx(idx, prompt);
   const fixNote=c=>{ if(!c) return ''; const n=[];
     if(!c.style_match) n.push('the art style drifted'+(c.problems?' ('+c.problems+')':'')+(look3d()?' — match the 3D model sheets exactly: stylised 3D animated (Pixar-style), soft rounded forms, smooth shading, no realism':' — match the reference art style exactly: flat 2D cartoon, bold outlines, flat colour, no realism'));
@@ -7166,6 +7192,9 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(c.stray_text) n.push('it contained writing — remove ALL text, letters and numbers');
     if(c.people_bad) n.push('the frame showed '+c.people+' people but this shot must show '+(s.oneChar?'exactly one person ('+s.oneChar[0]+s.oneChar.slice(1).toLowerCase()+') and nobody else, not even an edge of a shoulder':'nobody at all (objects and the place only; at most a pair of hands)'));
     if(c.bg_repeat) n.push('the background repeated the previous shot ('+c.bg+') — use a clearly different part of the place or a different location, with different props');
+    if(c.line_bad) n.push('the picture did not show what the line says (match '+c.line_match+'/10'+(c.missing&&c.missing.length?'; missing: '+c.missing.slice(0,4).join(', '):'')+') — make the line\'s subject and action the clear centre of the frame: "'+shotVisionCtx(idx).line+'"');
+    if(c.quality_bad) n.push('the image was distorted or garbled (quality '+c.quality+'/10'+(c.defects&&c.defects.length?': '+c.defects.slice(0,4).join(', '):'')+') — crisp, clean render: correct anatomy, five fingers per hand, solid well-formed objects, sharp focus, no artifacts');
+    if(c.emotion_bad) n.push('the emotion was off (score '+c.emotion_match+'/10) — '+emotionNote(s));
     if(c.too_dark) n.push('the image was far too dark (mean brightness '+Math.round(c.luma)+'/255) — bright daytime lighting, light walls, every face and object clearly lit, no night or dim scene');
     return n.length?' STRICT, previous attempt failed: '+n.join('; ')+'.':''; };
   for(let a=0;a<=STYLE_RETRY_CAP;a++){
@@ -7178,9 +7207,9 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     try{ check=await visionStyleCheck(r.url, people, lctx); }catch(e){ check=null; checkErr=e.message; }
     if(check) check.stray_text=!needsText && check.has_text;
     if(check){ const y=await imageLuma(r.url); check.luma=y; check.too_dark=y!=null && y<DARK_LUMA; }
-    if(check && s.planMotion){ try{ const pc=await visionPeopleCount(r.url); if(pc){ const au=sceneShotAudit(idx,pc); check.people=au.people; check.people_bad=!au.people_ok; check.bg_repeat=au.bg_repeat; check.bg=pc.background; if(au.text.length && !needsText) check.stray_text=true; s.shotAudit=au; s.bgDesc=pc.background; } }catch(e){} }
+    if(check && s.planMotion){ try{ const pc=await visionPeopleCount(r.url, shotVisionCtx(idx)); if(pc){ const au=sceneShotAudit(idx,pc); check.line_bad=!au.match_ok; check.line_match=au.line_match; check.missing=au.missing; check.emotion_bad=!au.emotion_ok; check.emotion_match=au.emotion_match; check.quality_bad=!au.quality_ok; check.quality=au.quality; check.defects=au.defects; if(!au.text_ok) check.stray_text=true; check.people=au.people; check.people_bad=!au.people_ok; check.bg_repeat=au.bg_repeat; check.bg=pc.background; if(au.text.length && !needsText) check.stray_text=true; s.shotAudit=au; s.bgDesc=pc.background; } }catch(e){} }
     if(!best || rank(check)>rank(best.check)) best={r,check};
-    if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text && !check.too_dark && !check.people_bad && !check.bg_repeat)) break;
+    if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text && !check.too_dark && !check.people_bad && !check.bg_repeat && !check.line_bad && !check.emotion_bad && !check.quality_bad)) break;
   }
   if(best && best.r!==r){ r=best.r; check=best.check; } // every retry failed: keep the closest-to-model attempt
   let url=r.url, label=r.label, gptText=false, gptErr='';

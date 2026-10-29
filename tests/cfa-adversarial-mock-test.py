@@ -1,3 +1,4 @@
+import re
 # Headless adversarial test: every external API (xAI, fal, ElevenLabs) is mocked via request
 # interception, so it costs $0. Run: pip install playwright && python3 tests/cfa-adversarial-mock-test.py [group ...]
 # Groups: happy xaierr nokey abort trunc xss inputs prompts fal vo storage reload settings timing batch (default all)
@@ -1272,12 +1273,14 @@ async def main():
               const pp=phrasePieces('He tried the bank.');
               return {n,rows,note,pp,on:phrasePlanOn()}}""")
             rows=r['rows']
-            check('phrase: narration split at new information only', r['n']==2 and len(rows)==7 and rows[4]['l'].endswith('must stay secret.') and rows[6]['l'].startswith('5. NARRATOR: when his first backup') and rows[1]['l'].startswith("2. NARRATOR: Dee's") and rows[2]['l'].startswith('2. NARRATOR: A miss meant'), rows)
-            check('phrase: quotes and short lines stay whole', rows[3]['l'].startswith('3. JORDAN: That payment') and r['pp']==['He tried the bank.'])
+            L=[x['l'] for x in rows]; fi=lambda p: next(i for i,x in enumerate(L) if p in x)
+            wc=lambda x: len(x.split(':',1)[1].split())
+            check('phrase: narration split at new information, long phrases capped (<=10 words, clean breaks)', r['n']>=4 and all(wc(x)<=10 for x in L[1:]) and not any(re.search(r'\b(the|a|to|of)$',x) for x in L) and L[1].startswith("2. NARRATOR: Dee's") and any(x.startswith('2. NARRATOR: A miss meant') for x in L) and any(x.startswith('5. NARRATOR: when his first backup') for x in L), L)
+            check('phrase: short lines stay whole', r['pp']==['He tried the bank.'] and any(x=='3. JORDAN: That payment is in my wallet.' for x in L), L)
             check('phrase: first phrase keeps its image, new phrase needs a new one', rows[1]['u']=='blob:x' and rows[2]['u'] is None, rows)
-            check('phrase: quotes hold, realization pushes in', rows[0]['m']=='hold' and rows[3]['m']=='hold' and rows[4]['m']=='push_in', [x['m'] for x in rows])
-            check('phrase: links follow the story (therefore=push_link, voice=jcut, but=whip)', rows[2]['k']=='push_link' and rows[3]['k']=='jcut' and rows[5]['k']=='whip' and rows[6]['k']=='cut', [x['k'] for x in rows])
-            check('phrase: direction carries, flips on a BUT', [x['d'] for x in rows]==[1,1,1,1,1,-1,-1], [x['d'] for x in rows])
+            check('phrase: quotes hold, realization pushes in', rows[0]['m']=='hold' and rows[fi('3. JORDAN')]['m']=='hold' and rows[fi('Jordan already knew')]['m']=='push_in', [x['m'] for x in rows])
+            check('phrase: links follow the story (therefore=push_link, voice=jcut, but=whip, same line continues=match)', rows[fi('A miss meant')]['k']=='push_link' and rows[fi('3. JORDAN')]['k']=='jcut' and rows[fi('But Marcus')]['k']=='whip' and rows[fi('and the next order')]['k']=='match', [x['k'] for x in rows])
+            b0=fi('But Marcus'); check('phrase: direction carries, flips on a BUT', all(x['d']==1 for x in rows[:b0]) and all(x['d']==-1 for x in rows[b0:]), [x['d'] for x in rows])
             check('phrase: new-shot prompt forbids re-angles, locks references, mouths closed', 'NOT be a re-angle' in r['note'] and 'reference sheet' in r['note'] and 'mouth closed' in r['note'] and 'ONE CHARACTER ONLY: show Jordan' in r['note'], r['note'])
             check('phrase: plan flag on', r['on'])
             r2=await J(pg,"""()=>{sceneData.length=0;
@@ -1305,7 +1308,15 @@ async def main():
               const a2=sceneShotAudit(4,{people:1,background:'kitchen table',text:['PAID']});
               const a3=sceneShotAudit(4,{people:1,background:'kitchen table',text:[]});
               const a4=sceneShotAudit(3,{people:2,background:'x',text:[]});
-              setTestClip(false); return {sc,f,win,a1,a2,a3,a4,exp:[expectedPeople(sceneData[1]),expectedPeople(sceneData[4])]}}""")
+              const a5=sceneShotAudit(4,{people:1,background:'k',text:[],line_match:3,missing:['phone'],emotion_match:8});
+              const a6=sceneShotAudit(4,{people:1,background:'k',text:[],line_match:8,emotion_match:2});
+              const a7=sceneShotAudit(4,{people:1,background:'k',text:[],line_match:8,emotion_match:8});
+              const q1=sceneShotAudit(4,{people:1,background:'k',text:[],quality:4,defects:['six fingers']});
+              const q2=sceneShotAudit(4,{people:1,background:'k',text:[],quality:9});
+              localStorage.setItem('cfa_overlay_only','0'); const g1=sceneShotAudit(4,{people:1,background:'k',text:['SEDD WROD'],garbled:true}), g2=sceneShotAudit(4,{people:1,background:'k',text:['paper'],garbled:false}), g3=sceneShotAudit(4,{people:1,background:'k',text:['a','b','c'],garbled:false});
+              const em=[lineEmotion(sceneData[4]),emotionNote(sceneData[4]),emotionNote(sceneData[1])];
+              sceneData[1].tStart=0; sceneData[1].tEnd=6.2; const lv=stillLengthViolations(0,4);
+              setTestClip(false); const gg=[g1.text_ok,g2.text_ok,g3.text_ok,beatNeedsText(sceneData[4])]; localStorage.removeItem('cfa_overlay_only'); return {g:gg,q1,q2,a5,a6,a7,em,lv,sc,f,win,a1,a2,a3,a4,exp:[expectedPeople(sceneData[1]),expectedPeople(sceneData[4])]}}""")
             check('window: picks a 15s window ending on the first action line', r5['f']==2 and r5['win'][:6]==[2,5,False,True,True,False], r5['win'])
             check('window: bundle skips beats before the window and stops after it', r5['sc']==['skip','skip','in','in','in','stop'], r5.get('sc'))
             check('window: render query starts the renderer at the window', r5['win'][6].startswith('&test_from=9.70&test_s=15'), r5['win'][6])
@@ -1313,6 +1324,12 @@ async def main():
             check('vision: extra people and repeated narrator background fail', not r5['a1']['people_ok'] and r5['a1']['bg_repeat'] and not r5['a1']['ok'], r5['a1'])
             check('vision: stray on-screen text fails, clean frame passes', not r5['a2']['text_ok'] and r5['a3']['ok'], [r5['a2'],r5['a3']])
             check('vision: a second person in a one-character shot fails', not r5['a4']['people_ok'], r5['a4'])
+            check('vision: low script-line match fails and names what is missing', not r5['a5']['match_ok'] and not r5['a5']['ok'] and r5['a5']['missing']==['phone'], r5['a5'])
+            check('vision: emotion off the line fails, matching frame passes', not r5['a6']['emotion_ok'] and not r5['a6']['ok'] and r5['a7']['ok'], [r5['a6'],r5['a7']])
+            check('emotion: line emotion drives the prompt (face/body for people, light/composition for empty stills)', r5['em'][0]=='hurried, impatient' and 'EMOTION:' in r5['em'][1] and 'mouth closed' in r5['em'][1] and 'MOOD:' in r5['em'][2] and 'lighting' in r5['em'][2], r5['em'])
+            check('quality gate: distorted frame (warped hands) fails, crisp frame passes', not r5['q1']['quality_ok'] and not r5['q1']['ok'] and r5['q2']['ok'], [r5['q1'],r5['q2']])
+            check('text: in-scene writing allowed only when needed, minimal and correctly spelled (garbled fails)', r5['g']==[False,True,False,True], r5['g'])
+            check('still cap: a still longer than 4.5s is flagged', r5['lv']==[[1,6.2]], r5['lv'])
             r3=await J(pg,"()=>{sceneData[2].characters='BOTH'; return oneCharViolations();}")
             check('phrase: one-character check flags a two-person shot', r3==[2], r3)
             check('phrase: no page errors', not [e for e in errs if 'pageerror' in e], errs)
