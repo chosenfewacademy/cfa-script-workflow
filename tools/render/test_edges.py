@@ -33,4 +33,12 @@ if os.path.exists(v6):
     g = render.edge_gate(v6)
     ts = sorted(set(b["t"] for b in g["bad"]))
     check("edge gate flags v6 shots 3-4 (8.0-15.9s) only", not g["pass"] and ts and min(ts) >= 8.0 and max(ts) < 16.0, ts)
+import numpy as _np, cv2 as _cv2
+_rng = _np.random.default_rng(3); _art = _cv2.resize(_rng.integers(40, 220, (108, 192)).astype(_np.uint8), (1920, 1080), interpolation=_cv2.INTER_NEAREST).astype(_np.float32)
+_soft = _cv2.GaussianBlur(_art, (0, 0), 14); _w = _np.clip(_np.arange(1920) / 700.0, 0, 1)[None, :]
+_dof = _soft * (1 - _w) + _art * _w   # gradual focus falloff toward the left edge, no seam
+_st = render.edge_band_stats(_dof)
+check("shallow depth-of-field falloff is not a blurred band", not _st["left"][1])
+_dark = _art * 0.12; _dark[:, 400:] = _art[:, 400:]
+check("textured low-key art is not a dark bar", not render.edge_band_stats(_dark)["left"][0])
 print("%d failure(s)" % len(fails)); raise SystemExit(1 if fails else 0)

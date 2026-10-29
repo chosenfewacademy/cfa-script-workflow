@@ -1260,8 +1260,30 @@ def edge_band_stats(frame):
     out = {}
     for k, band, lb in (("left", frame[:, :b], lap[:, :b]), ("right", frame[:, -b:], lap[:, -b:]),
                         ("top", frame[:bh, :], lap[:bh, :]), ("bottom", frame[-bh:, :], lap[-bh:, :])):
-        out[k] = (float(band.mean()) < EDGE_DARK_Y and ymid > EDGE_DARK_Y * 2.5 and float(lb.mean()) / inner < 0.3, float(lb.mean()) / inner < EDGE_SHARP_MIN, round(float(lb.mean()) / inner, 3))
+        r = float(lb.mean()) / inner
+        blur = r < EDGE_SHARP_MIN and (not EDGE_DOF_OK or _edge_seam(frame, lap, k, inner))
+        out[k] = (float(band.mean()) < EDGE_DARK_Y and ymid > EDGE_DARK_Y * 2.5 and r < EDGE_DARK_DETAIL, blur, round(r, 3))
     return out
+
+
+EDGE_DARK_DETAIL = 0.12   # a dark band is a bar only when it is also near-featureless (real low-key art keeps detail 0.25+)
+EDGE_DOF_OK = os.environ.get("CFA_EDGE_DOF_OK", "1") != "0"   # ref style: shallow-DOF backgrounds are soft by design; only a fill SEAM is a band
+
+
+def _edge_seam(frame, lap, side, inner):
+    """True when a soft edge ends at a straight seam (blurred pillar/fill next to sharp art), False for gradual depth-of-field falloff."""
+    import numpy as np
+    f, l = (frame, lap) if side in ("left", "right") else (frame.T, lap.T)
+    if side in ("right", "bottom"):
+        f, l = f[:, ::-1], l[:, ::-1]
+    W = f.shape[1]; lim = int(W * 0.3)
+    prof = l[:, :lim].mean(axis=0) / inner
+    dx = np.abs(np.diff(f[:, :lim + 1], axis=1))
+    rows = (dx > 6).mean(axis=0)            # share of rows with a step at this column
+    for x in range(3, lim - 6):
+        if prof[max(0, x - 12):x].mean() < EDGE_SHARP_MIN and prof[x + 2:x + 14].mean() > 2.5 * max(prof[max(0, x - 12):x].mean(), 1e-3) and rows[x] > 0.6:
+            return True
+    return prof[:lim].max() < EDGE_SHARP_MIN   # the whole outer 30% is featureless: a fill, not focus falloff
 
 
 def edge_gate(path, every=0.5):
