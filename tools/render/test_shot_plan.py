@@ -115,4 +115,19 @@ except ValueError:
     _ok = True
 check("net_retry: non-network errors are not retried", _ok)
 
+
+# motion budget: cached music reserves nothing; a skipped action shot fails loudly
+import tempfile as _tf, types as _ty
+_mc = _tf.mkdtemp(); R.MUSIC_CACHE = _mc
+_a = _ty.SimpleNamespace(music_style=None, no_score=False)
+_b = {"videoId": "v23"}
+check("music reserve held when the score is not cached", R.music_reserve(_b, _a) == R.MUSIC_RESERVE_USD)
+open(os.path.join(_mc, "v23__cinematic.mp3"), "wb").write(b"x" * 20000)
+check("music reserve is 0 when the episode score is cached (v5 bug: $0.35 held back, action skipped)", R.music_reserve(_b, _a) == 0.0)
+check("music reserve is 0 when the bundle carries music", R.music_reserve({"music": "m.mp3"}, _a) == 0.0)
+_acts = [{"media": "a.png", "mediaType": "image", "plan_shot": "action", "one_char": "JORDAN", "duration": 5.03}]
+_pk, _est = R.action_i2v_plan(_acts, "kling-ref", 0.68)
+check("kling-ref 5s action fits a $0.68 cap once music is cached", len(_pk) == 1 and abs(_est - 0.42) < 0.01, (_pk, _est))
+_acts2 = [dict(_acts[0])]; R.action_i2v_plan(_acts2, "kling-ref", 0.33)
+check("an action shot over the cap is marked (render raises ActionShotDegraded)", _acts2[0].get("i2v_skipped_cost") and issubclass(R.ActionShotDegraded, RuntimeError))
 print("%d failure(s)" % len(fails)); sys.exit(1 if fails else 0)
