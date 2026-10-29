@@ -2679,6 +2679,26 @@ def i2v_payload(mode, uri, prompt, ref_url=None, shot_s=None, who="the character
     return p
 
 
+def net_retry(fn, tries=4, base=2.0, sleep=None, post=False):
+    """Retry a network call on connection/timeout errors with exponential backoff (2s, 4s, 8s).
+    Only transport errors retry; a submitted job is never re-posted after a reply, so nothing is paid twice."""
+    import time as _t
+    sleep = sleep or _t.sleep
+    for k in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            name = type(e).__name__
+            transient = any(x in name for x in ("ConnectionError", "Timeout", "ChunkedEncoding", "SSLError", "ProtocolError"))
+            if post:  # a POST retries only if the request never reached fal (no job, no charge)
+                msg = str(e)
+                transient = "ConnectTimeout" in name or "NewConnectionError" in msg or "NameResolution" in msg or "Failed to establish" in msg
+            if not transient or k == tries - 1:
+                raise
+            log("fal network error (%s), retry %d/%d in %.0fs" % (name, k + 1, tries - 1, base * 2 ** k))
+            sleep(base * 2 ** k)
+
+
 def i2v_clip(img_path, mode, key, out, fetch=None, prompt=None, ref_url=None, shot_s=None, who="the character"):
     """One fal queue i2v job -> mp4 at `out`. `fetch(model, payload)` can be injected for tests."""
     import base64
@@ -2690,17 +2710,17 @@ def i2v_clip(img_path, mode, key, out, fetch=None, prompt=None, ref_url=None, sh
     else:
         import requests, time as _t
         h = {"Authorization": "Key " + key}
-        j = requests.post("https://queue.fal.run/" + model, headers=h, json=payload, timeout=60).json()
+        j = net_retry(lambda: requests.post("https://queue.fal.run/" + model, headers=h, json=payload, timeout=60).json(), post=True)
         t0 = _t.time()
         while _t.time() - t0 < 600:
-            st = requests.get(j["status_url"], headers=h, timeout=30).json()
+            st = net_retry(lambda: requests.get(j["status_url"], headers=h, timeout=30).json())
             if st.get("status") == "COMPLETED":
                 break
             if st.get("status") in ("FAILED", "ERROR"):
                 raise RuntimeError("i2v failed")
             _t.sleep(4)
-        res = requests.get(j["response_url"], headers=h, timeout=60).json()
-        data = requests.get((res.get("video") or {})["url"], timeout=180).content
+        res = net_retry(lambda: requests.get(j["response_url"], headers=h, timeout=60).json())
+        data = net_retry(lambda: requests.get((res.get("video") or {})["url"], timeout=180).content)
     open(out, "wb").write(data)
     return out
 
