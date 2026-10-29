@@ -77,4 +77,16 @@ bad = R.i2v_frame_check("x.mp4", "k", "https://ref", 1, ask=lambda m: {"frames":
 check("i2v frame check passes a clean one-person clip", ok1["ok"], ok1)
 check("i2v frame check rejects a second person, on-screen text, distortion and face drift", not bad["ok"] and len(bad["why"]) == 4, bad)
 check("i2v prompt forbids text and keeps named others off-screen", "no text, captions" in pr and "off-screen" in pr, pr)
+# zero on-screen text by default: no captions, overlays, title or end card burned in; text gate reads the frames
+R.CAPTIONS_ON = False
+ap = os.path.join(d, "c.ass")
+edl0 = {"caption_style": {"preset": "bold_pop", "words_per_caption": 3, "highlight_color": "#FFD23F", "position": "bottom"},
+        "shots": [{"start": 0, "end": 6, "emphasis": []}], "title_card": {"enabled": True, "text": "T", "duration": 3}, "end_card": {"enabled": True, "text": "Subscribe", "duration": 3}}
+R.build_ass([["Write", 0.0, 0.4], ["it", 0.4, 0.6], ["down", 0.6, 1.0]], [{"start": 0.0, "end": 2.0, "overlay": "Write it down. Keep it safe."}], edl0, 1920, 1080, 6.0, ap)
+check("no captions, overlays, title or end card by default", "Dialogue:" not in open(ap).read())
+tg1 = R.text_gate("x", "k", ask=lambda m: {"items": [{"tile": 3, "text": "Write it down", "kind": "overlay"}]})
+tg2 = R.text_gate("x", "k", ask=lambda m: {"items": [{"tile": 2, "text": "PAID", "kind": "scene", "spelled_ok": True}]}, allow_scene=True)
+tg3 = R.text_gate("x", "k", ask=lambda m: {"items": [{"tile": 2, "text": "PIAD", "kind": "scene", "spelled_ok": False}]}, allow_scene=True)
+tg4 = R.text_gate("x", "k", ask=lambda m: {"items": []})
+check("text gate: overlay text fails, minimal correctly spelled scene text passes, garbled fails, clean passes", not tg1["pass"] and tg2["pass"] and not tg3["pass"] and tg4["pass"], [tg1, tg2, tg3])
 print("%d failure(s)" % len(fails)); sys.exit(1 if fails else 0)

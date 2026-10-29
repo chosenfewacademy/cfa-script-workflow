@@ -813,10 +813,14 @@ async def main():
             r=await J(pgo,"""()=>{const a={line:'He wrote "check the first four" in the notebook.',characters:'JORDAN',tag:'IMAGE'};
               const b={line:'"Card declined," Dee said.',characters:'JORDAN',tag:'IMAGE'};
               const c={line:'Marcus walked in.',overlay:'one two three four five six seven',characters:'MARCUS',tag:'IMAGE'};
-              const p=composeScenePrompt(a,'Jordan at the desk.');
-              localStorage.setItem('cfa_overlay_only','0'); const p2=composeScenePrompt(a,'Jordan at the desk.'); localStorage.removeItem('cfa_overlay_only');
-              return {noText:p.includes('NO WRITING ANYWHERE'), needs:beatNeedsText(a), ova:beatOverlayText(a), ovb:beatOverlayText(b), ovc:beatOverlayText(c), old:p2.includes('Only the specific words')};}""")
-            check('overlay: a writing beat still forbids text in the image', r['noText'] and not r['needs'], r)
+              const p=composeScenePrompt(a,'Jordan at the desk.'), d0={needs:beatNeedsText(a), inScene:p.includes('Only the specific words'), ov:[beatOverlayText(a),beatOverlayText(b),beatOverlayText(c)], plain:beatNeedsText(c)};
+              localStorage.setItem('cfa_overlays','1'); const p1=composeScenePrompt(a,'Jordan at the desk.');
+              const r1={noText:p1.includes('NO WRITING ANYWHERE'), needs:beatNeedsText(a), ova:beatOverlayText(a), ovb:beatOverlayText(b), ovc:beatOverlayText(c)};
+              localStorage.setItem('cfa_overlay_only','0'); const p2=composeScenePrompt(a,'Jordan at the desk.'); localStorage.removeItem('cfa_overlay_only'); localStorage.removeItem('cfa_overlays');
+              return Object.assign(r1,{d0, old:p2.includes('Only the specific words')});}""")
+            check('no text: overlays off by default (none sent to the renderer)', r['d0']['ov']==['','',''], r)
+            check('no text: a writing beat may show minimal in-scene words, spelled exactly; plain beats none', r['d0']['needs'] and r['d0']['inScene'] and not r['d0']['plain'], r)
+            check('overlay (opt-in): a writing beat still forbids text in the image', r['noText'] and not r['needs'], r)
             check('overlay: the needed words become the overlay', r['ova']=='check the first four', r)
             check('overlay: plain dialogue gets no overlay', r['ovb']=='', r)
             check('overlay: director overlay capped at 6 words', len(r['ovc'].split())==6, r)
@@ -1295,7 +1299,7 @@ async def main():
             check('phrase: two-person beats become one character per shot, alternating', [x[0] for x in bd[:3]]==['JORDAN','MARCUS','JORDAN'] and r2['bad']==[], bd)
             check('phrase: switching characters is a reverse shot (or J-cut on a new voice)', bd[1][2] in ('reverse','jcut') and bd[2][2] in ('reverse','jcut'), bd)
             check('phrase: physical action line is a moving shot, realization a still', bd[3][3]=='action' and bd[4][3]=='still' and bd[4][4]=='push_in', bd)
-            check('phrase: prompt enforces one character and no text', 'ONE CHARACTER ONLY: show Marcus alone' in r2['note'] and 'No written words' in r2['note'] and 'mid-action' in r2['note4'], r2['note'])
+            check('phrase: prompt enforces one character and no text', 'ONE CHARACTER ONLY: show Marcus alone' in r2['note'] and ('No written words' in r2['note'] or 'at most one or two short words' in r2['note']) and 'Crisp and clean' in r2['note'] and 'mid-action' in r2['note4'], r2['note'])
             r4=await J(pg,"""()=>{sceneData.length=0; sceneData.push({line:"1. NARRATOR: Dee's money had to reach the supplier by five.",tag:'IMAGE',characters:'NONE',prompt:'p'}); planShots(); return sceneData[0].planShot;}""")
             check('phrase: no character on screen -> never an action (i2v) shot', r4=='still', r4)
             await J(pg,"()=>{sceneData.length=0; ['1. NARRATOR: Marcus and Jordan sat.','2. MARCUS: Write it.','3. JORDAN: Why paper?'].forEach(l=>sceneData.push({line:l,tag:'IMAGE',characters:'BOTH',prompt:'p'})); planShots();}")
@@ -1305,7 +1309,7 @@ async def main():
               const win=[testClipFrom(),testClipLimit(),inTestClip(1),inTestClip(2),inTestClip(4),inTestClip(5),testClipRenderQuery()]; const sc=[0,1,2,3,4,5].map(tcScope);
               sceneData[1].bgDesc='bike shop workbench with red bikes on wall';
               const a1=sceneShotAudit(2,{people:2,background:'bike shop workbench, red bikes on the wall',text:[]});
-              const a2=sceneShotAudit(4,{people:1,background:'kitchen table',text:['PAID']});
+              const a2=sceneShotAudit(3,{people:1,background:'kitchen table',text:['PAID']});
               const a3=sceneShotAudit(4,{people:1,background:'kitchen table',text:[]});
               const a4=sceneShotAudit(3,{people:2,background:'x',text:[]});
               const a5=sceneShotAudit(4,{people:1,background:'k',text:[],line_match:3,missing:['phone'],emotion_match:8});

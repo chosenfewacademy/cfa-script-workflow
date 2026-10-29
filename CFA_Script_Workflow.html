@@ -5746,7 +5746,7 @@ Rules:
 - One shared LOOK for the episode: lighting, colour palette, mood and time of day that follow the story; change them only when the story moves place or time.
 - Every shot happens in a named place from the story; keep props and positions consistent between neighbouring shots; never invent people who are not in the narration; respect who is on screen.
 - image: 2-4 sentences describing the frame (setting first, then characters' pose and expression, 2-3 props, composition and shot size). Describe characters by name and action only; their look comes from reference sheets. Do NOT describe the art style.
-- NO TEXT IN IMAGES: never ask for words, numbers, signs, labels, captions, screens with readable text or handwriting. If the viewer must read something (an amount, a word, an address fragment), put those exact few words in "overlay" instead (at most 6 words) and keep the image itself text-free.
+- NO TEXT IN IMAGES: never ask for words, numbers, signs, labels, captions, screens with readable text or handwriting. There are NO caption or text overlays in this show ("overlay" is always ""). Only when the line itself needs the viewer to read something, the image may show one or two short real words in the scene (a note, a sign, a screen), large, clear and correctly spelled; otherwise no writing at all.
 - motion: for VIDEO shots, one or two sentences of subject motion plus one camera move (slow push-in, gentle pan, static); for IMAGE shots, a subtle camera move for a Ken Burns pass.
 - sfx: a short ambient sound description for the shot (room tone, street, shop bell, keyboard), no music, no voices.
 - NARRATOR vs CHARACTER shots: a beat spoken by a CHARACTER (TALK / a character line) is an on-screen speaker shot of that character (medium or close-up, shot / reverse-shot between speakers, the listener's reaction allowed). A NARRATOR beat is NEVER a talking face: use an animated wide or establishing shot (slow push-in, pan or drift; people moving in the space) of the place, a time-passing shot, or B-roll of the key object (the phone, the notebook, the shop door).
@@ -7022,9 +7022,12 @@ const NEEDS_TEXT_RE=/["“][^"”]{2,40}["”]|\b(writes?|wrote|written|writing|
 // OVERLAY-ONLY TEXT (default on): images never carry words; any words the viewer must read are drawn
 // by the renderer as a clean overlay (segment.overlay), so no garbled or invented text reaches the frame.
 function overlayOnly(){ return safeGetItem('cfa_overlay_only')!=='0'; }
-function beatNeedsText(s){ return !overlayOnly() && NEEDS_TEXT_RE.test(String(s?.line||'')); }
+// NO ON-SCREEN TEXT (Oct 28): no captions or overlays. A line that needs reading may show minimal, correctly spelled in-scene words.
+function overlaysOn(){ return safeGetItem('cfa_overlays')==='1'; }
+function beatNeedsText(s){ return (overlaysOn()?!overlayOnly():true) && NEEDS_TEXT_RE.test(String(s?.line||'')); }
 const READ_CUE_RE=/\b(writes?|wrote|written|scribbles?|underlin\w*|headline|sign (says|reads)|reads?|label(l?ed)?|typed?|types|screen (said|says|showed|shows))\b/i;
 function beatOverlayText(s){
+  if(!overlaysOn()) return '';
   const own=String(s?.overlay||'').trim(); if(own) return own.split(/\s+/).slice(0,6).join(' ');
   const line=String(s?.line||'');
   if(!READ_CUE_RE.test(line)) return '';
