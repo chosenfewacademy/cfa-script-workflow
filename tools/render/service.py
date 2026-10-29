@@ -9,7 +9,7 @@
   GET  /feedback           -> {items: [...], memory: [...]}   (?since=<epoch> for changes only)
   GET  /feedback/<id>      -> item          GET /feedback/memory -> {memory: [...]}
   POST /feedback/<id>/status JSON {status: in_progress|ready|declined|reverted, resolution, accept} -> item
-  GET  /health             -> {"ok": true, "queue": n}   (no auth)
+  GET  /health             -> {"ok": true, "queue": n, "music_cached": bool}   (no auth)
 
 Auth: "Authorization: Bearer <token>"; the token lives in CFA_RENDER_TOKEN_FILE (never in the repo).
 CORS: only origins in CFA_ALLOWED_ORIGINS (default https://chosenfewacademy.github.io).
@@ -340,7 +340,9 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         parts, qs = self.route()
         if parts == ["health"]:
-            return self.send(200, {"ok": True, "queue": sum(1 for j in jobs.values() if j["state"] in ("queued", "running"))})
+            mc = os.path.expanduser(os.environ.get("CFA_MUSIC_CACHE") or "~/cfa-render-data/music_cache")
+            cached = os.path.isdir(mc) and any(f.endswith(".mp3") for f in os.listdir(mc))
+            return self.send(200, {"ok": True, "queue": sum(1 for j in jobs.values() if j["state"] in ("queued", "running")), "music_cached": cached})
         if not self.origin_ok() or not self.authed():
             return
         if parts[:1] == ["feedback"]:
