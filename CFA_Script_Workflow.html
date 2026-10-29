@@ -7093,13 +7093,13 @@ const LINE_MATCH_MIN=6, EMOTION_MIN=6, QUALITY_MIN=7;
 async function visionPeopleCount(url, ctx){
   const key=llmKey(); if(!key) return null;
   const body={model:VISION_MODEL,max_tokens:250,response_format:{type:'json_object'},messages:[
-    {role:'system',content:'You audit one animation frame. Count DISTINCT PEOPLE visible (a face, head or torso counts, even partly at the frame edge or blurred in the background; hands or arms alone do not). Describe the background setting in at most 8 words (walls, props, place). List any readable writing (signs, labels, screens, paper).'+(ctx&&ctx.line?' The frame illustrates this narration line: "'+ctx.line+'". Score 0-10 how clearly the picture shows what the line says (subject, objects, action, place); list what is missing. Intended emotion: '+ctx.emotion+'. Score 0-10 how well it carries that emotion: with people, facial expression and body language (mouth closed); with no people, lighting, colour and composition.':'')+' Transcribe every piece of writing EXACTLY as drawn, letter by letter (do not correct it); set garbled_text true if any writing is misspelled, malformed or pseudo-letters. Score image quality 0-10: 10 = crisp and clean; lower for warped or melted faces, extra/fused fingers or broken hands, deformed bodies, melted or merged objects, blur, smears, noise or generation artifacts; list the defects. JSON only: {"people":<int>,"who":["short description"],"background":"...","text":["..."],"garbled_text":<bool>,"quality":<0-10>,"defects":["..."]'+(ctx&&ctx.line?',"line_match":<0-10>,"missing":["..."],"emotion_match":<0-10>':'')+'}'},
+    {role:'system',content:'You audit one animation frame. Count DISTINCT PEOPLE visible (a face, head or torso counts, even partly at the frame edge or blurred in the background; hands or arms alone do not). Describe the background setting in at most 8 words (walls, props, place). List any readable writing (signs, labels, screens, paper).'+(ctx&&ctx.line?' The frame illustrates this narration line: "'+ctx.line+'". Score 0-10 how clearly the picture shows what the line says (subject, objects, action, place); list what is missing. Intended emotion: '+ctx.emotion+'. Score 0-10 how well it carries that emotion: with people, facial expression and body language (mouth closed); with no people, lighting, colour and composition.':'')+' Framing: set head_cut true if any person\'s head or face is cropped by the frame edge (top of head, chin or face cut off). Transcribe every piece of writing EXACTLY as drawn, letter by letter (do not correct it); set garbled_text true if any writing is misspelled, malformed or pseudo-letters. Score image quality 0-10: 10 = crisp and clean; lower for warped or melted faces, extra/fused fingers or broken hands, deformed bodies, melted or merged objects, blur, smears, noise or generation artifacts; list the defects. JSON only: {"people":<int>,"who":["short description"],"background":"...","text":["..."],"garbled_text":<bool>,"quality":<0-10>,"defects":["..."],"head_cut":<bool>'+(ctx&&ctx.line?',"line_match":<0-10>,"missing":["..."],"emotion_match":<0-10>':'')+'}'},
     {role:'user',content:[{type:'image_url',image_url:{url}}]}]};
   const resp=await fetch(GROK.url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify(body)});
   if(!resp.ok) throw new Error('people check: '+await apiErrorMessage(resp));
   const d=await resp.json(); trackTextSpend(0.002);
   const t=(d.choices?.[0]?.message?.content||''); const o=JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1));
-  return {people:Math.max(0,parseInt(o.people,10)||0), who:(o.who||[]).map(String), background:String(o.background||''), text:(Array.isArray(o.text)?o.text:[]).filter(Boolean).map(String), line_match:o.line_match==null?null:Number(o.line_match), missing:(Array.isArray(o.missing)?o.missing:[]).map(String), emotion_match:o.emotion_match==null?null:Number(o.emotion_match), garbled:o.garbled_text===true, quality:o.quality==null?null:Number(o.quality), defects:(Array.isArray(o.defects)?o.defects:[]).map(String)};
+  return {people:Math.max(0,parseInt(o.people,10)||0), who:(o.who||[]).map(String), background:String(o.background||''), text:(Array.isArray(o.text)?o.text:[]).filter(Boolean).map(String), line_match:o.line_match==null?null:Number(o.line_match), missing:(Array.isArray(o.missing)?o.missing:[]).map(String), emotion_match:o.emotion_match==null?null:Number(o.emotion_match), garbled:o.garbled_text===true, quality:o.quality==null?null:Number(o.quality), defects:(Array.isArray(o.defects)?o.defects:[]).map(String), head_cut:o.head_cut===true};
 }
 function expectedPeople(s){ return s&&(s.oneChar||castFocus(s))?1:0; }
 const BG_WORDS_MIN=0.5;   // narrator stills: share of background words in common that counts as the same background
@@ -7114,7 +7114,8 @@ function sceneShotAudit(i, pc){ const s=sceneData[i], exp=expectedPeople(s), pv=
   // in-scene writing: only when the line needs it, kept minimal (<=2 items, <=4 words each), and it must read correctly
   if(pc.text.length && beatNeedsText(s)) r.text_ok=!pc.garbled && pc.text.length<=2 && pc.text.every(t=>String(t).split(/\s+/).length<=4);
   r.garbled=!!pc.garbled; r.quality=pc.quality; r.defects=pc.defects||[]; r.quality_ok=pc.quality==null||pc.quality>=QUALITY_MIN;
-  r.ok=r.people_ok&&!r.bg_repeat&&r.text_ok&&r.match_ok&&r.emotion_ok&&r.quality_ok; return r; }
+  r.framing_ok=!(pc.head_cut&&pc.people>0);
+  r.ok=r.people_ok&&!r.bg_repeat&&r.text_ok&&r.match_ok&&r.emotion_ok&&r.quality_ok&&r.framing_ok; return r; }
 function shotVisionCtx(i){ const s=sceneData[i]; return {line:splitTag(String(s?.line||'')).text.slice(0,220), emotion:lineEmotion(s)}; }
 // Audit every generated still/clip in a window (clips: their first frame). Returns the failing beats.
 async function shotVisionAudit(from,to){ const out=[];
@@ -7171,12 +7172,21 @@ function imageLuma(url){
       const d=x.getImageData(0,0,64,36).data; let y=0; for(let i=0;i<d.length;i+=4) y+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; res(y/(d.length/4)); }catch(e){ res(null); } };
     im.onerror=()=>{ clearTimeout(t); res(null); }; im.src=url; });
 }
+// Strip requests for writing (screen readouts, labels, signs, counts of words) unless the line needs text.
+const WRITING_RE=/[^.,;]*(?:\d+\s*%|\b(?:percent|battery (?:bar|level)|shows? (?:\w+ )?words|twelve words|reads?|labell?ed|labels?|signs?|signage|written|writing|lettering|caption|logo|title|numbers?|digits?|text)\b)[^.,;]*/gi;
+// clauses that forbid writing ("NO WRITING ANYWHERE", "without labels") are kept
+function stripWriting(p){ return String(p||'').replace(WRITING_RE,m=>/\b(no|not|never|without|avoid|nothing)\b/i.test(m)?m:'').replace(/\s*,\s*(,\s*)+/g,', ').replace(/\s+([.,;])/g,'$1').replace(/([.,;])\1+/g,'$1').replace(/\s{2,}/g,' ').trim(); }
+const NO_TEXT_NOTE=' No signage, no text, no letters or numbers anywhere: screens, papers and walls are blank or show simple shapes.';
+function stillGateWhy(c){ if(!c) return []; const w=[]; if(c.people_bad) w.push('people'); if(c.stray_text) w.push('text'); if(c.quality_bad) w.push('quality'); if(c.line_bad) w.push('script match'); if(c.emotion_bad) w.push('emotion'); if(c.framing_bad) w.push('framing'); if(c.identity_match===false) w.push('identity'); return w; }
+function stillBlockOn(){ try{ return localStorage.getItem('cfa_still_block')!=='0'; }catch(e){ return true; } }
 async function styledImageRequest(idx, model, prompt, refs, status){
+  if(!beatNeedsText(sceneData[idx]||{})) prompt=stripWriting(prompt)+NO_TEXT_NOTE;
   prompt=deRealize(prompt)+lookify(' Bright, evenly lit flat 2D cartoon frame, same art style as the reference sheets — not a photo, not 3D.');
   const s=sceneData[idx]||{};
   try{ await ensureCastRefs(castInScene(s)); }catch(e){}
   const cast=withCastRefs(idx, model, refs||[]);
   model=cast.model; refs=cast.refs.slice();
+  if(s.oneChar==='JORDAN' || sceneCharSet(s.characters).includes('JORDAN')){ try{ const ju=await getCharacterUrl('Jordan',JORDAN_B64); refs=[ju].concat(refs.filter(u=>u!==ju)).slice(0,4); s.jordanRef=true; }catch(e){} }
   // Concept scenes no longer go text-only: Kling O1 with the style sheets as references.
   if(model==='imagen4') model='kling-o1';
   let styleNote='';
@@ -7188,7 +7198,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(styleOnly.length) styleNote=' '+styleOnly.map(n=>'@Image'+n).join(' and ')+(styleOnly.length>1?' are':' is')+' an ART-STYLE reference only: copy the drawing style exactly but do NOT draw '+(styleOnly.length>1?'those people':'that person')+' unless the scene names them.';
   }catch(e){}
   let r=null, check=null, attempts=0, cost=0, checkErr='', best=null;
-  const rank=c=>!c?-1:(c.too_dark?0:2)+(c.logic_ok!==false?3:0)+(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(c.people_bad?0:5)+(c.bg_repeat?0:2)+(c.line_bad?0:4)+(c.emotion_bad?0:3)+(c.quality_bad?0:5)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
+  const rank=c=>!c?-1:(c.too_dark?0:2)+(c.logic_ok!==false?3:0)+(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(c.people_bad?0:5)+(c.bg_repeat?0:2)+(c.line_bad?0:4)+(c.emotion_bad?0:3)+(c.quality_bad?0:5)+(c.framing_bad?0:3)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
   const people=sceneIdentityRefs(s), needsText=beatNeedsText(s), lctx=sceneLogicCtx(idx, prompt);
   const fixNote=c=>{ if(!c) return ''; const n=[];
     if(!c.style_match) n.push('the art style drifted'+(c.problems?' ('+c.problems+')':'')+(look3d()?' — match the 3D model sheets exactly: stylised 3D animated (Pixar-style), soft rounded forms, smooth shading, no realism':' — match the reference art style exactly: flat 2D cartoon, bold outlines, flat colour, no realism'));
@@ -7199,6 +7209,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(c.bg_repeat) n.push('the background repeated the previous shot ('+c.bg+') — use a clearly different part of the place or a different location, with different props');
     if(c.line_bad) n.push('the picture did not show what the line says (match '+c.line_match+'/10'+(c.missing&&c.missing.length?'; missing: '+c.missing.slice(0,4).join(', '):'')+') — make the line\'s subject and action the clear centre of the frame: "'+shotVisionCtx(idx).line+'"');
     if(c.quality_bad) n.push('the image was distorted or garbled (quality '+c.quality+'/10'+(c.defects&&c.defects.length?': '+c.defects.slice(0,4).join(', '):'')+') — crisp, clean render: correct anatomy, five fingers per hand, solid well-formed objects, sharp focus, no artifacts');
+    if(c.framing_bad) n.push('a head was cut off by the frame edge — frame the whole head and shoulders with headroom above');
     if(c.emotion_bad) n.push('the emotion was off (score '+c.emotion_match+'/10) — '+emotionNote(s));
     if(c.too_dark) n.push('the image was far too dark (mean brightness '+Math.round(c.luma)+'/255) — bright daytime lighting, light walls, every face and object clearly lit, no night or dim scene');
     return n.length?' STRICT, previous attempt failed: '+n.join('; ')+'.':''; };
@@ -7212,9 +7223,9 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     try{ check=await visionStyleCheck(r.url, people, lctx); }catch(e){ check=null; checkErr=e.message; }
     if(check) check.stray_text=!needsText && check.has_text;
     if(check){ const y=await imageLuma(r.url); check.luma=y; check.too_dark=y!=null && y<DARK_LUMA; }
-    if(check && s.planMotion){ try{ const pc=await visionPeopleCount(r.url, shotVisionCtx(idx)); if(pc){ const au=sceneShotAudit(idx,pc); check.line_bad=!au.match_ok; check.line_match=au.line_match; check.missing=au.missing; check.emotion_bad=!au.emotion_ok; check.emotion_match=au.emotion_match; check.quality_bad=!au.quality_ok; check.quality=au.quality; check.defects=au.defects; if(!au.text_ok) check.stray_text=true; check.people=au.people; check.people_bad=!au.people_ok; check.bg_repeat=au.bg_repeat; check.bg=pc.background; if(au.text.length && !needsText) check.stray_text=true; s.shotAudit=au; s.bgDesc=pc.background; } }catch(e){} }
+    if(check && s.planMotion){ try{ const pc=await visionPeopleCount(r.url, shotVisionCtx(idx)); if(pc){ const au=sceneShotAudit(idx,pc); check.line_bad=!au.match_ok; check.line_match=au.line_match; check.missing=au.missing; check.emotion_bad=!au.emotion_ok; check.emotion_match=au.emotion_match; check.quality_bad=!au.quality_ok; check.quality=au.quality; check.defects=au.defects; check.framing_bad=!au.framing_ok; if(!au.text_ok) check.stray_text=true; check.people=au.people; check.people_bad=!au.people_ok; check.bg_repeat=au.bg_repeat; check.bg=pc.background; if(au.text.length && !needsText) check.stray_text=true; s.shotAudit=au; s.bgDesc=pc.background; } }catch(e){} }
     if(!best || rank(check)>rank(best.check)) best={r,check};
-    if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text && !check.too_dark && !check.people_bad && !check.bg_repeat && !check.line_bad && !check.emotion_bad && !check.quality_bad)) break;
+    if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text && !check.too_dark && !check.people_bad && !check.bg_repeat && !check.line_bad && !check.emotion_bad && !check.quality_bad && !check.framing_bad)) break;
   }
   if(best && best.r!==r){ r=best.r; check=best.check; } // every retry failed: keep the closest-to-model attempt
   let url=r.url, label=r.label, gptText=false, gptErr='';
@@ -7239,6 +7250,9 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(check) check.textRemoved=gptText && !check.stray_text;
   }
   if(sceneData[idx]===s) s.styleQA={score:check?check.style_score:null, match:check?check.style_match:null, identity:check?check.identity:[], identityMatch:check?check.identity_match:null, strayText:check?!!check.stray_text:null, logicOk:check?check.logic_ok!==false:null, logicProblems:check?check.logic_problems||[]:[], luma:check&&check.luma!=null?Math.round(check.luma):null, tooDark:check?!!check.too_dark:null, attempts, text:check?check.text:[], gptText, gptErr, checkErr};
+  const why=stillGateWhy(check);
+  if(s.planMotion && why.length && stillBlockOn()){ s.stillBlocked={why, attempts}; throw new Error('Still blocked by image check ('+why.join(', ')+') after '+attempts+' tries — not used.'); }
+  if(sceneData[idx]===s) s.stillBlocked=null;
   return {url, label, model, refs, check, attempts, gptText, cost};
 }
 // ═══ RECURRING CAST — keep series regulars (Dee, Mr. Okafor) looking the same ═══

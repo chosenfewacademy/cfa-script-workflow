@@ -89,4 +89,30 @@ tg2 = R.text_gate("x", "k", ask=lambda m: {"items": [{"tile": 2, "text": "PAID",
 tg3 = R.text_gate("x", "k", ask=lambda m: {"items": [{"tile": 2, "text": "PIAD", "kind": "scene", "spelled_ok": False}]}, allow_scene=True)
 tg4 = R.text_gate("x", "k", ask=lambda m: {"items": []})
 check("text gate: overlay text fails, minimal correctly spelled scene text passes, garbled fails, clean passes", not tg1["pass"] and tg2["pass"] and not tg3["pass"] and tg4["pass"], [tg1, tg2, tg3])
+
+# fal network errors retry with backoff; a POST retries only when it never reached fal
+import requests as _rq
+_n = {"k": 0}
+def _flaky():
+    _n["k"] += 1
+    if _n["k"] < 3:
+        raise _rq.exceptions.ConnectionError("HTTPSConnectionPool: Max retries exceeded (NewConnectionError)")
+    return "ok"
+_sl = []
+check("net_retry: connection errors retry with backoff then succeed", R.net_retry(_flaky, sleep=_sl.append) == "ok" and _sl == [2.0, 4.0], _sl)
+def _rt():
+    raise _rq.exceptions.ReadTimeout("read timed out")
+try:
+    R.net_retry(_rt, post=True, sleep=lambda x: None); _ok = False
+except _rq.exceptions.ReadTimeout:
+    _ok = True
+check("net_retry: a POST that may have reached fal is not re-sent (no double charge)", _ok)
+def _bad():
+    raise ValueError("bad json")
+try:
+    R.net_retry(_bad, sleep=lambda x: None); _ok = False
+except ValueError:
+    _ok = True
+check("net_retry: non-network errors are not retried", _ok)
+
 print("%d failure(s)" % len(fails)); sys.exit(1 if fails else 0)

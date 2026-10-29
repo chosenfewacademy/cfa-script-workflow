@@ -1339,6 +1339,14 @@ async def main():
               planShots(); return {off:sceneData.map(offscreenCast), cast:sceneData.map(castInScene), exp:sceneData.map(expectedPeople), note:phraseShotNote(0), ids:sceneIdentityRefs(sceneData[0]).map(x=>x.name)}}""")
             check('off-screen: a named person who is not the focus stays out of frame (prompt, refs, identity check)', r6['off'][0]==['Dee'] and r6['cast'][0]==[] and 'Dee is only mentioned and stays OFF-SCREEN' in r6['note'] and r6['ids']==['Jordan'], r6)
             check('off-screen: the named focus of a shot is on screen and counted', r6['cast'][1]==['Dee'] and r6['exp'][1]==1 and r6['off'][2]==['Dee'] and r6['exp'][2]==0, r6)
+            r7=await J(pg,"""()=>{const s0={line:'2. NARRATOR: Dee counted the cash.',tag:'IMAGE',characters:'NONE'}; sceneData[0]=Object.assign(sceneData[0],{oneChar:'JORDAN'});
+              const base={people:1,background:'a',text:[],line_match:8,missing:[],emotion_match:8,garbled:false,quality:9,defects:[]};
+              return {cut:sceneShotAudit(0,Object.assign({},base,{head_cut:true})), ok:sceneShotAudit(0,Object.assign({},base,{head_cut:false})),
+                strip:stripWriting('A laptop screen shows 3 % battery, the wallet app shows twelve words, a green notebook lies open. Jordan leans in'),
+                why:[stillGateWhy({people_bad:true,quality_bad:true}),stillGateWhy({style_match:true}),stillGateWhy({framing_bad:true})], blockOn:stillBlockOn()}}""")
+            check('framing: a cut-off head fails the image check, full head passes', not r7['cut']['framing_ok'] and not r7['cut']['ok'] and r7['ok']['framing_ok'], [r7['cut'],r7['ok']])
+            check('prompts: writing requests are stripped (battery %, twelve words) and the rest kept', '%' not in r7['strip'] and 'twelve' not in r7['strip'] and 'green notebook' in r7['strip'] and 'Jordan leans in' in r7['strip'], r7['strip'])
+            check('block: failed checks block the still (people, quality, framing); a clean check does not', r7['why']==[['people','quality'],[],['framing']] and r7['blockOn'], r7['why'])
             r3=await J(pg,"()=>{sceneData[2].characters='BOTH'; return oneCharViolations();}")
             check('phrase: one-character check flags a two-person shot', r3==[2], r3)
             check('phrase: no page errors', not [e for e in errs if 'pageerror' in e], errs)
