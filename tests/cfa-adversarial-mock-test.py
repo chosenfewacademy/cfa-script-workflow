@@ -1367,6 +1367,8 @@ async def main():
             check('still cap: 5s, 6s on emotional lines (baseline held 5-7s)', r12==[5,6,5], r12)
             r13=await J(pg,"()=>[/3D Pixar-style/.test(IDENTITY_QA_SYS), /ignore differences that come only from turning the sheet into 3D/.test(IDENTITY_QA_SYS), /NO 2D-to-3D allowance/.test(IDENTITY_QA_SYS)]")
             check('identity: 2D sheet vs 3D series is not a render mismatch; the previous shot is compared strictly', r13==[True,True,True], r13)
+            r14=await J(pg,"()=>[realTextIn({has_text:true,text:[]}), realTextIn({text:['\u25a2','\u2022']}), realTextIn({text:['A h b l']}), realTextIn({text:['Paid']}), /angled away/.test(NO_TEXT_NOTE)]")
+            check('text gate: blank UI glyphs are not text; garbled or real words still fail; screens angled away', r14==[False,False,True,True,True], r14)
             check('framing: a cut-off head fails the image check, full head passes', not r7['cut']['framing_ok'] and not r7['cut']['ok'] and r7['ok']['framing_ok'], [r7['cut'],r7['ok']])
             check('prompts: writing requests are stripped (battery %, twelve words) and the rest kept', '%' not in r7['strip'] and 'twelve' not in r7['strip'] and 'green notebook' in r7['strip'] and 'Jordan leans in' in r7['strip'], r7['strip'])
             check('block: failed checks block the still (people, quality, framing); a clean check does not', r7['why']==[['people','quality'],[],['framing']] and r7['blockOn'], r7['why'])

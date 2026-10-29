@@ -7220,7 +7220,9 @@ function imageLuma(url){
 const WRITING_RE=/[^.,;]*(?:\d+\s*%|\b(?:percent|battery (?:bar|level)|shows? (?:\w+ )?words|twelve words|reads?|labell?ed|labels?|signs?|signage|written|writing|lettering|caption|logo|title|numbers?|digits?|text)\b)[^.,;]*/gi;
 // clauses that forbid writing ("NO WRITING ANYWHERE", "without labels") are kept
 function stripWriting(p){ return String(p||'').replace(WRITING_RE,m=>/\b(no|not|never|without|avoid|nothing)\b/i.test(m)?m:'').replace(/\s*,\s*(,\s*)+/g,', ').replace(/\s+([.,;])/g,'$1').replace(/([.,;])\1+/g,'$1').replace(/\s{2,}/g,' ').trim(); }
-const NO_TEXT_NOTE=' No signage, no text, no letters or numbers anywhere: screens, papers and walls are blank or show simple shapes.';
+const NO_TEXT_NOTE=' No signage, no text, no letters or numbers anywhere: screens, papers and walls are blank or show simple shapes; phone and laptop screens are angled away from the camera or show only a soft dark glow.'
+// Real writing = a transcribed item with >=2 letters/digits (a garbled 'A h b l' still fails); blank UI glyphs or icons the model flags as has_text with nothing readable do not.
+function realTextIn(c){ return (c&&c.text||[]).some(t=>(String(t).match(/[A-Za-z0-9]/g)||[]).length>=2); };
 // Eased identity: a still whose only miss is a named character scoring IDENTITY_EASE_MIN..IDENTITY_MIN-1 (visible,
 // no hard rule broken) passes when every other vision check passes.
 const IDENTITY_EASE_MIN=6;
@@ -7275,10 +7277,11 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     cost+=MODEL_COSTS.image[model]; trackSpend(MODEL_COSTS.image[model]);
     status&&status('Checking art style and character identity against the reference sheets…');
     try{ check=await visionStyleCheck(r.url, people, lctx); }catch(e){ check=null; checkErr=e.message; }
-    if(check) check.stray_text=!needsText && check.has_text;
+    if(check) check.stray_text=!needsText && realTextIn(check);
     if(check){ const y=await imageLuma(r.url); check.luma=y; check.too_dark=y!=null && y<DARK_LUMA; }
     if(check && s.planMotion){ try{ const pc=await visionPeopleCount(r.url, shotVisionCtx(idx)); if(pc){ const au=sceneShotAudit(idx,pc); check.line_bad=!au.match_ok; check.line_match=au.line_match; check.missing=au.missing; check.emotion_bad=!au.emotion_ok; check.emotion_match=au.emotion_match; check.quality_bad=!au.quality_ok; check.quality=au.quality; check.defects=au.defects; check.framing_bad=!au.framing_ok; check.props_bad=!au.props_ok; check.props=au.props; if(!au.text_ok) check.stray_text=true; check.people=au.people; check.people_bad=!au.people_ok; check.bg_repeat=au.bg_repeat; check.bg=pc.background; if(au.text.length && !needsText) check.stray_text=true; s.shotAudit=au; s.bgDesc=pc.background; } }catch(e){} }
     easeIdentity(check);
+    { const w=stillGateWhy(check); if(check&&!check.style_match) w.push('style'); if(w.length){ const rec={a, url:r.url, why:w, text:check?.text||[], at:Date.now()}; (s.rejectedStills=s.rejectedStills||[]).push(rec); try{ console.warn('STILL_REJECT '+idx+' '+JSON.stringify(rec)); }catch(e){} } }
     if(!best || rank(check)>rank(best.check)) best={r,check};
     if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text && !check.too_dark && !check.people_bad && !check.bg_repeat && !check.line_bad && !check.emotion_bad && !check.quality_bad && !check.framing_bad && !check.props_bad)) break;
   }
@@ -7289,7 +7292,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
   const lineWords=[...new Set(String(s?.line||'').replace(/^\s*\d+\.\s*/,'').toLowerCase().match(/[a-z0-9']+/g)||[])];
   const near=(x,y)=>{ if(Math.abs(x.length-y.length)>2) return false; const d=[...Array(y.length+1).keys()]; for(let i=1;i<=x.length;i++){ let p=d[0]; d[0]=i; for(let j=1;j<=y.length;j++){ const t=d[j]; d[j]=Math.min(d[j]+1,d[j-1]+1,p+(x[i-1]===y[j-1]?0:1)); p=t; } } return d[y.length]<=(y.length>5?2:1); };
   const isScriptText=t=>{ const w=String(t).toLowerCase().match(/[a-z0-9']+/g)||[]; return w.length>0 && w.every(x=>lineWords.some(y=>x===y||near(x,y))); };
-  const strayOf=c=>needsText? (c.text||[]).some(t=>!isScriptText(t)) : !!c.has_text;
+  const strayOf=c=>needsText? (c.text||[]).some(t=>!isScriptText(t)) : realTextIn(c);
   const recheck=async()=>{ try{ const c=await visionStyleCheck(url, people, lctx); if(c){ c.stray_text=strayOf(c); c.luma=check?.luma; c.too_dark=check?.too_dark; check=c; } }catch(e){ checkErr=e.message; } };
   if(check) check.stray_text=strayOf(check);
   const hint=needsText? 'ONLY words from this script line may appear, spelled correctly: "'+String(s?.line||'').replace(/^\s*\d+\.\s*/,'').slice(0,160)+'". Erase every other word, label, number or pseudo-text and paint it over with blank surface. '+prompt : prompt;
