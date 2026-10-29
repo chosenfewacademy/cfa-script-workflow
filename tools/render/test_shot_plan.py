@@ -136,4 +136,6 @@ _lk2 = []; R.i2v_frame_check("x.mp4", "k", "https://ref", 1, prior="https://stil
 check("i2v frame check sends the source still with the sheet", any(c.get("image_url", {}).get("url") == "https://still" for c in _lk2[0][1]["content"]))
 class _A: i2v = "off"
 check("one motion model per episode: Hailuo even with a character sheet", R.episode_motion_model({"charRefs": {"jordan": "u"}}, _A()) == "hailuo" and R.episode_motion_model({"i2vModel": "kling-ref"}, _A()) == "kling-ref")
+_sl = [{"line": "3. NARRATOR: a", "media": "a.png"}, {"line": "4. NARRATOR: b"}, {"line": "4. NARRATOR: b", "media": "b2.png"}, {"line": "5. JORDAN: c"}]
+check("a gap is filled from its own line, not the neighbour", R.same_line_media(_sl, 1)["media"] == "b2.png" and R.same_line_media(_sl, 3) is None)
 print("%d failure(s)" % len(fails)); sys.exit(1 if fails else 0)
