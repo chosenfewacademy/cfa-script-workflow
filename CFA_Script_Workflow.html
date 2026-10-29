@@ -7031,7 +7031,7 @@ function settingFor(s, prompt){ const t=[s?.line,s?.sceneDesc,prompt].map(x=>Str
 // v8 LOCKED STYLE (docs/V8_LOCKED_STYLE.md): 2K Kling o1 stills, crisp props, soft background
 const CRISP_PROPS_RULE=' Sharp, detailed foreground objects, crisp edges on props; background softly blurred.';
 const KLING_O1_RES='2K';
-const CINEMA_LOOK_RULE=' CINEMA LOOK: medium close-up on the one character, warm rim light outlining hair and shoulders, high contrast with deep but readable shadows, shallow depth of field (background softly blurred, character tack-sharp), clean uncluttered frame.'+CRISP_PROPS_RULE;
+const CINEMA_LOOK_RULE=' CINEMA LOOK: medium close-up, warm rim light, high contrast, shallow depth of field, character tack-sharp.'+CRISP_PROPS_RULE;
 const SCENE_LOGIC_RULE=' SCENE LOGIC: every object belongs in this place and in this moment of the story, at realistic size, resting where it would really be (nothing floating, oversized, duplicated or random). Show only props the line is about, plus ordinary background for this place. PHONE: if a phone appears there is exactly one phone, held in one hand (or lying alone); never two phones, never a phone stacked on, overlapping or fused with another phone or device, no second phone on the table.'+CINEMA_LOOK_RULE;
 
 function sceneLogicText(s, prompt){ const st=settingFor(s,prompt); return (st?' SETTING: '+st.name+' — props that belong here: '+st.props+'. NEVER SHOW: '+st.never+'.':'')+SCENE_LOGIC_RULE; }

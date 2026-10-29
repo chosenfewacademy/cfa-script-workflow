@@ -114,7 +114,7 @@ def main():
         code, _, t = req(base, "/jobs/%s/thumbnail" % j1["id"], token=tok)
         check(code == 200 and t[:2] == b"\xff\xd8", "thumbnail download")
         st2, _ = wait(base, tok, j2["id"])
-        check(st2["state"] == "done" and st2["report"]["resolution"] == "1080x1920", "queued vertical job rendered after job 1")
+        check(st2["state"] == "done" and st2["report"]["resolution"] == "1080x1920", "queued vertical job rendered after job 1 (%s %s %s)" % (st2["state"], st2.get("stage"), str(st2.get("error"))[:150]))
         check(st2["created"] >= st1["created"] and json.loads(req(base, "/jobs/" + j2["id"], token=tok)[2])["elapsed"] > 0, "jobs ran one at a time")
         c3, _, r3 = req(base, "/jobs/%s/reedit" % j1["id"], "POST", json.dumps({"notes": "slower ending", "aspect": "vertical"}).encode(), token=tok, ctype="application/json")
         j3 = json.loads(r3)

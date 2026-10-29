@@ -1,6 +1,7 @@
 """Phrase shot plan: motivated motion, story-led transitions, J-cuts, cut-on-movement easing, similarity + phrase gates."""
 import os, sys, subprocess, tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ["CFA_VIDEO_UPSCALE"] = "0"   # model prices only; the upscaler add-on is covered in test_v8.py
 import render as R
 fails = []
 def check(n, ok, x=""):
