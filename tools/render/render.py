@@ -928,10 +928,18 @@ def synthetic_depth(h, w):
     return np.clip(0.55 * v + 0.45 * r, 0, 1)
 
 
-def _ease(t):
-    """Cosine ease-in-out: starts and ends at rest, no linear 'conveyor' feel."""
+def _ease(t, carry_in=False, carry_out=False):
+    """Cosine ease-in-out: starts and ends at rest. With carry, the move keeps some velocity through the cut
+    (cut on movement) so the next shot picks the direction up instead of starting from a dead stop."""
     import math
-    return 0.5 - 0.5 * math.cos(math.pi * t)
+    e = 0.5 - 0.5 * math.cos(math.pi * t)
+    if carry_in and carry_out:
+        return 0.35 * e + 0.65 * t
+    if carry_out:
+        return 0.35 * e + 0.65 * (1 - math.cos(math.pi * t / 2))   # ease in, leave moving
+    if carry_in:
+        return 0.35 * e + 0.65 * math.sin(math.pi * t / 2)        # arrive moving, ease out
+    return e
 
 
 def smooth_depth(depth, w, h):
@@ -947,7 +955,7 @@ def smooth_depth(depth, w, h):
     return 0.5 + (d - 0.5) * PARALLAX_DEPTH_SCALE
 
 
-def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction):
+def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry=(False, False)):
     """Per-frame remap fields (output pixel -> overscanned source). Small eased dolly + truck, never sampling outside the source."""
     import numpy as np
     dur = frames / float(FPS)
@@ -955,6 +963,12 @@ def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction):
     side = direction if direction in (-1, 1) else (1 if focus[0] <= 0.5 else -1)
     lat = PARALLAX_PX_S * dur * sc * {"pan_left": -1.0, "pan_right": 1.0}.get(motion, 0.6 * side)
     zr = PARALLAX_ZOOM_S * dur * (-1.0 if motion == "zoom_out" else 1.0)
+    if motion == "static":          # hold on a quote: barely breathing, no travel
+        lat, zr = 0.15 * lat, 0.25 * zr
+    elif motion == "zoom_in":       # motivated push-in: the dolly leads, little truck
+        lat, zr = 0.3 * lat, 1.6 * zr
+    elif motion in ("pan_left", "pan_right"):
+        zr = 0.4 * zr
     vert = 0.25 * abs(lat) * (-1.0 if motion == "pan_up" else 1.0 if motion == "pan_down" else 0.0)
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     cx, cy = w * focus[0], h * focus[1]
@@ -964,7 +978,7 @@ def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction):
     dd = cv2.remap(d, gx, gy, cv2.INTER_LINEAR)
     pcx, pcy = ox + W / 2 / punch, oy + H / 2 / punch
     for i in range(frames):
-        t = _ease(i / max(1, frames - 1))
+        t = _ease(i / max(1, frames - 1), *carry)
         z = 1.0 + (zr * t if zr > 0 else -zr * (1 - t)) * (0.6 + 0.8 * dd)
         mx = (gx - pcx) / z + pcx - (t - 0.5) * lat * dd
         my = (gy - pcy) / z + pcy - (t - 0.5) * vert * dd
@@ -982,13 +996,13 @@ def map_stretch(mx, my):
     return float(max(np.percentile(s, 99.5), np.percentile(np.maximum(ratio, 1 / ratio), 99.5)))
 
 
-def parallax_frames(img, depth, W, H, frames, motion="zoom_in", focus=(0.5, 0.5), punch=1.0, direction=0, stats=None):
+def parallax_frames(img, depth, W, H, frames, motion="zoom_in", focus=(0.5, 0.5), punch=1.0, direction=0, stats=None, carry=(False, False)):
     """Yield W x H BGR frames; stats (dict) gets the worst map stretch for the distortion gate."""
     import cv2
     h, w = img.shape[:2]
     d = smooth_depth(depth, w, h)
     worst = 1.0
-    for i, (mx, my) in enumerate(parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction)):
+    for i, (mx, my) in enumerate(parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry)):
         if stats is not None and i in (0, frames // 2, frames - 1):
             worst = max(worst, map_stretch(mx, my))
         yield cv2.remap(img, mx, my, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
@@ -1018,7 +1032,7 @@ def render_still_parallax(src, shot, W, H, out, frames, fit_vf, depth_png=None):
                           "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", out], stdin=subprocess.PIPE)
     try:
         st = {}
-        for fr in parallax_frames(img, depth, W, H, frames, m, focus, punch, shot.get("_dir", 0), st):
+        for fr in parallax_frames(img, depth, W, H, frames, m, focus, punch, shot.get("_dir", 0), st, (bool(shot.get("_carry_in")), bool(shot.get("_carry")))):
             p.stdin.write(np.ascontiguousarray(fr).tobytes())
     finally:
         p.stdin.close()
@@ -1028,6 +1042,102 @@ def render_still_parallax(src, shot, W, H, out, frames, fit_vf, depth_png=None):
         raise RuntimeError("parallax encode failed")
     shot["_stretch"] = st.get("stretch")
     return st.get("stretch")
+
+
+# ── Phrase shot plan (tool sends shotPlan="phrase"): one new image per phrase, motivated motion, story-led transitions ──
+PLAN_MOTION = {"push_in": "zoom_in", "track": "pan", "hold": "static", "reveal": "pan"}
+PLAN_TRANS = {"cut": ("cut", 0.0), "match": ("cut", 0.0), "jcut": ("cut", 0.0), "push_link": ("cut", 0.0),
+              "whip": ("whip", 0.18), "time_jump": ("dissolve", 0.30)}
+J_LEAD = 0.20          # J-cut: the next line's audio leads the picture cut by this much
+SIM_DHASH_MIN = 10     # similarity gate: consecutive shots closer than this (of 64 bits) ...
+SIM_SSIM_MAX = 0.72    # ... or more structurally similar than this read as a re-angle of the same frame
+PHRASE_ALIGN_MAX = 0.30  # motion must start within this many seconds of its phrase's first word
+
+
+def apply_shot_plan(shots, segs):
+    """Map each shot to its phrase segment: motivated motion, transition from the story link, carry direction, J-cut timing."""
+    by = {s["index"]: s for s in segs}
+    d = 1
+    for i, x in enumerate(shots):
+        sg = by.get((x.get("beats") or [None])[0]) or {}
+        pm = sg.get("planMotion") or "track"
+        vid = x.get("mediaType") in ("video", "lipsync")
+        if sg.get("planDir") in (-1, 1):
+            d = sg["planDir"]
+        m = PLAN_MOTION.get(pm, "pan")
+        if m == "pan":
+            m = "pan_right" if d > 0 else "pan_left"
+        if not vid:
+            x["motion"] = m
+        x["_dir"] = d
+        x["plan_motion"], x["plan_link"] = pm, sg.get("planLink") or "cut"
+        x["phrase_start"] = sg.get("start")
+        if i:
+            tr, td = PLAN_TRANS.get(x["plan_link"], ("cut", 0.0))
+            x["transition_in"], x["transition_duration"] = tr, td
+            if x["plan_link"] == "push_link" and shots[i - 1].get("mediaType") not in ("video", "lipsync"):
+                shots[i - 1]["motion"] = "zoom_in"       # push into the detail that becomes this shot
+            if x["plan_link"] == "jcut" and x["duration"] > 1.0 and shots[i - 1]["duration"] > 1.0:
+                x["start"] += J_LEAD; x["duration"] -= J_LEAD          # picture cut lands after the line starts
+                shots[i - 1]["end"] += J_LEAD; shots[i - 1]["duration"] += J_LEAD
+        nxt = shots[i + 1] if i + 1 < len(shots) else None
+        x["_carry"] = bool(nxt is not None)                          # cut on movement: keep velocity into the cut
+        x["_carry_in"] = i > 0 and shots[i - 1].get("_dir") == d
+    return shots
+
+
+def _dhash(g):
+    import cv2, numpy as np
+    s = cv2.resize(g, (9, 8), interpolation=cv2.INTER_AREA)
+    return (s[:, 1:] > s[:, :-1]).flatten()
+
+
+def _ssim(a, b):
+    import numpy as np, cv2
+    a, b = a.astype(np.float64), b.astype(np.float64)
+    C1, C2 = 6.5025, 58.5225
+    mu1, mu2 = cv2.GaussianBlur(a, (7, 7), 1.5), cv2.GaussianBlur(b, (7, 7), 1.5)
+    s1 = cv2.GaussianBlur(a * a, (7, 7), 1.5) - mu1 ** 2
+    s2 = cv2.GaussianBlur(b * b, (7, 7), 1.5) - mu2 ** 2
+    s12 = cv2.GaussianBlur(a * b, (7, 7), 1.5) - mu1 * mu2
+    return float((((2 * mu1 * mu2 + C1) * (2 * s12 + C2)) / ((mu1 ** 2 + mu2 ** 2 + C1) * (s1 + s2 + C2))).mean())
+
+
+def similarity_gate(path, shots):
+    """Consecutive shots must show new visual information: fail pairs that read as the same frame re-angled,
+    unless the plan marks an intentional match cut."""
+    import cv2
+    cap = cv2.VideoCapture(path)
+    def grab(t):
+        cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t) * 1000)
+        ok, f = cap.read()
+        if not ok:
+            return None
+        h = f.shape[0]
+        return cv2.cvtColor(cv2.resize(f[int(h * .1):int(h * .72)], (160, 74)), cv2.COLOR_BGR2GRAY)  # captions excluded
+    pairs, fails = [], []
+    for i in range(1, len(shots)):
+        a, b = shots[i - 1], shots[i]
+        fa, fb = grab(a["start"] + a["duration"] * 0.5), grab(b["start"] + b["duration"] * 0.5)
+        if fa is None or fb is None:
+            continue
+        dh = int((_dhash(fa) != _dhash(fb)).sum())
+        ss = round(_ssim(fa, fb), 3)
+        same = a.get("media") and a.get("media") == b.get("media")
+        sim = same or dh < SIM_DHASH_MIN or ss > SIM_SSIM_MAX
+        ok = (not sim) or b.get("plan_link") == "match"
+        pairs.append({"i": i, "dhash": dh, "ssim": ss, "same_media": bool(same), "ok": ok})
+        if not ok:
+            fails.append(i)
+    return {"pass": not fails, "fails": fails, "pairs": pairs, "dhash_min": SIM_DHASH_MIN, "ssim_max": SIM_SSIM_MAX}
+
+
+def phrase_alignment(shots):
+    """Motion starts with its phrase: shot start vs the phrase's first word (J-cut lead allowed)."""
+    errs = [abs(x["start"] - x["phrase_start"]) for x in shots if x.get("phrase_start") is not None]
+    worst = round(max(errs), 3) if errs else None
+    return {"shots": len(errs), "max_offset_s": worst, "pass": worst is None or worst <= PHRASE_ALIGN_MAX}
+
 
 
 def assign_directions(shots):
@@ -1982,8 +2092,10 @@ def main():
         edl["title_card"]["enabled"] = False
     if a.no_end_card:
         edl["end_card"]["enabled"] = False
-    edl["shots"] = split_punch_ins(edl["shots"], words)
-    if not a.no_drift_split:
+    PHRASE = b.get("shotPlan") == "phrase"   # tool planned one new image per phrase: no re-angled splits of a still
+    if not PHRASE:
+        edl["shots"] = split_punch_ins(edl["shots"], words)
+    if not a.no_drift_split and not PHRASE:
         edl["shots"] = split_drift(edl["shots"], words, segs=segs)
     by_media = {s.get("media"): s for s in segs if s.get("mediaType") == "lipsync" and s.get("media")}
     for x in edl["shots"]:
@@ -2010,6 +2122,8 @@ def main():
             x["role"] = "montage"
     if mont and not a.raw_transitions:
         edl["shots"] = smooth_transitions(edl["shots"])
+    if PHRASE:
+        apply_shot_plan(edl["shots"], segs)
     assign_grades(edl["shots"], not a.no_beat_grades)
     edl["source"] = source
     edl["pauses_added"] = round(added, 3)
@@ -2046,7 +2160,8 @@ def main():
         for x in shots:
             if x.get("media"):
                 x["_depth"] = dmap.get(os.path.join(d, x["media"]))
-    assign_directions(shots)
+    if not PHRASE:
+        assign_directions(shots)
     for i, shot in enumerate(shots):
         nxt = shots[i + 1]["transition_duration"] if i + 1 < len(shots) else 0.0
         src, kind = None, "image"
@@ -2225,6 +2340,14 @@ def main():
     if st and max(st) > GATE_STRETCH_MAX:
         gate["fails"].append("still warp stretch %.3f > %.2f" % (max(st), GATE_STRETCH_MAX))
         gate["pass"] = False
+    if PHRASE:
+        gate["similarity"] = similarity_gate(final, shots)
+        gate["phrase_align"] = phrase_alignment(shots)
+        if not gate["similarity"]["pass"]:
+            gate["fails"].append("re-angled shots %s" % gate["similarity"]["fails"]); gate["pass"] = False
+        if not gate["phrase_align"]["pass"]:
+            gate["fails"].append("motion off its phrase by %.2fs" % gate["phrase_align"]["max_offset_s"]); gate["pass"] = False
+        log("similarity gate:", "PASS" if gate["similarity"]["pass"] else "FAIL", gate["similarity"]["fails"], "| phrase align:", gate["phrase_align"])
     log("distortion gate:", "PASS" if not gate["distortion"]["over"] else "FAIL", gate["distortion"])
     log("motion gate:", "PASS" if gate["pass"] else "FAIL " + "; ".join(gate["fails"]))
     report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
@@ -2234,7 +2357,7 @@ def main():
               "voice_raw_duration": voice_raw, "pauses_added": round(added, 3), "pause_count": len(pauses),
               "shots": [{"index": x["index"], "beats": x["beats"], "media": x["media"], "type": x["mediaType"],
                          "start": x["start"], "duration": x["duration"], "motion": x["motion"], "role": x.get("role"),
-                         "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"]} for x in shots],
+                         "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"], "plan_motion": x.get("plan_motion"), "plan_link": x.get("plan_link")} for x in shots],
               "arc": edl.get("arc"), "arc_times": edl.get("arc_times"), "sfx_events": [list(e) for e in events], "ambience": dict(amb_info, placed=len(amb)), "foley": foley_info,
               "punch_ins": sum(1 for x in shots if x.get("part") == "b"),
               "shot_lengths": sorted(round(x["duration"], 2) for x in shots),

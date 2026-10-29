@@ -1257,6 +1257,31 @@ async def main():
             check('testclip: toggle in render panel', r['ui'])
             check('testclip: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
+        if want('phrase'):
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
+            ctx,pg,errs=await newpage(b)
+            r=await J(pg,"""()=>{sceneData.length=0;
+              ['1. JORDAN: Three percent left, and these twelve words are still only on the screen.',
+               "2. NARRATOR: Dee's two hundred dollars had to reach the parts supplier by five in the afternoon. A miss meant the shop lost its discount and the next order slipped a week.",
+               '3. JORDAN: That payment is in my wallet. This screen will not wait.',
+               '4. NARRATOR: Jordan already knew a private key controls access, and that the key must stay secret.',
+               '5. NARRATOR: But Marcus had lost a photo that way, when his first backup landed in a cloud album.'].forEach((l,i)=>sceneData.push({line:l,tag:i==0?'VIDEO':'IMAGE',characters:'JORDAN',prompt:'p',resultURL:i==1?'blob:x':null}));
+              const n=applyPhraseShots(5);
+              const rows=sceneData.map(x=>({l:x.line,m:x.planMotion,k:x.planLink,d:x.planDir,u:x.resultURL||null,of:x.phraseOf}));
+              const note=phraseShotNote(2);
+              const pp=phrasePieces('He tried the bank.');
+              return {n,rows,note,pp,on:phrasePlanOn()}}""")
+            rows=r['rows']
+            check('phrase: narration split at new information only', r['n']==2 and len(rows)==7 and rows[4]['l'].endswith('must stay secret.') and rows[6]['l'].startswith('5. NARRATOR: when his first backup') and rows[1]['l'].startswith("2. NARRATOR: Dee's") and rows[2]['l'].startswith('2. NARRATOR: A miss meant'), rows)
+            check('phrase: quotes and short lines stay whole', rows[3]['l'].startswith('3. JORDAN: That payment') and r['pp']==['He tried the bank.'])
+            check('phrase: first phrase keeps its image, new phrase needs a new one', rows[1]['u']=='blob:x' and rows[2]['u'] is None, rows)
+            check('phrase: quotes hold, realization pushes in', rows[0]['m']=='hold' and rows[3]['m']=='hold' and rows[4]['m']=='push_in', [x['m'] for x in rows])
+            check('phrase: links follow the story (therefore=push_link, voice=jcut, but=whip)', rows[2]['k']=='push_link' and rows[3]['k']=='jcut' and rows[5]['k']=='whip' and rows[6]['k']=='cut', [x['k'] for x in rows])
+            check('phrase: direction carries, flips on a BUT', [x['d'] for x in rows]==[1,1,1,1,1,-1,-1], [x['d'] for x in rows])
+            check('phrase: new-shot prompt forbids re-angles, locks references, mouths closed', 'NOT be a re-angle' in r['note'] and 'reference sheet' in r['note'] and 'mouths closed' in r['note'], r['note'])
+            check('phrase: plan flag on', r['on'])
+            check('phrase: no page errors', not [e for e in errs if 'pageerror' in e], errs)
+            await ctx.close()
         if want('stress'):
             for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
             ctx,pg,errs=await newpage(b,pre="localStorage.setItem('cfa_format','dialogue');")
