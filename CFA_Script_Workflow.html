@@ -3824,7 +3824,7 @@ function keyBeats(data){ const n=(data||[]).length; if(!n) return new Set();
 function beatSecs(x){ return Math.max(2,beatLen(x)||wordCount(splitTag(x.line).text)/2.4); }
 function motionCostEstimate(mode){
   let usd=0, clips=0, stills=0; const KB=keyBeats(sceneData), lim=testClipLimit();
-  for(const x of sceneData.slice(0,lim)){ // test-clip mode: only the beats that will be generated
+  for(const x of sceneData.slice(testClipFrom(),lim)){ // test-clip mode: only the beats that will be generated
     if(x.tag==='TALK'){ usd+=0.04+beatSecs(x)*TALK_COST_PER_S; continue; }
     const vid=mode==='full'?true:mode==='keybeat'?KB.has(sceneData.indexOf(x)):(x.origTag||x.tag)==='VIDEO';
     if(vid){ clips++; usd+=0.04+MODEL_COSTS.video['kling-o1v']*Math.max(3,Math.min(10,Math.round(beatSecs(x)))); }
@@ -4527,18 +4527,26 @@ const TEST_CLIP_MIN_S=15, TEST_CLIP_MAX_S=30, TEST_CLIP_DEFAULT_S=25, TEST_CLIP_
 function testClipCfg(){ const c=budgetLoad('cfa_test_clip',{on:false,sec:TEST_CLIP_DEFAULT_S,cap:TEST_CLIP_DEFAULT_CAP,base:0}); c.sec=Math.min(TEST_CLIP_MAX_S,Math.max(TEST_CLIP_MIN_S,+c.sec||TEST_CLIP_DEFAULT_S)); c.cap=Math.min(10,Math.max(0.5,+c.cap||TEST_CLIP_DEFAULT_CAP)); return c; }
 function testClipOn(){ return !!testClipCfg().on; }
 function totalSpendNow(){ return (+sessionSpend||0)+(+voiceSpend||0)+(+textSpend||0); }
-function setTestClip(on,sec,cap){ const c=testClipCfg(); c.on=!!on; if(sec!=null) c.sec=+sec; if(cap!=null) c.cap=+cap; if(on && !testClipCfg().on) c.base=totalSpendNow(); safeSetItem('cfa_test_clip',JSON.stringify(c)); try{ renderTestClipUI(); updateBatchButton(); }catch(e){} return testClipCfg(); }
+function setTestClip(on,sec,cap,from){ const c=testClipCfg(); c.on=!!on; if(sec!=null) c.sec=+sec; if(cap!=null) c.cap=+cap; if(from!=null) c.from=Math.max(0,from|0); if(on && !testClipCfg().on) c.base=totalSpendNow(); safeSetItem('cfa_test_clip',JSON.stringify(c)); try{ renderTestClipUI(); updateBatchButton(); }catch(e){} return testClipCfg(); }
 function testClipSpent(){ const c=testClipCfg(); return Math.max(0, totalSpendNow()-(c.base||0)); }
 function tcBeatSecs(x){ const L=beatLen(x); if(L>0) return L; const w=String(splitTag(x.line||'').text||x.line||'').split(/\s+/).filter(Boolean).length; return Math.max(1.5,w/2.6); }
 // Index limit: beats 0..n-1 whose cumulative length stays within the test seconds (always >= 1 beat).
-function testClipLimit(){ if(!testClipOn()||!sceneData.length) return sceneData.length; const sec=testClipCfg().sec; let t=0,n=0; for(const x of sceneData){ t+=tcBeatSecs(x); if(n && t>sec) break; n++; } return n; }
-function inTestClip(i){ return i<testClipLimit(); }
+function testClipFrom(){ if(!testClipOn()||!sceneData.length) return 0; return Math.min(sceneData.length-1, Math.max(0, testClipCfg().from|0)); }
+// Window = beats from..n-1 (absolute index, exclusive end) whose cumulative length stays within the test seconds (always >= 1 beat).
+function testClipLimit(){ if(!testClipOn()||!sceneData.length) return sceneData.length; const sec=testClipCfg().sec, f=testClipFrom(); let t=0,n=f; for(const x of sceneData.slice(f)){ t+=tcBeatSecs(x); if(n>f && t>sec) break; n++; } return n; }
+// Pick a window that ends on (or contains) the first physical-action line with a character on screen.
+function testClipPickAction(){ const sec=testClipCfg().sec;
+  const i=sceneData.findIndex(x=>{ const sp=splitTag(x.line); return x.tag==='IMAGE' && /^(MARCUS|JORDAN|BOTH)/.test(x.charsOrig||x.characters||'') && planShotFor(sp.text,sp.speaker)==='action'; });
+  if(i<0) return -1; let f=i, t=tcBeatSecs(sceneData[i]);
+  while(f>0 && t+tcBeatSecs(sceneData[f-1])<=sec){ f--; t+=tcBeatSecs(sceneData[f]); }
+  setTestClip(true,null,null,f); return f; }
+function inTestClip(i){ return i>=testClipFrom() && i<testClipLimit(); }
 // Hard cap: refuses (no "try anyway") any call that would push spend + the renderer music reserve over the cap.
 function testClipGuard(est,what){ if(!testClipOn()) return true; const c=testClipCfg(), e=typeof est==='object'?(est.usd||0):(+est||0), after=testClipSpent()+e+TEST_CLIP_MUSIC_RESERVE;
   if(after>c.cap+1e-9){ alert('🧪 Test-clip cap: '+what+' would bring billed spend to ≈ $'+after.toFixed(2)+' (incl. $'+TEST_CLIP_MUSIC_RESERVE.toFixed(2)+' music reserve), over the $'+c.cap.toFixed(2)+' cap. Stopped.'); return false; } return true; }
-function testClipRenderQuery(){ if(!testClipOn()) return ''; const c=testClipCfg(); return '&test_s='+c.sec.toFixed(0)+'&cap='+Math.max(0,c.cap-testClipSpent()).toFixed(2); }
+function testClipRenderQuery(){ if(!testClipOn()) return ''; const c=testClipCfg(); const f=testClipFrom(), fs=f&&sceneData[f]&&sceneData[f].tStart!=null?Math.max(0,sceneData[f].tStart-0.3):0; return (fs?'&test_from='+fs.toFixed(2):'')+'&test_s='+c.sec.toFixed(0)+'&cap='+Math.max(0,c.cap-testClipSpent()).toFixed(2); }
 function renderTestClipUI(){ const el=document.getElementById('tc-status'); if(!el) return; const c=testClipCfg(); const cb=document.getElementById('tc-on'); if(cb) cb.checked=c.on;
-  el.textContent=c.on?('🧪 Test clip: first '+testClipLimit()+' beat(s) ≈ '+c.sec+' s · spent $'+testClipSpent().toFixed(2)+' of $'+c.cap.toFixed(2)+' cap (music included)'):'Full episode'; }
+  el.textContent=c.on?('🧪 Test clip: beats '+(testClipFrom()+1)+'–'+testClipLimit()+' ≈ '+c.sec+' s · spent $'+testClipSpent().toFixed(2)+' of $'+c.cap.toFixed(2)+' cap (music included)'):'Full episode'; }
 function budgetPreflight(p, est, what){
   if(!testClipGuard(est&&est.usd!=null?est.usd:est, what)) return false;
   const st=budgetStatus(p); if(st.remaining==null) return true;
@@ -7055,6 +7063,33 @@ function identityVerdict(name, o){
   return {name, visible:o.visible!==false && o.verdict!=='absent', score, count:Number.isFinite(count)?count:null, duplicate:count>1, ageOk:o.age_ok!==false, forbidden:forb,
     problems:hard.concat(diffs?[diffs]:[]).join('; ').slice(0,240), verdict:String(o.verdict||'')};
 }
+// Phrase plan: count the people in a frame, name the background, list any visible writing (one cheap vision call).
+async function visionPeopleCount(url){
+  const key=llmKey(); if(!key) return null;
+  const body={model:VISION_MODEL,max_tokens:250,response_format:{type:'json_object'},messages:[
+    {role:'system',content:'You audit one animation frame. Count DISTINCT PEOPLE visible (a face, head or torso counts, even partly at the frame edge or blurred in the background; hands or arms alone do not). Describe the background setting in at most 8 words (walls, props, place). List any readable writing (signs, labels, screens, paper). JSON only: {"people":<int>,"who":["short description"],"background":"...","text":["..."]}'},
+    {role:'user',content:[{type:'image_url',image_url:{url}}]}]};
+  const resp=await fetch(GROK.url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify(body)});
+  if(!resp.ok) throw new Error('people check: '+await apiErrorMessage(resp));
+  const d=await resp.json(); trackTextSpend(0.002);
+  const t=(d.choices?.[0]?.message?.content||''); const o=JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1));
+  return {people:Math.max(0,parseInt(o.people,10)||0), who:(o.who||[]).map(String), background:String(o.background||''), text:(Array.isArray(o.text)?o.text:[]).filter(Boolean).map(String)};
+}
+function expectedPeople(s){ return s&&s.oneChar?1:0; }
+const BG_WORDS_MIN=0.5;   // narrator stills: share of background words in common that counts as the same background
+function bgSame(a,b){ const w=x=>new Set(String(x||'').toLowerCase().match(/[a-z]{3,}/g)||[]); const A=w(a),B=w(b); if(!A.size||!B.size) return false; let n=0; A.forEach(x=>B.has(x)&&n++); return n/Math.min(A.size,B.size)>=BG_WORDS_MIN; }
+// Previous narrator still (no character) in the window, for the background-repeat check.
+function prevNarratorStill(i){ for(let j=i-1;j>=0&&j>=i-3;j--){ const x=sceneData[j]; if(x.resultURL && x.resultType!=='video' && !x.oneChar) return x; if(x.oneChar) return null; } return null; }
+function sceneShotAudit(i, pc){ const s=sceneData[i], exp=expectedPeople(s), pv=!s.oneChar?prevNarratorStill(i):null;
+  const r={people:pc.people, expected:exp, people_ok:pc.people===exp, bg:pc.background, bg_repeat:!!(pv&&pv.bgDesc&&bgSame(pv.bgDesc,pc.background)), text:pc.text};
+  r.text_ok=!pc.text.length || beatNeedsText(s); r.ok=r.people_ok&&!r.bg_repeat&&r.text_ok; return r; }
+// Audit every generated still/clip in a window (clips: their first frame). Returns the failing beats.
+async function shotVisionAudit(from,to){ const out=[];
+  for(let i=from;i<to;i++){ const s=sceneData[i]; if(!s||!s.resultURL) continue;
+    let u=s.resultURL; if(s.resultType==='video'){ try{ u=await lastFrameUrl(s.resultURL,true); }catch(e){ u=null; } }
+    if(!u) continue; let pc=null; try{ pc=await visionPeopleCount(u); }catch(e){}
+    if(!pc) continue; const a=sceneShotAudit(i,pc); s.shotAudit=a; s.bgDesc=pc.background; out.push(Object.assign({i},a)); }
+  return out; }
 async function visionStyleCheck(url, people, ctx){
   const key=llmKey(); if(!key || !styleCheckOn()) return null;
   const [m,j]=await styleRefUrls();
@@ -7120,13 +7155,15 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(styleOnly.length) styleNote=' '+styleOnly.map(n=>'@Image'+n).join(' and ')+(styleOnly.length>1?' are':' is')+' an ART-STYLE reference only: copy the drawing style exactly but do NOT draw '+(styleOnly.length>1?'those people':'that person')+' unless the scene names them.';
   }catch(e){}
   let r=null, check=null, attempts=0, cost=0, checkErr='', best=null;
-  const rank=c=>!c?-1:(c.too_dark?0:2)+(c.logic_ok!==false?3:0)+(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
+  const rank=c=>!c?-1:(c.too_dark?0:2)+(c.logic_ok!==false?3:0)+(c.style_match?4:0)+(c.identity_match!==false?4:0)+(c.stray_text?0:2)+(c.people_bad?0:5)+(c.bg_repeat?0:2)+(Number(c.style_score)||0)/10+Math.min(...(c.identity||[]).filter(x=>x.visible!==false).map(x=>Number(x.score)||0).concat([10]))/10;
   const people=sceneIdentityRefs(s), needsText=beatNeedsText(s), lctx=sceneLogicCtx(idx, prompt);
   const fixNote=c=>{ if(!c) return ''; const n=[];
     if(!c.style_match) n.push('the art style drifted'+(c.problems?' ('+c.problems+')':'')+(look3d()?' — match the 3D model sheets exactly: stylised 3D animated (Pixar-style), soft rounded forms, smooth shading, no realism':' — match the reference art style exactly: flat 2D cartoon, bold outlines, flat colour, no realism'));
     if(c.identity_match===false) n.push('wrong look for '+c.identity_misses.join(', ')+' ('+c.identity.filter(x=>x.problems).map(x=>x.name+': '+x.problems).join('; ')+') — copy face, hair, age, build and outfit exactly from their reference sheet; draw each named character exactly once'+(namedInSceneNever(idx)?'; '+namedInSceneNever(idx):''));
     if(c.logic_ok===false) n.push('the picture did not make sense: '+(c.logic_problems.join('; ')||'objects that do not belong')+' — show only objects that belong in this place, at realistic size and placement');
     if(c.stray_text) n.push('it contained writing — remove ALL text, letters and numbers');
+    if(c.people_bad) n.push('the frame showed '+c.people+' people but this shot must show '+(s.oneChar?'exactly one person ('+s.oneChar[0]+s.oneChar.slice(1).toLowerCase()+') and nobody else, not even an edge of a shoulder':'nobody at all (objects and the place only; at most a pair of hands)'));
+    if(c.bg_repeat) n.push('the background repeated the previous shot ('+c.bg+') — use a clearly different part of the place or a different location, with different props');
     if(c.too_dark) n.push('the image was far too dark (mean brightness '+Math.round(c.luma)+'/255) — bright daytime lighting, light walls, every face and object clearly lit, no night or dim scene');
     return n.length?' STRICT, previous attempt failed: '+n.join('; ')+'.':''; };
   for(let a=0;a<=STYLE_RETRY_CAP;a++){
@@ -7139,8 +7176,9 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     try{ check=await visionStyleCheck(r.url, people, lctx); }catch(e){ check=null; checkErr=e.message; }
     if(check) check.stray_text=!needsText && check.has_text;
     if(check){ const y=await imageLuma(r.url); check.luma=y; check.too_dark=y!=null && y<DARK_LUMA; }
+    if(check && s.planMotion){ try{ const pc=await visionPeopleCount(r.url); if(pc){ const au=sceneShotAudit(idx,pc); check.people=au.people; check.people_bad=!au.people_ok; check.bg_repeat=au.bg_repeat; check.bg=pc.background; if(au.text.length && !needsText) check.stray_text=true; s.shotAudit=au; s.bgDesc=pc.background; } }catch(e){} }
     if(!best || rank(check)>rank(best.check)) best={r,check};
-    if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text && !check.too_dark)) break;
+    if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text && !check.too_dark && !check.people_bad && !check.bg_repeat)) break;
   }
   if(best && best.r!==r){ r=best.r; check=best.check; } // every retry failed: keep the closest-to-model attempt
   let url=r.url, label=r.label, gptText=false, gptErr='';

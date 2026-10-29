@@ -2013,21 +2013,31 @@ def measure_lufs(path):
         return None
 
 
-def trim_to_seconds(d, b, segs, words, total, max_s, work):
-    """Test-clip mode: keep the first beats whose end <= max_s (always >= 1), cut voice/words to match."""
+def trim_to_seconds(d, b, segs, words, total, max_s, work, from_s=0.0):
+    """Test-clip mode: keep the beats from `from_s` whose end <= from_s + max_s (always >= 1), cut voice/words to match
+    and shift the kept window to start at 0."""
     keep = []
+    from_s = max(0.0, from_s or 0.0)
     for sg in segs:
+        if from_s and sg.get("start") is not None and sg["start"] < from_s - 0.05:
+            continue
         e = sg.get("end")
-        if keep and (e is None or e > max_s):
+        if keep and (e is None or e > from_s + max_s):
             break
         keep.append(sg)
     end = min(total, max(x.get("end") or 0 for x in keep) + 0.35)
     out = os.path.join(d, "voiceover_test.wav")
-    run(["ffmpeg", "-y", "-v", "error", "-i", os.path.join(d, b["voiceover"]), "-t", "%.3f" % end, out])
+    run(["ffmpeg", "-y", "-v", "error", "-ss", "%.3f" % from_s, "-i", os.path.join(d, b["voiceover"]), "-t", "%.3f" % (end - from_s), out])
     b["voiceover"] = os.path.basename(out)
-    words = [w for w in words if w[2] <= end + 0.05]
-    info = {"max_seconds": max_s, "beats": len(keep), "of_beats": len(segs), "seconds": round(end, 2)}
-    log("test clip: %d of %d beats, %.1fs" % (len(keep), len(segs), end))
+    words = [[w[0], round(w[1] - from_s, 3), round(w[2] - from_s, 3)] + list(w[3:]) for w in words if w[1] >= from_s - 0.02 and w[2] <= end + 0.05]
+    if from_s:
+        for sg in keep:
+            for k in ("start", "end"):
+                if sg.get(k) is not None:
+                    sg[k] = round(max(0.0, sg[k] - from_s), 3)
+    info = {"max_seconds": max_s, "from_seconds": from_s, "beats": len(keep), "of_beats": len(segs), "seconds": round(end - from_s, 2),
+            "first_beat": keep[0].get("index")}
+    log("test clip: %d of %d beats from %.1fs, %.1fs" % (len(keep), len(segs), from_s, end - from_s))
     return keep, words, media_duration(out), info
 
 
@@ -2064,6 +2074,8 @@ def main():
     ap.add_argument("--i2v-cap", type=float, default=float(os.environ.get("CFA_I2V_CAP", "0")), help="max est. USD for i2v clips")
     ap.add_argument("--max-seconds", type=float, default=float(os.environ.get("CFA_MAX_SECONDS", "0")),
                     help="test-clip mode: render only the beats that end within this many seconds (0 = whole episode)")
+    ap.add_argument("--from-seconds", type=float, default=float(os.environ.get("CFA_FROM_SECONDS", "0")),
+                    help="test-clip mode: window starts at this voice time (beats before it are dropped)")
     ap.add_argument("--total-cap", type=float, default=float(os.environ.get("CFA_TOTAL_CAP", "0")),
                     help="hard cap (USD) on everything this render bills (music + i2v); 0 = per-item caps only")
     ap.add_argument("--foley", action="store_true", default=FOLEY_DEFAULT_ON, help="add sparse foley hits (typing, pencil, paper, door, tool) from the spoken lines; off by default")
@@ -2094,7 +2106,7 @@ def main():
     fill_timings(segs, words, total)
     test_clip = None
     if a.max_seconds and a.max_seconds > 0:
-        segs, words, total, test_clip = trim_to_seconds(d, b, segs, words, total, a.max_seconds, work)
+        segs, words, total, test_clip = trim_to_seconds(d, b, segs, words, total, a.max_seconds, work, a.from_seconds)
         voice = os.path.join(d, b["voiceover"])
     if a.total_cap and a.total_cap > 0:
         a.music_cap = min(a.music_cap, a.total_cap)
