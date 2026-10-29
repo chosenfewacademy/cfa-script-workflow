@@ -63,7 +63,7 @@ def public(j):
         eta = max(5, round(est - el)) if p < 15 else max(3, round(el * (100 - p) / max(p, 1)))
     elif j["state"] == "queued":
         eta = round((j.get("estimate") or 120) * pos)
-    out = {k: j.get(k) for k in ("id", "state", "stage", "progress", "error", "aspect", "notes", "parent", "created", "test_s", "cap")}
+    out = {k: j.get(k) for k in ("id", "state", "stage", "progress", "error", "aspect", "notes", "parent", "created", "test_s", "test_from", "cap")}
     out.update(elapsed=round(el, 1), eta=eta, queue_position=pos,
                wait=round(now - j["created"], 1))
     if j["state"] == "done":
@@ -78,6 +78,11 @@ def test_params(qs):
     try:
         v = float((qs.get("test_s") or [""])[0])
         out["test_s"] = min(30.0, max(15.0, v))
+    except ValueError:
+        pass
+    try:
+        if "test_s" in out and qs.get("test_from"):
+            out["test_from"] = min(3600.0, max(0.0, float(qs["test_from"][0])))
     except ValueError:
         pass
     try:
@@ -131,6 +136,8 @@ def worker():
             cmd += ["--notes", j["notes"]]
         if j.get("test_s"):
             cmd += ["--max-seconds", "%.1f" % j["test_s"]]
+            if j.get("test_from"):
+                cmd += ["--from-seconds", "%.2f" % j["test_from"]]
         if j.get("cap") is not None:
             cmd += ["--total-cap", "%.2f" % j["cap"]]
         if MUSIC and os.path.exists(MUSIC):

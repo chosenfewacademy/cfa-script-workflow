@@ -1296,6 +1296,22 @@ async def main():
             r4=await J(pg,"""()=>{sceneData.length=0; sceneData.push({line:"1. NARRATOR: Dee's money had to reach the supplier by five.",tag:'IMAGE',characters:'NONE',prompt:'p'}); planShots(); return sceneData[0].planShot;}""")
             check('phrase: no character on screen -> never an action (i2v) shot', r4=='still', r4)
             await J(pg,"()=>{sceneData.length=0; ['1. NARRATOR: Marcus and Jordan sat.','2. MARCUS: Write it.','3. JORDAN: Why paper?'].forEach(l=>sceneData.push({line:l,tag:'IMAGE',characters:'BOTH',prompt:'p'})); planShots();}")
+            r5=await J(pg,"""()=>{sceneData.length=0;
+              ['1. JORDAN: Three percent left.','2. NARRATOR: The money had to reach the supplier by five.','3. NARRATOR: A miss meant the discount was lost.','4. JORDAN: That payment is in my wallet.','5. JORDAN: Hang on. I screenshot them, pay Dee, and write the paper after.','6. MARCUS: No.'].forEach((l,i)=>sceneData.push({line:l,tag:'IMAGE',characters:i==1||i==2?'NONE':i==5?'MARCUS':'JORDAN',prompt:'p',tStart:i*5,tEnd:i*5+4.5,resultURL:'https://x/'+i+'.png'}));
+              planShots(); setTestClip(true,15,3,0); const f=testClipPickAction();
+              const win=[testClipFrom(),testClipLimit(),inTestClip(1),inTestClip(2),inTestClip(4),inTestClip(5),testClipRenderQuery()];
+              sceneData[1].bgDesc='bike shop workbench with red bikes on wall';
+              const a1=sceneShotAudit(2,{people:2,background:'bike shop workbench, red bikes on the wall',text:[]});
+              const a2=sceneShotAudit(4,{people:1,background:'kitchen table',text:['PAID']});
+              const a3=sceneShotAudit(4,{people:1,background:'kitchen table',text:[]});
+              const a4=sceneShotAudit(3,{people:2,background:'x',text:[]});
+              setTestClip(false); return {f,win,a1,a2,a3,a4,exp:[expectedPeople(sceneData[1]),expectedPeople(sceneData[4])]}}""")
+            check('window: picks a 15s window ending on the first action line', r5['f']==2 and r5['win'][:6]==[2,5,False,True,True,False], r5['win'])
+            check('window: render query starts the renderer at the window', r5['win'][6].startswith('&test_from=9.70&test_s=15'), r5['win'][6])
+            check('vision: narrator still expects nobody, character shot exactly one', r5['exp']==[0,1])
+            check('vision: extra people and repeated narrator background fail', not r5['a1']['people_ok'] and r5['a1']['bg_repeat'] and not r5['a1']['ok'], r5['a1'])
+            check('vision: stray on-screen text fails, clean frame passes', not r5['a2']['text_ok'] and r5['a3']['ok'], [r5['a2'],r5['a3']])
+            check('vision: a second person in a one-character shot fails', not r5['a4']['people_ok'], r5['a4'])
             r3=await J(pg,"()=>{sceneData[2].characters='BOTH'; return oneCharViolations();}")
             check('phrase: one-character check flags a two-person shot', r3==[2], r3)
             check('phrase: no page errors', not [e for e in errs if 'pageerror' in e], errs)
