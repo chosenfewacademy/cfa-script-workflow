@@ -19,6 +19,9 @@ check("track follows the camera direction, flips after BUT", shots[5]["motion"] 
 check("realization pushes in", shots[4]["motion"] == "zoom_in")
 check("transitions from the story link", [x.get("transition_in") for x in shots[1:]] == ["cut", "cut", "cut", "whip", "dissolve"], [x.get("transition_in") for x in shots])
 check("J-cut: picture cut lands after the line starts", abs(shots[3]["start"] - 9.2) < 1e-6 and abs(shots[2]["end"] - 9.2) < 1e-6)
+sn = [{"beats": [1], "start": 0, "end": 5.35, "duration": 5.35, "mediaType": "image"}, {"beats": [2], "start": 5.35, "end": 11, "duration": 5.65, "mediaType": "image"}]
+R.apply_shot_plan(sn, [{"index": 1, "start": 0}, {"index": 2, "start": 5.66}])
+check("cut snaps to the phrase's first word", abs(sn[1]["start"] - 5.66) < 1e-6 and abs(sn[0]["end"] - 5.66) < 1e-6 and R.phrase_alignment(sn)["max_offset_s"] < 1e-6)
 check("phrase alignment within limit (J lead allowed)", R.phrase_alignment(shots)["pass"] and R.phrase_alignment(shots)["max_offset_s"] <= 0.21)
 check("motion carries across cuts (cut on movement)", shots[1]["_carry"] and shots[2]["_carry_in"])
 e = [R._ease(t / 10.0, True, True) for t in range(11)]
@@ -58,4 +61,9 @@ R.i2v_clip(__file__, "hailuo", "k", os.path.join(d, "o.mp4"), fetch=lambda m, p:
 check("action with no character on screen never animates", "e.png" not in [x["media"] for x in R.action_i2v_plan(acts, "hailuo", 9)[0]])
 check("i2v sends the action prompt", got.get("prompt") == pr)
 check("reverse shot is a hard cut", R.PLAN_TRANS["reverse"] == ("cut", 0.0))
+import numpy as np
+dm = np.tile(np.linspace(0, 1, 640, dtype=np.float32), (360, 1)); img = np.full((360, 640, 3), 128, np.uint8)
+st = {}
+for _ in R.parallax_frames(img, dm, 320, 180, 24 * 6, "zoom_in", (0.5, 0.5), 1.0, 1, st, (True, True)): pass
+check("distortion guard keeps a long push-in inside the stretch gate", st["stretch"] <= R.GATE_STRETCH_MAX, st)
 print("%d failure(s)" % len(fails)); sys.exit(1 if fails else 0)

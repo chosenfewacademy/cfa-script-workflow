@@ -955,7 +955,7 @@ def smooth_depth(depth, w, h):
     return 0.5 + (d - 0.5) * PARALLAX_DEPTH_SCALE
 
 
-def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry=(False, False)):
+def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry=(False, False), amp=1.0, probe=False):
     """Per-frame remap fields (output pixel -> overscanned source). Small eased dolly + truck, never sampling outside the source."""
     import numpy as np
     dur = frames / float(FPS)
@@ -966,9 +966,10 @@ def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry=
     if motion == "static":          # hold on a quote: barely breathing, no travel
         lat, zr = 0.15 * lat, 0.25 * zr
     elif motion == "zoom_in":       # motivated push-in: the dolly leads, little truck
-        lat, zr = 0.3 * lat, 1.6 * zr
+        lat, zr = 0.3 * lat, 1.25 * zr
     elif motion in ("pan_left", "pan_right"):
         zr = 0.4 * zr
+    lat, zr = lat * amp, zr * amp
     vert = 0.25 * abs(lat) * (-1.0 if motion == "pan_up" else 1.0 if motion == "pan_down" else 0.0)
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     cx, cy = w * focus[0], h * focus[1]
@@ -977,7 +978,7 @@ def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry=
     import cv2
     dd = cv2.remap(d, gx, gy, cv2.INTER_LINEAR)
     pcx, pcy = ox + W / 2 / punch, oy + H / 2 / punch
-    for i in range(frames):
+    for i in ([0, frames // 2, frames - 1] if probe else range(frames)):
         t = _ease(i / max(1, frames - 1), *carry)
         z = 1.0 + (zr * t if zr > 0 else -zr * (1 - t)) * (0.6 + 0.8 * dd)
         mx = (gx - pcx) / z + pcx - (t - 0.5) * lat * dd
@@ -1002,7 +1003,14 @@ def parallax_frames(img, depth, W, H, frames, motion="zoom_in", focus=(0.5, 0.5)
     h, w = img.shape[:2]
     d = smooth_depth(depth, w, h)
     worst = 1.0
-    for i, (mx, my) in enumerate(parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry)):
+    amp = 1.0
+    for _ in range(6):   # distortion guard: shrink the move until the warp stays inside the gate
+        if max(map_stretch(mx, my) for mx, my in parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry, amp, True)) <= GATE_STRETCH_MAX * 0.98:
+            break
+        amp *= 0.8
+    if stats is not None:
+        stats["amp"] = round(amp, 3)
+    for i, (mx, my) in enumerate(parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry, amp)):
         if stats is not None and i in (0, frames // 2, frames - 1):
             worst = max(worst, map_stretch(mx, my))
         yield cv2.remap(img, mx, my, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
@@ -1079,9 +1087,13 @@ def apply_shot_plan(shots, segs):
             x["transition_in"], x["transition_duration"] = tr, td
             if x["plan_link"] == "push_link" and shots[i - 1].get("mediaType") not in ("video", "lipsync"):
                 shots[i - 1]["motion"] = "zoom_in"       # push into the detail that becomes this shot
-            if x["plan_link"] == "jcut" and x["duration"] > 1.0 and shots[i - 1]["duration"] > 1.0:
-                x["start"] += J_LEAD; x["duration"] -= J_LEAD          # picture cut lands after the line starts
-                shots[i - 1]["end"] += J_LEAD; shots[i - 1]["duration"] += J_LEAD
+            if x.get("phrase_start") is not None:
+                # picture cut + motion start snap to the phrase's first word; a J-cut lands J_LEAD after it (audio leads)
+                want = x["phrase_start"] + (J_LEAD if x["plan_link"] == "jcut" else 0.0)
+                delta = want - x["start"]
+                if abs(delta) > 1e-6 and x["duration"] - delta > 1.0 and shots[i - 1]["duration"] + delta > 1.0:
+                    x["start"] = want; x["duration"] -= delta
+                    shots[i - 1]["end"] = want; shots[i - 1]["duration"] += delta
         nxt = shots[i + 1] if i + 1 < len(shots) else None
         x["_carry"] = bool(nxt is not None)                          # cut on movement: keep velocity into the cut
         x["_carry_in"] = i > 0 and shots[i - 1].get("_dir") == d
@@ -2379,7 +2391,7 @@ def main():
             log("motion QA: %d near-frozen shot(s), %d jarring cut(s)" % (len(mqa["frozen"]), len(mqa["jarring_cuts"])))
     except Exception as e:
         mqa = {"error": str(e)[:160]}
-    gate = motion_gate(final)
+    gate = motion_gate(final, median_max=GATE_MEDIAN_PHRASE_MAX if PHRASE else None)
     st = [x.get("_stretch") for x in shots if x.get("_stretch")]
     gate["distortion"] = {"max_stretch": round(max(st), 4) if st else None, "shots": len(st),
                           "over": sum(1 for v in st if v > GATE_STRETCH_MAX), "limit": GATE_STRETCH_MAX}
@@ -2424,11 +2436,12 @@ def main():
 
 
 GATE_MEDIAN_SHOT_MAX = 4.0     # s: fail if the median visible shot is longer
+GATE_MEDIAN_PHRASE_MAX = 6.0   # s: phrase plan (one shot per new-content phrase, motivated move inside it)
 GATE_CUT_DIFF = 18.0           # mean grey-level jump that reads as a cut (same-palette stills)
 GATE_MOTION_MIN = 3.5          # px/s median in-frame motion, full 1280-px-wide frame (optical flow, cut samples excluded)
 
 
-def motion_gate(path, maxsec=240):
+def motion_gate(path, maxsec=240, median_max=None):
     """Measure the final cut like a viewer: histogram cuts (Bhattacharyya > 0.35) and optical-flow motion between cuts."""
     import cv2, numpy as np
     cap = cv2.VideoCapture(path)
@@ -2457,8 +2470,9 @@ def motion_gate(path, maxsec=240):
     med = float(np.median(d)) if d else 0.0
     mot = float(np.median(flow)) if flow else 0.0
     fails = []
-    if med > GATE_MEDIAN_SHOT_MAX:
-        fails.append("median shot %.1fs > %.1fs" % (med, GATE_MEDIAN_SHOT_MAX))
+    mm = median_max or GATE_MEDIAN_SHOT_MAX
+    if med > mm:
+        fails.append("median shot %.1fs > %.1fs" % (med, mm))
     if mot < GATE_MOTION_MIN:
         fails.append("in-frame motion %.1f px/s < %.1f" % (mot, GATE_MOTION_MIN))
     return {"pass": not fails, "fails": fails, "median_shot_s": round(med, 2), "shots": len(d),
