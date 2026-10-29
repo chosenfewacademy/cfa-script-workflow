@@ -1356,10 +1356,11 @@ async def main():
             r10=await J(pg,"""()=>{const v=(o)=>identityVerdict('Jordan',Object.assign({score:9,visible:true,count:1,age_ok:true,forbidden_seen:[]},o));
               const base={people:1,background:'b',text:[],line_match:8,missing:[],emotion_match:8,garbled:false,quality:9,defects:[],head_cut:false,phones:1,hands:2,dup:[],illogical:[]};
               return {grin:v({mouth_open:true}).score, hair:v({hair_match:false}).score, look:v({render_match:false}).score, prior:v({prior_match:false}).score, ok:v({hair_match:true,face_match:true,mouth_open:false,render_match:true}).score,
-                two:sceneShotAudit(0,Object.assign({},base,{phones:2})).props_ok, one:sceneShotAudit(0,base).props_ok,
+                two:sceneShotAudit(0,Object.assign({},base,{phones:2})).props_ok, one:sceneShotAudit(0,base).props_ok, stacked:sceneShotAudit(0,Object.assign({},base,{stacked:true})).props_ok, rule:/exactly one phone, held in one hand/.test(SCENE_LOGIC_RULE)&&/stacked/.test(SCENE_LOGIC_RULE), dark:DARK_LUMA>=60,
                 subj:subjectNote({line:"2. NARRATOR: Dee's two hundred dollars had to reach the parts supplier"})}}""")
             check('identity: grin, hair change, render-look switch or change from the prior shot fail Jordan (score < 7)', all(r10[k]<7 for k in ('grin','hair','look','prior')) and r10['ok']==9, r10)
             check('props: two phones on one person fail, one phone passes', r10['two'] is False and r10['one'] is True, r10)
+            check('props: stacked/fused phones fail; prompt says exactly one phone in one hand; dark stills rejected below 60', r10['stacked'] is False and r10['rule'] is True and r10['dark'] is True, r10)
             check('opening subject: money/supplier lines must show the money and the parts', 'money is clearly visible' in r10['subj'] and 'parts' in r10['subj'], r10['subj'])
             r11=await J(pg,"()=>{const a=musicReserveNow(); musicCachedKnown=true; const b=musicReserveNow(); musicCachedKnown=null; return [a,b];}")
             check('music reserve: $0.35 until the renderer reports a cached score, then $0', r11==[0.35,0], r11)
