@@ -5229,7 +5229,7 @@ async function buildFinalEditZip(say){
       const sp=splitTag(s.line);
       segs.push({index:i+1,text:sp.text,tag:s.tag,characters:s.characters||'',
         speaker:sp.speaker||(dialogueOn()?'NARRATOR':null), voice_id:sp.speaker?lockedVoice(sp.speaker).voiceId:(dialogueOn()?lockedVoice('NARRATOR').voiceId:null),
-        media, mediaType:media?(kind==='video'&&s.lipsync?'lipsync':kind):'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'', shot:s.shot||'', pace:s.pace||'',
+        media, mediaType:media?(kind==='video'&&s.lipsync?'lipsync':kind):'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'', planMotion:s.planMotion||null, planLink:s.planLink||null, planDir:s.planDir||null, shot:s.shot||'', pace:s.pace||'',
         start:t?t.start:null, end:t?t.end:null});
     }
     say('Packing bundle…');
@@ -5243,7 +5243,7 @@ async function buildFinalEditZip(say){
       script:finalScript||'',segmentedScript:segScript||'',voiceover:voName,srt:'beats.srt',
       duration:voWords.length?voWords[voWords.length-1][2]:null,words:voWords,segments:segs,
       voicePace:{pace:voPace,speed:VO_PACES[voPace].speed},
-      format_type:scriptFormat(), musicStyle:musicStyle(),
+      format_type:scriptFormat(), musicStyle:musicStyle(), shotPlan:phrasePlanOn()?'phrase':'beat',
       voiceLock:Object.fromEntries(Object.entries(voiceLock()).map(([k,v])=>[k,v.voiceId]))};
     files.unshift({name:'bundle.json',data:enc.encode(JSON.stringify(bundle,null,1))});
     files.push({name:'script.txt',data:enc.encode(finalScript||'')});
@@ -5841,6 +5841,102 @@ function promptOnScreenCast(prompt){
 // Story context for per-beat prompts. Each beat used to be prompted in isolation, so settings
 // jumped (study, server room, coffee shop) and Marcus appeared in beats he is not in. The writer
 // gets the episode, the neighbouring beats, who is on screen and the setting to keep.
+
+// ── Phrase shot plan (Oct 28 feedback: movement must follow the script; no re-angled repeats) ─────────────
+// A new shot only where a phrase brings new visual information (action, object, place, character, reaction);
+// motion is motivated by the line; the transition comes from the story link between phrases.
+const PS_STOP=new Set('the a an and or but so to of in on at by for with from that this these those it its his her their our my your was were is are be been had has have did do does not no yes he she they we you i him them us me just then there here what who when where how which as if than too very still only into out up down off over about after before again all any some'.split(' '));
+const PS_EMO_RE=/\b(knew|realiz\w*|felt|froze|heart|afraid|fear\w*|panic\w*|relie\w*|stomach|sank|tight\w*|worried|scared|shock\w*|understood|finally|hope\w*|guilt\w*|calm\w*)\b/i;
+const PS_ACTION_RE=/\b(walk\w*|ran|run\w*|grab\w*|push\w*|pull\w*|hand\w*|slid\w*|reach\w*|open\w*|clos\w*|pick\w*|set|put|wrote|writ\w*|typ\w*|tap\w*|scroll\w*|held|hold\w*|lift\w*|turn\w*|carr\w*|pour\w*|drop\w*|sign\w*|lock\w*|tuck\w*)\b/i;
+const PS_REVEAL_RE=/\b(reveal\w*|showed|turns? out|turned out|there it was|appeared|landed in|in the corner|behind|underneath)\b/i;
+const PS_TIMEJUMP_RE=/\b(later|earlier|that morning|that night|the next day|days? before|hours? (?:before|earlier|later)|meanwhile|last week|years? ago)\b/i;
+const PS_BUT_RE=/^(but|yet|except|instead|still|then)\b/i;
+const PS_THEREFORE_RE=/^(so|which meant|that meant|because of that|therefore|now)\b|\b(meant|so that)\b/i;
+function psContent(t){ return new Set(String(t).toLowerCase().replace(/[^a-z0-9'\s]/g,' ').split(/\s+/).filter(w=>w.length>2&&!PS_STOP.has(w))); }
+function psNew(prev,cur){ const p=psContent(prev); return [...psContent(cur)].filter(w=>!p.has(w)); }
+// Split a narration line into phrases that each add >= 2 new content words; quotes and short lines stay whole.
+function phrasePieces(text){
+  const t=String(text||'').trim(); if(!t) return [];
+  let parts=t.split(/(?<=[.!?])\s+(?=[A-Z"'])/);
+  parts=parts.flatMap(p=>p.split(/\s+/).length>14?p.split(/(?<=,)\s+(?=(?:and|then|so|but|when|while|where)\b)|;\s+|\s+[—–]\s+/):[p]);
+  const out=[];
+  for(const p of parts.map(x=>x.trim()).filter(Boolean)){
+    const prev=out[out.length-1];
+    const clause=prev && !/[.!?]["']?$/.test(prev);   // a comma/dash clause needs more new content than a new sentence
+    if(prev && (p.split(/\s+/).length<5 || /^(and )?that\b/i.test(p) || psNew(prev,p).length<(clause?3:2))) out[out.length-1]=prev+' '+p; else out.push(p);
+  }
+  return out;
+}
+function planMotionFor(text,speaker){
+  if(speaker && speaker!=='NARRATOR') return 'hold';               // a quote: hold still, let the line land
+  if(PS_EMO_RE.test(text)) return 'push_in';                        // emotion / realization: push in
+  if(PS_REVEAL_RE.test(text)) return 'reveal';                      // a reveal: pan onto it
+  return PS_ACTION_RE.test(text)?'track':'track';                   // a described action: follow it
+}
+function planLinkFor(prev,cur,prevSpk,curSpk){
+  if(!prev) return 'cut';
+  if(PS_TIMEJUMP_RE.test(cur)) return 'time_jump';
+  if(PS_BUT_RE.test(cur)) return 'whip';                            // BUT: a turn in the story, whip across it
+  const shared=[...psContent(prev)].filter(w=>psContent(cur).has(w));
+  if(PS_THEREFORE_RE.test(cur)) return 'push_link';                 // THEREFORE: push into the detail that leads on
+  if(curSpk && curSpk!=='NARRATOR' && curSpk!==prevSpk) return 'jcut';   // a voice leads the picture
+  if(shared.length>=2) return 'match';                              // same object carries across: match cut
+  return 'cut';                                                     // new information: hard cut
+}
+// Rewrites sceneData (first `limit` beats) into phrase shots; keeps media of a beat's first phrase and its VIDEO beats.
+function applyPhraseShots(limit){
+  const lim=limit==null?sceneData.length:limit, out=[]; let n=0;
+  sceneData.forEach((s,i)=>{
+    const sp=splitTag(s.line), num=String(s.line).match(/^\s*(\d+)\./), pre=(num?num[1]+'. ':'')+(sp.speaker?sp.speaker+': ':'');
+    const pieces=(i<lim && s.tag==='IMAGE' && (!sp.speaker||sp.speaker==='NARRATOR'))?phrasePieces(sp.text):[sp.text];
+    pieces.forEach((p,k)=>{
+      const x=k===0?s:{tag:'IMAGE',characters:s.characters,prompt:'',sceneDesc:'',shot:'',pace:s.pace||'',phraseOf:i};
+      if(k>0||pieces.length>1){ x.line=pre+p; if(k===0) x.phraseOf=i; }
+      if(k===0 && pieces.length>1){ x.prompt=x.prompt||''; }
+      out.push(x); n+=k>0?1:0;
+    });
+  });
+  sceneData.length=0; out.forEach(x=>sceneData.push(x));
+  planShots(); try{ assignBeatTimes(); }catch(e){}
+  return n;
+}
+function planShots(){
+  let dir=1;
+  sceneData.forEach((x,i)=>{
+    const sp=splitTag(x.line), pv=i?splitTag(sceneData[i-1].line):null;
+    x.planMotion=planMotionFor(sp.text,sp.speaker);
+    x.planLink=planLinkFor(pv&&pv.text,sp.text,pv&&pv.speaker,sp.speaker);
+    if(x.planLink==='whip') dir=-dir;                               // a reversal turns the camera; otherwise keep travelling
+    x.planDir=dir;
+  });
+  return sceneData.map(x=>[x.planMotion,x.planLink,x.planDir]);
+}
+function phrasePlanOn(){ return sceneData.some(x=>x.planMotion); }
+// New-shot prompt note: depict this phrase's new content, never a re-angle of the previous frame.
+function phraseShotNote(i){
+  const s=sceneData[i]; if(!s || !s.planMotion) return '';
+  const pv=i?sceneData[i-1]:null, nw=pv?psNew(splitTag(pv.line).text,splitTag(s.line).text):[];
+  return '\n[NEW SHOT: show the new visual information in this line'+(nw.length?' ('+nw.slice(0,6).join(', ')+')':'')+' as its own subject and composition'+
+    (pv&&(pv.sceneDesc||pv.prompt)?'. It must NOT be a re-angle or re-crop of the previous shot ('+String(pv.sceneDesc||pv.prompt).slice(0,160)+')':'')+
+    (s.distinctNote?'. '+s.distinctNote:'')+'. Keep every character exactly as in their reference sheet (same face, hair, skin tone, outfit), mouths closed.]';
+}
+// Similarity check on generated images (8x8 difference hash); consecutive pairs below the threshold are re-angles.
+const PS_SIM_MIN=10;
+async function imgDHash(url){
+  const im=new Image(); im.crossOrigin='anonymous'; im.src=url; await im.decode();
+  const c=document.createElement('canvas'); c.width=9; c.height=8; const g=c.getContext('2d'); g.drawImage(im,0,Math.round(im.naturalHeight*0.1),im.naturalWidth,Math.round(im.naturalHeight*0.62),0,0,9,8);
+  const d=g.getImageData(0,0,9,8).data, v=[]; for(let i=0;i<72;i++) v.push(d[i*4]*0.3+d[i*4+1]*0.59+d[i*4+2]*0.11);
+  const bits=[]; for(let y=0;y<8;y++) for(let x=0;x<8;x++) bits.push(v[y*9+x+1]>v[y*9+x]?1:0); return bits;
+}
+function hamming(a,b){ let n=0; for(let i=0;i<a.length;i++) n+=a[i]!==b[i]?1:0; return n; }
+async function similarShotPairs(limit){
+  const lim=limit==null?sceneData.length:limit, hs=[], bad=[];
+  for(let i=0;i<lim;i++){ const s=sceneData[i]; try{ hs[i]=s.resultURL&&s.resultType!=='video'?await imgDHash(s.resultURL):null; }catch(e){ hs[i]=null; } }
+  for(let i=1;i<lim;i++){ const same=sceneData[i].resultURL&&sceneData[i].resultURL===sceneData[i-1].resultURL;
+    if(sceneData[i].planLink==='match') continue;
+    if(same || (hs[i]&&hs[i-1]&&hamming(hs[i],hs[i-1])<PS_SIM_MIN)) bad.push({i,d:same?0:hamming(hs[i],hs[i-1])}); }
+  return bad;
+}
 function sceneContextNote(i){
   const s=sceneData[i]; if(!s) return '';
   const who=s.characters==='BOTH'||s.characters==='BOTH_JM'?'Marcus and Jordan':s.characters==='MARCUS'?'Marcus only (Jordan is not in this shot)':s.characters==='JORDAN'?'Jordan only (Marcus is not in this shot)':'no Marcus and no Jordan — show objects, screens, hands, a place, or other people only';
@@ -5862,7 +5958,7 @@ async function generatePromptForScene(i){
 
   // Build the user message — add a Character Note when a secondary person is in the scene
   // so the AI knows to describe them as a distinct new individual, not a variation of Marcus/Jordan
-  let userMsg = s.line + sceneContextNote(i);
+  let userMsg = s.line + sceneContextNote(i) + phraseShotNote(i);
   const secondary = detectSecondaryChar(s.line);
   if(secondary){
     const mainChar =
