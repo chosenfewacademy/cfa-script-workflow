@@ -2670,8 +2670,8 @@ I2V_CHECK_SYS = ("You audit frames from one animated clip. For EACH frame count 
                  "(10 crisp and clean; lower for warped or melted faces, broken hands or extra fingers, deformed bodies, melted objects, blur, smears, artifacts). "
                  "Also say whether the person looks like the same character as the reference sheet (first image), score 0-10. "
                  "Judge strictly against the sheet: hair_match (same cut, colour, volume), face_match (same face shape, eyes, nose, skin tone), "
-                 "mouth_open (true if in ANY frame the mouth is open or teeth show; the series keeps mouths closed), render_match (same rendering look as the sheet "
-                 "AND as the source still if given: shading, materials, detail, proportions; false if the clip turns more realistic, flatter or a different style). "
+                 "mouth_open (true if in ANY frame the mouth is open or teeth show; the series keeps mouths closed), render_match (the sheet may be flat 2D; judge the look against the SOURCE STILL: same soft 3D Pixar shading, "
+                 "materials, detail and proportions; false if the clip turns more realistic, flatter or a different style). Hair/face: ignore 2D-to-3D differences. "
                  "Props: phones (max phones visible in any frame), max_hands_per_person, duplicate_objects (an object shown twice), illogical (floating or impossible props). "
                  'JSON only: {"frames":[{"people":<int>,"text":["..."],"quality":<0-10>,"defects":["..."]}],"same_character":<0-10>,"hair_match":bool,"face_match":bool,'
                  '"mouth_open":bool,"render_match":bool,"phones":<int>,"max_hands_per_person":<int>,"duplicate_objects":["..."],"illogical":["..."]}')
