@@ -1353,6 +1353,14 @@ async def main():
               sceneData[0].resultURL='blob:a'; while(mergeShortShots()){}
               const r=sceneData.map(x=>[x.line,+(x.tEnd-x.tStart).toFixed(2),x.resultURL||null]); sceneData.length=0; keep.forEach(x=>sceneData.push(x)); return r;}""")
             check('min shot: pieces under 2s merge into a neighbour of the same line, other lines untouched', r9[0][0]=='2. NARRATOR: Dee had to reach the supplier today. by five.' and r9[0][1]==4.2 and r9[0][2]=='blob:a' and len(r9)==2 and r9[-1][0]=='3. JORDAN: Hang on.', r9)
+            r10=await J(pg,"""()=>{const v=(o)=>identityVerdict('Jordan',Object.assign({score:9,visible:true,count:1,age_ok:true,forbidden_seen:[]},o));
+              const base={people:1,background:'b',text:[],line_match:8,missing:[],emotion_match:8,garbled:false,quality:9,defects:[],head_cut:false,phones:1,hands:2,dup:[],illogical:[]};
+              return {grin:v({mouth_open:true}).score, hair:v({hair_match:false}).score, look:v({render_match:false}).score, prior:v({prior_match:false}).score, ok:v({hair_match:true,face_match:true,mouth_open:false,render_match:true}).score,
+                two:sceneShotAudit(0,Object.assign({},base,{phones:2})).props_ok, one:sceneShotAudit(0,base).props_ok,
+                subj:subjectNote({line:"2. NARRATOR: Dee's two hundred dollars had to reach the parts supplier"})}}""")
+            check('identity: grin, hair change, render-look switch or change from the prior shot fail Jordan (score < 7)', all(r10[k]<7 for k in ('grin','hair','look','prior')) and r10['ok']==9, r10)
+            check('props: two phones on one person fail, one phone passes', r10['two'] is False and r10['one'] is True, r10)
+            check('opening subject: money/supplier lines must show the money and the parts', 'money is clearly visible' in r10['subj'] and 'parts' in r10['subj'], r10['subj'])
             check('framing: a cut-off head fails the image check, full head passes', not r7['cut']['framing_ok'] and not r7['cut']['ok'] and r7['ok']['framing_ok'], [r7['cut'],r7['ok']])
             check('prompts: writing requests are stripped (battery %, twelve words) and the rest kept', '%' not in r7['strip'] and 'twelve' not in r7['strip'] and 'green notebook' in r7['strip'] and 'Jordan leans in' in r7['strip'], r7['strip'])
             check('block: failed checks block the still (people, quality, framing); a clean check does not', r7['why']==[['people','quality'],[],['framing']] and r7['blockOn'], r7['why'])
