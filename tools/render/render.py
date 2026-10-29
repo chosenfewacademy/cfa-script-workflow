@@ -2360,6 +2360,16 @@ def main():
             ref = refs.get(x.get("one_char") or "") or refs.get(who)
             src_img = os.path.join(d, x["media"])
             unit = i2v_cost(mode, x.get("duration"))
+            if xk and not os.environ.get("CFA_NO_PROP_CHECK"):
+                try:
+                    sv = prop_check(src_img, xk, "image")
+                except Exception as e:
+                    sv = {"ok": True, "error": str(e)[:80]}
+                if not sv["ok"]:   # never pay to animate a still that already shows 2 phones / a stacked device
+                    checks.append({"media": x["media"], "try": 0, "stopped": "source still props", "why": sv["why"]})
+                    log("i2v skipped: source still fails props", x["media"], sv["why"])
+                    x["i2v_rejected"] = True; i2v_info.setdefault("degraded", []).append(x.get("beats") or x.get("media"))
+                    continue
             for t in range(I2V_RETRY_CAP + 1):
                 if t and a.total_cap and getattr(a, "spent_usd", 0.0) + unit + reserve > a.total_cap + 1e-9:
                     checks.append({"media": x["media"], "try": t, "stopped": "cap"}); break
@@ -2402,6 +2412,16 @@ def main():
             if x.get("media") in made:
                 x["media"], x["mediaType"] = made[x["media"]], "video"
         i2v_info["clips"] = len(made)
+    still_props = {}
+    pk = os.environ.get("XAI_API_KEY") or env_key("XAI_API_KEY", a.keys_env)
+    if pk and not os.environ.get("CFA_NO_PROP_CHECK"):   # every still, reused old ones too: one phone, nothing stacked
+        for m in sorted({x["media"] for x in shots if x.get("media") and (x.get("mediaType") or "image") == "image"}):
+            try:
+                v = prop_check(os.path.join(d, m), pk, "image")
+            except Exception as e:
+                v = {"ok": None, "error": str(e)[:80]}
+            still_props[m] = v
+            log("still props", m, "ok" if v.get("ok") else v.get("why") or v.get("error"))
     if STILL_MOTION == "parallax":
         import hashlib
         dc = os.path.expanduser(os.environ.get("CFA_DEPTH_CACHE", "~/cfa-render-data/depth_cache"))
@@ -2629,7 +2649,7 @@ def main():
     if i2v_info.get("degraded"):
         gate["fails"].append("action shot(s) %s became stills (no character motion)" % i2v_info["degraded"]); gate["pass"] = False
     log("motion gate:", "PASS" if gate["pass"] else "FAIL " + "; ".join(gate["fails"]))
-    report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
+    report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "still_props": still_props if "still_props" in dir() else {}, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
               "audio_streams": len(au), "lufs": measure_lufs(final), "edl_source": source,
               "edl_problems": problems, "grok_usage": usage, "beats": len(segs),
@@ -2789,7 +2809,109 @@ def i2v_frame_check(mp4, key, sheet_url=None, expected=1, ask=None, line="", pri
         props.append("%s hands on one person" % o.get("max_hands_per_person"))
     if props:
         why.append("props: " + "; ".join(props[:3]))
-    return {"ok": not why, "why": why, "people": ppl, "text": txt, "quality": q, "same_character": same}
+    pc = None
+    if not ask and key:
+        try:
+            exp = prop_check(prior, key, "image")["phones"][0] if prior and os.path.exists(str(prior)) else None
+            pc = prop_check(mp4, key, "video", expect_phone=exp)
+            if not pc["ok"]:
+                why.append("props (dense): " + "; ".join(pc["why"]))
+        except Exception as e:
+            pc = {"error": str(e)[:80]}
+    return {"ok": not why, "why": why, "people": ppl, "text": txt, "quality": q, "same_character": same, "props_dense": pc}
+
+PROP_CHECK_SYS = ("You count phones in frames from one animated shot. A phone is any handheld phone or phone-like device (incl. one lying on a table). "
+                  "For EACH image in order report: phones (how many distinct phones/devices are visible, count two overlapping or stacked devices as 2), "
+                  "stacked (true if two devices overlap, are stacked, glued or fused into one odd object, or a phone has a second body/case attached), "
+                  "in_hand (true if a phone is held). Be strict: look closely at hands and tables. "
+                  'JSON only: {"frames":[{"phones":<int>,"stacked":bool,"in_hand":bool,"note":"short"}]}')
+PROP_STILL_SYS = ("You inspect ONE still image for prop errors. You get the full image, then 4 zoomed quarter crops of the SAME image (overlapping). "
+                  "Count distinct phones/phone-like devices in the scene (a device seen in two crops is one device). Look very closely at hands: two phones held together, "
+                  "a phone stacked on or overlapping another phone, two backs/edges of different colours, or a phone fused with another object all count as stacked=true. "
+                  'JSON only: {"phones":<int>,"stacked":bool,"in_hand":bool,"note":"short"}')
+PROP_EVERY_S = 0.5      # dense motion-clip sampling (~2 fps)
+PROP_WIDTH = 1024       # frames sent at 1024 px
+PROP_BATCH = 8          # frames per vision call
+
+
+def _vision_json(key, sys_prompt, content, max_tokens=900):
+    body = json.dumps({"model": "grok-4.3", "response_format": {"type": "json_object"}, "max_tokens": max_tokens,
+                       "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": content}]}).encode()
+    req = urllib.request.Request(XAI_URL, data=body, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as r:
+        txt = json.load(r)["choices"][0]["message"]["content"]
+    return json.loads(re.sub(r"^```(?:json)?|```$", "", txt.strip()).strip())
+
+
+def prop_verdict(frames, expect_phone=None):
+    """frames: [{phones, stacked}] in time order -> {ok, why[], phones[]}. Fails on >1 phone, a stacked/fused device,
+    or a phone that vanishes (seen, then gone in a later frame). expect_phone: phones in the source still (vanish baseline)."""
+    ph = [int(f.get("phones") or 0) for f in frames]
+    why = []
+    if any(p > 1 for p in ph):
+        why.append("%d phones in frame(s) %s" % (max(ph), [i for i, p in enumerate(ph) if p > 1][:6]))
+    st = [i for i, f in enumerate(frames) if f.get("stacked")]
+    if st:
+        why.append("stacked/fused device in frame(s) %s" % st[:6])
+    seen = (expect_phone or 0) > 0
+    for i, p in enumerate(ph):
+        if p > 0:
+            seen = True
+        elif seen:
+            why.append("phone vanishes at frame %d" % i)
+            break
+    return {"ok": not why, "why": why, "phones": ph}
+
+
+def _frame_uris(path, times, width):
+    import base64, tempfile
+    d = tempfile.mkdtemp(); out = []
+    for k, t in enumerate(times):
+        p = os.path.join(d, "p%03d.jpg" % k)
+        args = ["ffmpeg", "-y", "-v", "error"] + (["-ss", "%.2f" % t] if t is not None else []) + ["-i", path, "-frames:v", "1", "-vf", "scale=%d:-2" % width, "-q:v", "3", p]
+        run(args)
+        out.append("data:image/jpeg;base64," + base64.b64encode(open(p, "rb").read()).decode())
+    shutil.rmtree(d, ignore_errors=True)
+    return out
+
+
+def prop_check(path, key, kind="video", ask=None, expect_phone=None):
+    """Phone count on a still (1 frame) or densely on a clip (every PROP_EVERY_S at PROP_WIDTH px)."""
+    if kind != "video":   # stills: full frame + 4 zoomed quarter crops (v6: the 768 px view missed two stacked phones)
+        if ask:
+            o = ask([None])
+        else:
+            import base64, io
+            from PIL import Image
+            im = Image.open(path).convert("RGB"); w, h = im.size
+            def uri(x):
+                bb = io.BytesIO(); x.save(bb, "JPEG", quality=90); return "data:image/jpeg;base64," + base64.b64encode(bb.getvalue()).decode()
+            rs = lambda x: x.resize((PROP_WIDTH, max(2, int(PROP_WIDTH * x.size[1] / x.size[0]))))
+            crops = [rs(im.crop((x, y, x + int(w * .6), y + int(h * .6)))) for x in (0, int(w * .4)) for y in (0, int(h * .4))]
+            content = [{"type": "text", "text": "Full image, then 4 zoomed crops:"}] + [{"type": "image_url", "image_url": {"url": uri(x)}} for x in [rs(im)] + crops]
+            o = _vision_json(key, PROP_STILL_SYS, content, 300)
+        f = (o.get("frames") or [o])[0]
+        v = prop_verdict([f], None); v["note"] = f.get("note"); v["times"] = [None]
+        return v
+    if kind == "video":
+        dur = media_duration(path) if not ask else 3.0
+        times = [round(t * PROP_EVERY_S + 0.05, 2) for t in range(max(1, int(dur / PROP_EVERY_S)))]
+    else:
+        times = [None]
+    frames = []
+    for b in range(0, len(times), PROP_BATCH):
+        tt = times[b:b + PROP_BATCH]
+        if ask:
+            o = ask(tt)
+        else:
+            content = [{"type": "text", "text": "%d image(s) in time order:" % len(tt)}] + [{"type": "image_url", "image_url": {"url": u}} for u in _frame_uris(path, tt, PROP_WIDTH)]
+            o = _vision_json(key, PROP_CHECK_SYS, content)
+        fr = list(o.get("frames") or [])[:len(tt)]
+        frames += fr
+    v = prop_verdict(frames, expect_phone)
+    v["times"] = times[:len(frames)]
+    return v
+
 
 I2V_PROMPT = ("Subtle idle motion only: slow breathing, a blink, slight head and hand movement, gentle camera drift. "
               "Mouth stays closed, no talking, same 3D Pixar style, same character, no text.")
