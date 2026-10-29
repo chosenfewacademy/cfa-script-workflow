@@ -1058,6 +1058,24 @@ PLAN_MOTION = {"push_in": "zoom_in", "track": "pan", "hold": "static", "reveal":
 PLAN_TRANS = {"cut": ("cut", 0.0), "match": ("cut", 0.0), "jcut": ("cut", 0.0), "push_link": ("cut", 0.0), "reverse": ("cut", 0.0),
               "whip": ("whip", 0.18), "time_jump": ("dissolve", 0.30)}
 MUSIC_RESERVE_USD = 0.35   # held back from the total cap for music when sizing action i2v
+
+
+def music_reserve(b, a):
+    """Music money to hold back: none when the bundle carries music, scoring is off, or the episode score is cached."""
+    b = b or {}
+    style = (b.get("musicStyle") or getattr(a, "music_style", None) or "cinematic").lower()
+    if b.get("music") or style == "none" or getattr(a, "no_score", False):
+        return 0.0
+    try:
+        if music_cache_get(music_cache_key(b, style)):
+            return 0.0
+    except Exception:
+        pass
+    return MUSIC_RESERVE_USD
+
+
+class ActionShotDegraded(RuntimeError):
+    """A character-motion (action) shot would silently become a still. Fail loudly instead."""
 J_LEAD = 0.20          # J-cut: the next line's audio leads the picture cut by this much
 SIM_DHASH_MIN = 10     # similarity gate: consecutive shots closer than this (of 64 bits) ...
 SIM_SSIM_MAX = 0.72    # ... or more structurally similar than this read as a re-angle of the same frame
@@ -1623,6 +1641,7 @@ def clamp_music_chunks(chunks, lo=MUSIC_CHUNK_MS[0], hi=MUSIC_CHUNK_MS[1]):
 
 MUSIC_USD_PER_MIN = 0.65      # billed: fal elevenlabs/music/v2 ~$4.2 for 6.7 min (Oct 28), rounded up; EL direct similar
 MUSIC_CAP_DEFAULT = 1.00      # USD per job unless --music-cap; full episodes fall back to cache/library above this
+ALLOW_STILL_ACTION = os.environ.get("CFA_ALLOW_STILL_ACTION", "") == "1"
 MUSIC_CACHE = os.environ.get("CFA_MUSIC_CACHE") or os.path.expanduser("~/cfa-render-data/music_cache")
 
 
@@ -2236,22 +2255,31 @@ def main():
     i2v_info = {"mode": a.i2v, "clips": 0, "est_usd": 0.0}
     if PHRASE:
         mode = b.get("i2vModel") or (a.i2v if a.i2v != "off" else ("kling-ref" if isinstance(b.get("charRefs"), dict) and b.get("charRefs") else "hailuo"))
-        cap = max(0.0, (a.total_cap - getattr(a, "spent_usd", 0.0) - MUSIC_RESERVE_USD) if a.total_cap else a.i2v_cap)
+        reserve = music_reserve(b, a)
+        cap = max(0.0, (a.total_cap - getattr(a, "spent_usd", 0.0) - reserve) if a.total_cap else a.i2v_cap)
         acts, est = action_i2v_plan(shots, mode, cap)
         fk = env_key("FAL_KEY", a.keys_env)
         i2v_info.update(mode=mode, planned=len(acts), est_usd=est, cap_usd=round(cap, 2),
-                        skipped=[x.get("beats") for x in shots if x.get("i2v_skipped_cost")])
+                        skipped=[x.get("beats") for x in shots if x.get("i2v_skipped_cost")], music_reserve_usd=reserve)
+        need = [x for x in shots if x.get("i2v_skipped_cost")]
+        if need and not ALLOW_STILL_ACTION:
+            raise ActionShotDegraded("action shot(s) %s need $%.2f of motion but only $%.2f is left under the cap (music reserve $%.2f); "
+                                     "raise the cap or pass --allow-still-action. Nothing was billed for motion."
+                                     % ([x.get("beats") for x in need], sum(x["i2v_skipped_cost"] for x in need), cap, reserve))
         n = 0
         refs = b.get("charRefs") if isinstance(b.get("charRefs"), dict) else {}
         xk = os.environ.get("XAI_API_KEY") or env_key("XAI_API_KEY", a.keys_env)
         checks = []
+        if acts and not fk:
+            i2v_info["degraded"] = [x.get("beats") or x.get("media") for x in acts]
+            log("ACTION SHOT DEGRADED TO A STILL: no FAL key for", i2v_info["degraded"])
         for x in acts if fk else []:
             who = (x.get("one_char") or "the character").title()
             ref = refs.get(x.get("one_char") or "") or refs.get(who)
             src_img = os.path.join(d, x["media"])
             unit = i2v_cost(mode, x.get("duration"))
             for t in range(I2V_RETRY_CAP + 1):
-                if t and a.total_cap and getattr(a, "spent_usd", 0.0) + unit + MUSIC_RESERVE_USD > a.total_cap + 1e-9:
+                if t and a.total_cap and getattr(a, "spent_usd", 0.0) + unit + reserve > a.total_cap + 1e-9:
                     checks.append({"media": x["media"], "try": t, "stopped": "cap"}); break
                 try:
                     out_mp4 = os.path.join(work, "act_%d_%d.mp4" % (n, t))
@@ -2270,8 +2298,10 @@ def main():
                 log("i2v check", x["media"], "try", t, "ok" if ck["ok"] else ck["why"])
                 if ck["ok"]:
                     x["media"] = out_mp4; x["mediaType"] = "video"; n += 1; break
-            else:
-                x["i2v_rejected"] = True   # every try failed the frame check: keep the still (camera move) instead
+            if x.get("mediaType") != "video":
+                x["i2v_rejected"] = True   # every try failed the frame check, errored or hit the cap
+                i2v_info.setdefault("degraded", []).append(x.get("beats") or x.get("media"))
+                log("ACTION SHOT DEGRADED TO A STILL:", x.get("beats"), (x.get("line") or "")[:60])
         i2v_info["checks"] = checks
         i2v_info["ref"] = bool(refs)
         i2v_info["clips"] = n
@@ -2502,6 +2532,8 @@ def main():
         if not tg["pass"]:
             gate["fails"].append("on-screen text %s" % [x.get("text") for x in tg["fails"]][:5]); gate["pass"] = False
         log("text gate:", "PASS" if tg["pass"] else "FAIL", tg.get("items"))
+    if i2v_info.get("degraded"):
+        gate["fails"].append("action shot(s) %s became stills (no character motion)" % i2v_info["degraded"]); gate["pass"] = False
     log("motion gate:", "PASS" if gate["pass"] else "FAIL " + "; ".join(gate["fails"]))
     report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
