@@ -66,4 +66,15 @@ dm = np.tile(np.linspace(0, 1, 640, dtype=np.float32), (360, 1)); img = np.full(
 st = {}
 for _ in R.parallax_frames(img, dm, 320, 180, 24 * 6, "zoom_in", (0.5, 0.5), 1.0, 1, st, (True, True)): pass
 check("distortion guard keeps a long push-in inside the stretch gate", st["stretch"] <= R.GATE_STRETCH_MAX, st)
+# reference i2v: Jordan's sheet rides as an element, duration covers the shot, per-second cost
+pl = R.i2v_payload("kling-ref", "data:x", "acts", "https://ref/jordan.png", 4.2, "Jordan")
+check("kling-ref passes the reference sheet and the still as start frame", pl["elements"][0]["frontal_image_url"] == "https://ref/jordan.png" and pl["image_urls"] == ["data:x"] and "@Element1" in pl["prompt"] and "start frame" in pl["prompt"] and pl["duration"] == "5", pl)
+check("kling-ref cost is per second", abs(R.i2v_cost("kling-ref", 4.2) - 0.42) < 1e-9 and abs(R.i2v_cost("kling-ref", 2.5) - 0.252) < 1e-9 and R.i2v_cost("hailuo") == 0.27)
+pk2, est2 = R.action_i2v_plan([dict(acts[0], duration=3.0)], "kling-ref", 0.3)
+check("action plan uses the per-clip cost against the cap", len(pk2) == 1 and abs(est2 - 0.25) < 0.01, (pk2, est2))
+ok1 = R.i2v_frame_check("x.mp4", "k", "https://ref", 1, ask=lambda m: {"frames": [{"people": 1, "text": [], "quality": 9}] * 3, "same_character": 9})
+bad = R.i2v_frame_check("x.mp4", "k", "https://ref", 1, ask=lambda m: {"frames": [{"people": 2, "text": []}, {"people": 1, "text": ["Write it down"], "quality": 9}, {"people": 1, "quality": 4, "defects": ["melted hand"]}], "same_character": 3})
+check("i2v frame check passes a clean one-person clip", ok1["ok"], ok1)
+check("i2v frame check rejects a second person, on-screen text, distortion and face drift", not bad["ok"] and len(bad["why"]) == 4, bad)
+check("i2v prompt forbids text and keeps named others off-screen", "no text, captions" in pr and "off-screen" in pr, pr)
 print("%d failure(s)" % len(fails)); sys.exit(1 if fails else 0)

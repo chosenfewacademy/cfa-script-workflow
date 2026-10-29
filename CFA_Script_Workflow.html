@@ -5253,7 +5253,7 @@ async function buildFinalEditZip(say){
       script:finalScript||'',segmentedScript:segScript||'',voiceover:voName,srt:'beats.srt',
       duration:voWords.length?voWords[voWords.length-1][2]:null,words:voWords,segments:segs,
       voicePace:{pace:voPace,speed:VO_PACES[voPace].speed},
-      format_type:scriptFormat(), musicStyle:musicStyle(), shotPlan:phrasePlanOn()?'phrase':'beat',
+      format_type:scriptFormat(), musicStyle:musicStyle(), shotPlan:phrasePlanOn()?'phrase':'beat', charRefs:phrasePlanOn()?await i2vCharRefs():{},
       voiceLock:Object.fromEntries(Object.entries(voiceLock()).map(([k,v])=>[k,v.voiceId]))};
     files.unshift({name:'bundle.json',data:enc.encode(JSON.stringify(bundle,null,1))});
     files.push({name:'script.txt',data:enc.encode(finalScript||'')});
@@ -5954,6 +5954,8 @@ function planShots(){
   return sceneData.map(x=>[x.planMotion,x.planLink,x.planDir]);
 }
 // Check: every planned shot shows at most one character.
+// Reference sheets for the action clips (image-to-video keeps the face from the sheet).
+async function i2vCharRefs(){ const o={}; try{ o.JORDAN=await getCharacterUrl('Jordan',JORDAN_B64); o.MARCUS=await getCharacterUrl('Marcus',MARCUS_B64); }catch(e){} return o; }
 function oneCharViolations(limit){ const lim=limit==null?sceneData.length:limit, bad=[];
   for(let i=0;i<lim;i++){ const x=sceneData[i]; if(/^BOTH/.test(x.characters||'') || (x.oneChar && x.characters!==x.oneChar)) bad.push(i); } return bad; }
 function phrasePlanOn(){ return sceneData.some(x=>x.planMotion); }

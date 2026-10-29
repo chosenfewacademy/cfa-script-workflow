@@ -1112,11 +1112,12 @@ def action_i2v_plan(shots, mode, cap):
     """Phrase plan: only shots whose line is physical action get image-to-video, never over `cap`."""
     if mode not in I2V_MODELS:
         return [], 0.0
-    unit, pick, est, seen = I2V_MODELS[mode][1], [], 0.0, set()
+    pick, est, seen = [], 0.0, set()
     for x in shots:
         m = x.get("media")
         if x.get("plan_shot") != "action" or not x.get("one_char") or not m or (x.get("mediaType") or "image") != "image" or m in seen:
             continue
+        unit = i2v_cost(mode, x.get("duration"))
         if est + unit > (cap or 0) + 1e-9:
             x["i2v_skipped_cost"] = unit; continue
         seen.add(m); pick.append(x); est += unit
@@ -1125,8 +1126,9 @@ def action_i2v_plan(shots, mode, cap):
 
 def action_prompt(x):
     who = (x.get("one_char") or "the character").title()
-    return ("%s acts out this moment with clear, natural body movement: %s. Only %s in frame, no second person. "
-            "Mouth stays closed, no talking, same 3D Pixar style, same character as the image, steady camera, no text." % (who, (x.get("line") or "")[:220], who))
+    return ("%s acts out this moment with clear, natural body movement and an expression that fits it: %s. Only %s in frame, no second person "
+            "(anyone else named stays off-screen). Mouth stays closed, no talking, same 3D Pixar style, same character as the image, smooth steady camera, "
+            "crisp clean frames, no text, captions, signs or writing anywhere." % (who, (x.get("line") or "")[:220], who))
 
 
 def _dhash(g):
@@ -2190,20 +2192,45 @@ def main():
     shots = edl["shots"]
     i2v_info = {"mode": a.i2v, "clips": 0, "est_usd": 0.0}
     if PHRASE:
-        mode = b.get("i2vModel") or ("hailuo" if a.i2v == "off" else a.i2v)
+        mode = b.get("i2vModel") or (a.i2v if a.i2v != "off" else ("kling-ref" if isinstance(b.get("charRefs"), dict) and b.get("charRefs") else "hailuo"))
         cap = max(0.0, (a.total_cap - getattr(a, "spent_usd", 0.0) - MUSIC_RESERVE_USD) if a.total_cap else a.i2v_cap)
         acts, est = action_i2v_plan(shots, mode, cap)
         fk = env_key("FAL_KEY", a.keys_env)
         i2v_info.update(mode=mode, planned=len(acts), est_usd=est, cap_usd=round(cap, 2),
                         skipped=[x.get("beats") for x in shots if x.get("i2v_skipped_cost")])
         n = 0
+        refs = b.get("charRefs") if isinstance(b.get("charRefs"), dict) else {}
+        xk = os.environ.get("XAI_API_KEY") or env_key("XAI_API_KEY", a.keys_env)
+        checks = []
         for x in acts if fk else []:
-            try:
-                x["media"] = i2v_clip(os.path.join(d, x["media"]), mode, fk, os.path.join(work, "act_%d.mp4" % n), prompt=action_prompt(x))
-                x["mediaType"] = "video"; n += 1
-                a.spent_usd = getattr(a, "spent_usd", 0.0) + I2V_MODELS[mode][1]
-            except Exception as e:
-                i2v_info.setdefault("errors", []).append(str(e)[:120])
+            who = (x.get("one_char") or "the character").title()
+            ref = refs.get(x.get("one_char") or "") or refs.get(who)
+            src_img = os.path.join(d, x["media"])
+            unit = i2v_cost(mode, x.get("duration"))
+            for t in range(I2V_RETRY_CAP + 1):
+                if t and a.total_cap and getattr(a, "spent_usd", 0.0) + unit + MUSIC_RESERVE_USD > a.total_cap + 1e-9:
+                    checks.append({"media": x["media"], "try": t, "stopped": "cap"}); break
+                try:
+                    out_mp4 = os.path.join(work, "act_%d_%d.mp4" % (n, t))
+                    i2v_clip(src_img, mode, fk, out_mp4, prompt=action_prompt(x) + (" STRICT, previous try failed: %s." % "; ".join(checks[-1]["why"]) if t and checks and checks[-1].get("why") else ""),
+                             ref_url=ref, shot_s=x.get("duration"), who=who)
+                    a.spent_usd = getattr(a, "spent_usd", 0.0) + unit
+                except Exception as e:
+                    i2v_info.setdefault("errors", []).append(str(e)[:120]); break
+                ck = {"ok": True, "why": []}
+                if xk:
+                    try:
+                        ck = i2v_frame_check(out_mp4, xk, ref, 1, line=x.get("line") or "")
+                    except Exception as e:
+                        ck = {"ok": True, "why": [], "error": str(e)[:80]}
+                checks.append(dict(ck, media=x["media"], try_=t))
+                log("i2v check", x["media"], "try", t, "ok" if ck["ok"] else ck["why"])
+                if ck["ok"]:
+                    x["media"] = out_mp4; x["mediaType"] = "video"; n += 1; break
+            else:
+                x["i2v_rejected"] = True   # every try failed the frame check: keep the still (camera move) instead
+        i2v_info["checks"] = checks
+        i2v_info["ref"] = bool(refs)
         i2v_info["clips"] = n
     elif a.i2v != "off":
         pick, est = i2v_plan(shots, a.i2v, a.i2v_cap)
@@ -2496,7 +2523,77 @@ def motion_gate(path, maxsec=240, median_max=None):
 I2V_MODELS = {   # est. USD per clip (~5-6 s); estimates, check fal pricing before raising caps
     "wan": ("fal-ai/wan/v2.2-a14b/image-to-video", 0.40),
     "hailuo": ("fal-ai/minimax/hailuo-02/standard/image-to-video", 0.27),
+    # reference-conditioned: the character's sheet rides along as an element, so the face stays his (per-second price)
+    "kling-ref": ("fal-ai/kling-video/o1/standard/reference-to-video", 0.42),
 }
+I2V_PER_S = {"kling-ref": 0.084}
+I2V_RETRY_CAP = 2          # regenerations per action clip when the frame check fails (counted against the cap)
+
+
+def i2v_duration(mode, shot_s):
+    """Clip seconds requested: per-second models get the shortest length covering the shot (3-10 s)."""
+    if mode in I2V_PER_S:
+        import math
+        return int(min(10, max(3, math.ceil((shot_s or 4) - 0.05))))
+    return 6
+
+
+def i2v_cost(mode, shot_s=None):
+    if mode in I2V_PER_S:
+        return round(I2V_PER_S[mode] * i2v_duration(mode, shot_s), 3)
+    return I2V_MODELS[mode][1]
+
+
+I2V_CHECK_SYS = ("You audit frames from one animated clip. For EACH frame count distinct people (face, head or torso, even partly at the edge; "
+                 "hands alone do not count), transcribe any readable writing exactly (signs, labels, screens, paper), and score image quality 0-10 "
+                 "(10 crisp and clean; lower for warped or melted faces, broken hands or extra fingers, deformed bodies, melted objects, blur, smears, artifacts). "
+                 "Also say whether the person looks like the same character as the reference sheet (first image), score 0-10. "
+                 'JSON only: {"frames":[{"people":<int>,"text":["..."],"quality":<0-10>,"defects":["..."]}],"same_character":<0-10>}')
+
+
+def i2v_frame_check(mp4, key, sheet_url=None, expected=1, ask=None, line=""):
+    """People count / stray text / distortion / identity on 3 frames of an i2v clip. Returns {ok, why[], ...}.
+    `ask(messages)` can be injected for tests; otherwise one xAI vision call."""
+    import base64, tempfile
+    d = tempfile.mkdtemp()
+    dur = media_duration(mp4) if not ask else 3.0
+    imgs = []
+    for k, t in enumerate((0.15, dur * 0.5, max(0.2, dur - 0.25))):
+        p = os.path.join(d, "f%d.jpg" % k)
+        if not ask:
+            run(["ffmpeg", "-y", "-v", "error", "-ss", "%.2f" % t, "-i", mp4, "-frames:v", "1", "-vf", "scale=768:-2", p])
+            imgs.append("data:image/jpeg;base64," + base64.b64encode(open(p, "rb").read()).decode())
+        else:
+            imgs.append("frame%d" % k)
+    content = [{"type": "text", "text": "Reference sheet first, then 3 frames of the clip. The clip shows: " + (line or "")[:200]}]
+    if sheet_url:
+        content.append({"type": "image_url", "image_url": {"url": sheet_url}})
+    content += [{"type": "image_url", "image_url": {"url": u}} for u in imgs]
+    msgs = [{"role": "system", "content": I2V_CHECK_SYS}, {"role": "user", "content": content}]
+    if ask:
+        o = ask(msgs)
+    else:
+        body = json.dumps({"model": "grok-4.3", "response_format": {"type": "json_object"}, "max_tokens": 500, "messages": msgs}).encode()
+        req = urllib.request.Request(XAI_URL, data=body, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            txt = json.load(r)["choices"][0]["message"]["content"]
+        o = json.loads(re.sub(r"^```(?:json)?|```$", "", txt.strip()).strip())
+    fr = o.get("frames") or []
+    why = []
+    ppl = [int(f.get("people") or 0) for f in fr]
+    if any(p != expected for p in ppl):
+        why.append("people %s (want %d)" % (ppl, expected))
+    txt = [t for f in fr for t in (f.get("text") or []) if str(t).strip()]
+    if txt:
+        why.append("on-screen text %s" % txt[:3])
+    q = [float(f.get("quality") or 0) for f in fr]
+    if q and min(q) < 7:
+        why.append("distorted (quality %s: %s)" % (q, "; ".join(str(x) for f in fr for x in (f.get("defects") or []))[:120]))
+    same = o.get("same_character")
+    if sheet_url and same is not None and float(same) < 7:
+        why.append("face drift (same_character %s)" % same)
+    return {"ok": not why, "why": why, "people": ppl, "text": txt, "quality": q, "same_character": same}
+
 I2V_PROMPT = ("Subtle idle motion only: slow breathing, a blink, slight head and hand movement, gentle camera drift. "
               "Mouth stays closed, no talking, same 3D Pixar style, same character, no text.")
 
@@ -2518,12 +2615,24 @@ def i2v_plan(shots, mode, cap):
     return pick, round(est, 2)
 
 
-def i2v_clip(img_path, mode, key, out, fetch=None, prompt=None):
+def i2v_payload(mode, uri, prompt, ref_url=None, shot_s=None, who="the character"):
+    if mode == "kling-ref":
+        p = {"prompt": "Take @Image1 as the start frame. %s is @Element1: keep his face, hair, skin tone and outfit exactly as @Element1. %s"
+                       % (who, prompt or I2V_PROMPT),
+             "image_urls": [uri], "duration": str(i2v_duration(mode, shot_s)), "aspect_ratio": "16:9"}
+        if ref_url:
+            p["elements"] = [{"frontal_image_url": ref_url, "reference_image_urls": [uri]}]
+        return p
+    p = {"image_url": uri, "prompt": prompt or I2V_PROMPT}
+    return p
+
+
+def i2v_clip(img_path, mode, key, out, fetch=None, prompt=None, ref_url=None, shot_s=None, who="the character"):
     """One fal queue i2v job -> mp4 at `out`. `fetch(model, payload)` can be injected for tests."""
     import base64
     model, _ = I2V_MODELS[mode]
     uri = "data:image/png;base64," + base64.b64encode(open(img_path, "rb").read()).decode()
-    payload = {"image_url": uri, "prompt": prompt or I2V_PROMPT}
+    payload = i2v_payload(mode, uri, prompt, ref_url, shot_s, who)
     if fetch:
         data = fetch(model, payload)
     else:
