@@ -1131,6 +1131,20 @@ def one_character_gate(segs, limit_beats=None):
 EPISODE_MOTION_MODEL = os.environ.get("CFA_MOTION_MODEL", "hailuo")
 
 
+def line_key(x):
+    m = re.match(r"\s*(\d+)\.", str((x or {}).get("line") or ""))
+    return m.group(1) if m else None
+
+
+def same_line_media(shots, i):
+    """Nearest other shot of the same script line that has media (used to fill a gap instead of holding the neighbour)."""
+    k = line_key(shots[i])
+    if k is None:
+        return None
+    c = [x for j, x in sorted(enumerate(shots), key=lambda t: abs(t[0] - i)) if j != i and x.get("media") and line_key(x) == k]
+    return c[0] if c else None
+
+
 def episode_motion_model(b, a):
     m = (b or {}).get("i2vModel") or (a.i2v if getattr(a, "i2v", "off") != "off" else EPISODE_MOTION_MODEL)
     return m if m in I2V_MODELS else EPISODE_MOTION_MODEL
@@ -2349,8 +2363,15 @@ def main():
         if shot.get("media"):
             src, kind = os.path.join(d, shot["media"]), shot.get("mediaType") or "image"
             last_media = (src, kind)
-        elif last_media:  # hold the previous visual rather than going black
+        elif same_line_media(shots, i):  # a gap is filled from ITS OWN line (tighter crop), never by holding the neighbour's shot
+            sm = same_line_media(shots, i)
+            src, kind = os.path.join(d, sm["media"]), sm.get("mediaType") or "image"
+            shot["motion"] = "zoom_in"; shot["fallback_same_line"] = True
+            log("gap shot", i, "filled from its own line:", sm["media"])
+        elif last_media:  # last resort: hold the previous visual rather than going black (reported as a hole)
             src, kind = last_media
+            shot["held_neighbour"] = True
+            log("HOLE: shot", i, "holds the neighbouring shot (no image on its line)")
         else:  # nothing before it (missing opening scene): borrow the next available visual
             nx = next((x for x in shots[i + 1:] if x.get("media")), None)
             if nx:
