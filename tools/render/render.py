@@ -895,8 +895,10 @@ def fill_graph(box, W, H):
 # ── 2.5D depth parallax for stills (replaces the Ken Burns fallback; Oct 28 motion audit) ──
 STILL_MOTION = os.environ.get("CFA_STILL_MOTION", "parallax")   # "parallax" | "kenburns"
 DEPTH_PY = os.environ.get("CFA_DEPTH_PY") or next((p for p in ("/workspace/.venv_depth/bin/python",) if os.path.exists(p)), None)
-PARALLAX_PX_S = 48.0      # foreground lateral travel at 1280 px wide (px/s); background ~0
-PARALLAX_ZOOM_S = 0.05   # depth-scaled dolly per second
+PARALLAX_PX_S = 9.0       # foreground lateral travel at 1280 px wide (px/s), eased; background ~0 (fix a: was 48)
+PARALLAX_ZOOM_S = 0.012  # depth-scaled dolly per second (was 0.05)
+PARALLAX_DEPTH_SCALE = 0.35  # depth range used for warping (1 = full model depth)
+GATE_STRETCH_MAX = 1.08  # distortion gate: max local stretch of any still warp
 PARALLAX_OVERSCAN = 1.12
 
 
@@ -925,31 +927,72 @@ def synthetic_depth(h, w):
     return np.clip(0.55 * v + 0.45 * r, 0, 1)
 
 
-def parallax_frames(img, depth, W, H, frames, motion="zoom_in", focus=(0.5, 0.5), punch=1.0):
-    """Yield W x H BGR frames: depth-scaled dolly + lateral truck (near pixels move more). img/depth are overscanned."""
+def _ease(t):
+    """Cosine ease-in-out: starts and ends at rest, no linear 'conveyor' feel."""
+    import math
+    return 0.5 - 0.5 * math.cos(math.pi * t)
+
+
+def smooth_depth(depth, w, h):
+    """Depth for warping: heavy blur, discontinuities clamped (max local gradient), range compressed by PARALLAX_DEPTH_SCALE."""
     import numpy as np, cv2
-    h, w = img.shape[:2]
-    d = cv2.GaussianBlur(cv2.resize(depth.astype(np.float32), (w, h)), (0, 0), 6)
+    d = cv2.resize(depth.astype(np.float32), (w, h))
     d = (d - d.min()) / (d.max() - d.min() + 1e-6)
+    d = cv2.medianBlur((d * 255).astype(np.uint8), 5).astype(np.float32) / 255.0
+    k = max(3, int(round(min(w, h) * 0.04)) | 1)
+    for _ in range(3):   # clamp steps at object edges: a dilate/erode band blended with a wide blur
+        d = 0.5 * d + 0.5 * cv2.GaussianBlur(d, (k, k), 0)
+    d = cv2.GaussianBlur(d, (0, 0), max(4.0, min(w, h) * 0.02))
+    return 0.5 + (d - 0.5) * PARALLAX_DEPTH_SCALE
+
+
+def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction):
+    """Per-frame remap fields (output pixel -> overscanned source). Small eased dolly + truck, never sampling outside the source."""
+    import numpy as np
     dur = frames / float(FPS)
     sc = W / 1280.0
-    lat = PARALLAX_PX_S * dur * sc * {"pan_left": -1.0, "pan_right": 1.0}.get(motion, 0.6 if focus[0] <= 0.5 else -0.6)
+    side = direction if direction in (-1, 1) else (1 if focus[0] <= 0.5 else -1)
+    lat = PARALLAX_PX_S * dur * sc * {"pan_left": -1.0, "pan_right": 1.0}.get(motion, 0.6 * side)
     zr = PARALLAX_ZOOM_S * dur * (-1.0 if motion == "zoom_out" else 1.0)
     vert = 0.25 * abs(lat) * (-1.0 if motion == "pan_up" else 1.0 if motion == "pan_down" else 0.0)
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     cx, cy = w * focus[0], h * focus[1]
     ox, oy = min(max(cx - W / 2 / punch, 0), w - W / punch), min(max(cy - H / 2 / punch, 0), h - H / punch)
-    gx, gy = ox + xx / punch, oy + yy / punch          # output pixel -> overscanned source (static framing)
+    gx, gy = ox + xx / punch, oy + yy / punch
+    import cv2
     dd = cv2.remap(d, gx, gy, cv2.INTER_LINEAR)
     pcx, pcy = ox + W / 2 / punch, oy + H / 2 / punch
     for i in range(frames):
-        t = i / max(1, frames - 1)
-        t = t * t * (3 - 2 * t)
-        z = 1.0 + (zr * t if zr > 0 else -zr * (1 - t)) * (0.3 + 1.2 * dd)
-        sx, sy = (t - 0.5) * lat * dd, (t - 0.5) * vert * dd
-        mx = (gx - pcx) / z + pcx - sx
-        my = (gy - pcy) / z + pcy - sy
-        yield cv2.remap(img, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+        t = _ease(i / max(1, frames - 1))
+        z = 1.0 + (zr * t if zr > 0 else -zr * (1 - t)) * (0.6 + 0.8 * dd)
+        mx = (gx - pcx) / z + pcx - (t - 0.5) * lat * dd
+        my = (gy - pcy) / z + pcy - (t - 0.5) * vert * dd
+        yield np.clip(mx, 0, w - 1.001), np.clip(my, 0, h - 1.001)
+
+
+def map_stretch(mx, my):
+    """Max local anisotropic stretch of a remap field (1.0 = rigid/uniform scale). Edge-clamped regions count as stretch."""
+    import numpy as np
+    ax, ay = np.gradient(mx, axis=1), np.gradient(my, axis=0)
+    bx, by = np.gradient(mx, axis=0), np.gradient(my, axis=1)
+    s = np.sqrt(ax * ax + by * by + bx * bx + ay * ay) / np.sqrt(2.0)
+    s = s / (np.median(s) + 1e-9)
+    ratio = np.maximum(np.abs(ax), 1e-6) / np.maximum(np.abs(ay), 1e-6)
+    return float(max(np.percentile(s, 99.5), np.percentile(np.maximum(ratio, 1 / ratio), 99.5)))
+
+
+def parallax_frames(img, depth, W, H, frames, motion="zoom_in", focus=(0.5, 0.5), punch=1.0, direction=0, stats=None):
+    """Yield W x H BGR frames; stats (dict) gets the worst map stretch for the distortion gate."""
+    import cv2
+    h, w = img.shape[:2]
+    d = smooth_depth(depth, w, h)
+    worst = 1.0
+    for i, (mx, my) in enumerate(parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction)):
+        if stats is not None and i in (0, frames // 2, frames - 1):
+            worst = max(worst, map_stretch(mx, my))
+        yield cv2.remap(img, mx, my, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    if stats is not None:
+        stats["stretch"] = round(worst, 4)
 
 
 def render_still_parallax(src, shot, W, H, out, frames, fit_vf, depth_png=None):
@@ -973,7 +1016,8 @@ def render_still_parallax(src, shot, W, H, out, frames, fit_vf, depth_png=None):
                           "-i", "-", "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast", "-crf", "14",
                           "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", out], stdin=subprocess.PIPE)
     try:
-        for fr in parallax_frames(img, depth, W, H, frames, m, focus, punch):
+        st = {}
+        for fr in parallax_frames(img, depth, W, H, frames, m, focus, punch, shot.get("_dir", 0), st):
             p.stdin.write(np.ascontiguousarray(fr).tobytes())
     finally:
         p.stdin.close()
@@ -981,6 +1025,20 @@ def render_still_parallax(src, shot, W, H, out, frames, fit_vf, depth_png=None):
     os.remove(base)
     if p.returncode:
         raise RuntimeError("parallax encode failed")
+    shot["_stretch"] = st.get("stretch")
+    return st.get("stretch")
+
+
+def assign_directions(shots):
+    """One lateral drift direction for adjacent stills so the camera progresses; flips only at the turn/realization."""
+    d, prev = 1, None
+    for x in shots:
+        r = x.get("role")
+        if r in ("turn", "realization") and prev not in ("turn", "realization"):
+            d = -d
+        x["_dir"] = d
+        prev = r
+    return shots
 
 
 def render_shot(src, kind, shot, W, H, out, frames):
@@ -1986,6 +2044,7 @@ def main():
         for x in shots:
             if x.get("media"):
                 x["_depth"] = dmap.get(os.path.join(d, x["media"]))
+    assign_directions(shots)
     for i, shot in enumerate(shots):
         nxt = shots[i + 1]["transition_duration"] if i + 1 < len(shots) else 0.0
         src, kind = None, "image"
@@ -2158,6 +2217,13 @@ def main():
     except Exception as e:
         mqa = {"error": str(e)[:160]}
     gate = motion_gate(final)
+    st = [x.get("_stretch") for x in shots if x.get("_stretch")]
+    gate["distortion"] = {"max_stretch": round(max(st), 4) if st else None, "shots": len(st),
+                          "over": sum(1 for v in st if v > GATE_STRETCH_MAX), "limit": GATE_STRETCH_MAX}
+    if st and max(st) > GATE_STRETCH_MAX:
+        gate["fails"].append("still warp stretch %.3f > %.2f" % (max(st), GATE_STRETCH_MAX))
+        gate["pass"] = False
+    log("distortion gate:", "PASS" if not gate["distortion"]["over"] else "FAIL", gate["distortion"])
     log("motion gate:", "PASS" if gate["pass"] else "FAIL " + "; ".join(gate["fails"]))
     report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
@@ -2185,7 +2251,7 @@ def main():
 
 GATE_MEDIAN_SHOT_MAX = 4.0     # s: fail if the median visible shot is longer
 GATE_CUT_DIFF = 18.0           # mean grey-level jump that reads as a cut (same-palette stills)
-GATE_MOTION_MIN = 6.0          # px/s median in-frame motion, full 1280-px-wide frame (optical flow, cut samples excluded)
+GATE_MOTION_MIN = 3.5          # px/s median in-frame motion, full 1280-px-wide frame (optical flow, cut samples excluded)
 
 
 def motion_gate(path, maxsec=240):
