@@ -1330,6 +1330,11 @@ async def main():
             check('quality gate: distorted frame (warped hands) fails, crisp frame passes', not r5['q1']['quality_ok'] and not r5['q1']['ok'] and r5['q2']['ok'], [r5['q1'],r5['q2']])
             check('text: in-scene writing allowed only when needed, minimal and correctly spelled (garbled fails)', r5['g']==[False,True,False,True], r5['g'])
             check('still cap: a still longer than 4.5s is flagged', r5['lv']==[[1,6.2]], r5['lv'])
+            r6=await J(pg,"""()=>{sceneData.length=0;
+              ['1. JORDAN: Hang on. I screenshot them, pay Dee, and write the paper after.','2. NARRATOR: Dee counted the cash twice.','3. NARRATOR: The money had to reach Dee by five.'].forEach((l,i)=>sceneData.push({line:l,tag:'IMAGE',characters:i?'NONE':'JORDAN',prompt:'p'}));
+              planShots(); return {off:sceneData.map(offscreenCast), cast:sceneData.map(castInScene), exp:sceneData.map(expectedPeople), note:phraseShotNote(0), ids:sceneIdentityRefs(sceneData[0]).map(x=>x.name)}}""")
+            check('off-screen: a named person who is not the focus stays out of frame (prompt, refs, identity check)', r6['off'][0]==['Dee'] and r6['cast'][0]==[] and 'Dee is only mentioned and stays OFF-SCREEN' in r6['note'] and r6['ids']==['Jordan'], r6)
+            check('off-screen: the named focus of a shot is on screen and counted', r6['cast'][1]==['Dee'] and r6['exp'][1]==1 and r6['off'][2]==['Dee'] and r6['exp'][2]==0, r6)
             r3=await J(pg,"()=>{sceneData[2].characters='BOTH'; return oneCharViolations();}")
             check('phrase: one-character check flags a two-person shot', r3==[2], r3)
             check('phrase: no page errors', not [e for e in errs if 'pageerror' in e], errs)

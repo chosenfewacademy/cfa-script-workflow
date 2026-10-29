@@ -5963,7 +5963,7 @@ function phraseShotNote(i){
   const pv=i?sceneData[i-1]:null, nw=pv?psNew(splitTag(pv.line).text,splitTag(s.line).text):[];
   return '\n[NEW SHOT: show the new visual information in this line'+(nw.length?' ('+nw.slice(0,6).join(', ')+')':'')+' as its own subject and composition'+
     (pv&&(pv.sceneDesc||pv.prompt)?'. It must NOT be a re-angle or re-crop of the previous shot ('+String(pv.sceneDesc||pv.prompt).slice(0,160)+')':'')+
-    (s.distinctNote?'. '+s.distinctNote:'')+(s.oneChar?'. ONE CHARACTER ONLY: show '+s.oneChar[0]+s.oneChar.slice(1).toLowerCase()+' alone in frame (no second person, not even partly visible)':'')+'. '+emotionNote(s)+(s.planShot==='action'?'. Pose them mid-action, clearly doing what the line describes':'')+(beatNeedsText(s)?'. Writing only if the line needs it: at most one or two short words, large, clear and correctly spelled':'. No written words, signs or labels anywhere')+'. Crisp and clean: correct anatomy and hands, no distortion. Keep the character exactly as in the reference sheet (same face, hair, skin tone, outfit), mouth closed.]';
+    (s.distinctNote?'. '+s.distinctNote:'')+(s.oneChar?'. ONE CHARACTER ONLY: show '+s.oneChar[0]+s.oneChar.slice(1).toLowerCase()+' alone in frame (no second person, not even partly visible)':'')+(offscreenCast(s).length?'. '+offscreenCast(s).join(' and ')+(offscreenCast(s).length>1?' are':' is')+' only mentioned and stays OFF-SCREEN: do not show '+offscreenCast(s).join(' or ')+', not even a hand, shoulder or silhouette':'')+'. '+emotionNote(s)+(s.planShot==='action'?'. Pose them mid-action, clearly doing what the line describes':'')+(beatNeedsText(s)?'. Writing only if the line needs it: at most one or two short words, large, clear and correctly spelled':'. No written words, signs or labels anywhere')+'. Crisp and clean: correct anatomy and hands, no distortion. Keep the character exactly as in the reference sheet (same face, hair, skin tone, outfit), mouth closed.]';
 }
 // Similarity check on generated images (8x8 difference hash); consecutive pairs below the threshold are re-angles.
 const PS_SIM_MIN=10;
@@ -7096,7 +7096,7 @@ async function visionPeopleCount(url, ctx){
   const t=(d.choices?.[0]?.message?.content||''); const o=JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1));
   return {people:Math.max(0,parseInt(o.people,10)||0), who:(o.who||[]).map(String), background:String(o.background||''), text:(Array.isArray(o.text)?o.text:[]).filter(Boolean).map(String), line_match:o.line_match==null?null:Number(o.line_match), missing:(Array.isArray(o.missing)?o.missing:[]).map(String), emotion_match:o.emotion_match==null?null:Number(o.emotion_match), garbled:o.garbled_text===true, quality:o.quality==null?null:Number(o.quality), defects:(Array.isArray(o.defects)?o.defects:[]).map(String)};
 }
-function expectedPeople(s){ return s&&s.oneChar?1:0; }
+function expectedPeople(s){ return s&&(s.oneChar||castFocus(s))?1:0; }
 const BG_WORDS_MIN=0.5;   // narrator stills: share of background words in common that counts as the same background
 function bgSame(a,b){ const w=x=>new Set(String(x||'').toLowerCase().match(/[a-z]{3,}/g)||[]); const A=w(a),B=w(b); if(!A.size||!B.size) return false; let n=0; A.forEach(x=>B.has(x)&&n++); return n/Math.min(A.size,B.size)>=BG_WORDS_MIN; }
 // Previous narrator still (no character) in the window, for the background-repeat check.
@@ -7253,7 +7253,12 @@ async function ensureCastRefs(names){
     if(RECURRING_CAST[n]?.b64) castRefReady[n]=await getCharacterUrl('cast_'+n, RECURRING_CAST[n].b64);
   }
 }
-function castInScene(s){ const t=String(s?.line||''); return Object.keys(RECURRING_CAST).filter(n=>RECURRING_CAST[n].re.test(t)); }
+function castNamed(s){ const t=String(s?.line||''); return Object.keys(RECURRING_CAST).filter(n=>RECURRING_CAST[n].re.test(t)); }
+// Phrase plan: a named regular is on screen only when they are the shot's focus (named in the first words of a no-lead shot).
+function castFocus(s){ if(!s||s.oneChar) return null; const t=splitTag(String(s.line||'')).text.split(/\s+/).slice(0,4).join(' ');
+  return castNamed(s).find(n=>RECURRING_CAST[n].re.test(t))||null; }
+function offscreenCast(s){ if(!s||!s.planMotion) return []; const f=castFocus(s); return castNamed(s).filter(n=>n!==f); }
+function castInScene(s){ const off=offscreenCast(s); return castNamed(s).filter(n=>!off.includes(n)); }
 // CHARACTER LOCK (Oct 28 audit: Jordan drifted into a different man, a duplicate, glasses and a toddler; Marcus's
 // beard/glasses morphed; Dee's hair ballooned). Every image and clip prompt names each character's fixed attributes and
 // what they must never have, and asks for each named character exactly once. The vision check enforces the same list.
