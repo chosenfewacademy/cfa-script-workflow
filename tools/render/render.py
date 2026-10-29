@@ -2291,7 +2291,7 @@ def main():
                 ck = {"ok": True, "why": []}
                 if xk:
                     try:
-                        ck = i2v_frame_check(out_mp4, xk, ref, 1, line=x.get("line") or "")
+                        ck = i2v_frame_check(out_mp4, xk, ref, 1, line=x.get("line") or "", prior=src_img)
                     except Exception as e:
                         ck = {"ok": True, "why": [], "error": str(e)[:80]}
                 checks.append(dict(ck, media=x["media"], try_=t))
@@ -2632,10 +2632,15 @@ I2V_CHECK_SYS = ("You audit frames from one animated clip. For EACH frame count 
                  "hands alone do not count), transcribe any readable writing exactly (signs, labels, screens, paper), and score image quality 0-10 "
                  "(10 crisp and clean; lower for warped or melted faces, broken hands or extra fingers, deformed bodies, melted objects, blur, smears, artifacts). "
                  "Also say whether the person looks like the same character as the reference sheet (first image), score 0-10. "
-                 'JSON only: {"frames":[{"people":<int>,"text":["..."],"quality":<0-10>,"defects":["..."]}],"same_character":<0-10>}')
+                 "Judge strictly against the sheet: hair_match (same cut, colour, volume), face_match (same face shape, eyes, nose, skin tone), "
+                 "mouth_open (true if in ANY frame the mouth is open or teeth show; the series keeps mouths closed), render_match (same rendering look as the sheet "
+                 "AND as the source still if given: shading, materials, detail, proportions; false if the clip turns more realistic, flatter or a different style). "
+                 "Props: phones (max phones visible in any frame), max_hands_per_person, duplicate_objects (an object shown twice), illogical (floating or impossible props). "
+                 'JSON only: {"frames":[{"people":<int>,"text":["..."],"quality":<0-10>,"defects":["..."]}],"same_character":<0-10>,"hair_match":bool,"face_match":bool,'
+                 '"mouth_open":bool,"render_match":bool,"phones":<int>,"max_hands_per_person":<int>,"duplicate_objects":["..."],"illogical":["..."]}')
 
 
-def i2v_frame_check(mp4, key, sheet_url=None, expected=1, ask=None, line=""):
+def i2v_frame_check(mp4, key, sheet_url=None, expected=1, ask=None, line="", prior=None):
     """People count / stray text / distortion / identity on 3 frames of an i2v clip. Returns {ok, why[], ...}.
     `ask(messages)` can be injected for tests; otherwise one xAI vision call."""
     import base64, tempfile
@@ -2652,6 +2657,9 @@ def i2v_frame_check(mp4, key, sheet_url=None, expected=1, ask=None, line=""):
     content = [{"type": "text", "text": "Reference sheet first, then 3 frames of the clip. The clip shows: " + (line or "")[:200]}]
     if sheet_url:
         content.append({"type": "image_url", "image_url": {"url": sheet_url}})
+    if prior:   # the source still: the clip must keep its exact look
+        pu = prior if (ask or str(prior).startswith(("http", "data:"))) else "data:image/%s;base64,%s" % ("png" if prior.lower().endswith("png") else "jpeg", base64.b64encode(open(prior, "rb").read()).decode())
+        content += [{"type": "text", "text": "Source still the clip was made from:"}, {"type": "image_url", "image_url": {"url": pu}}, {"type": "text", "text": "Clip frames:"}]
     content += [{"type": "image_url", "image_url": {"url": u}} for u in imgs]
     msgs = [{"role": "system", "content": I2V_CHECK_SYS}, {"role": "user", "content": content}]
     if ask:
@@ -2676,6 +2684,17 @@ def i2v_frame_check(mp4, key, sheet_url=None, expected=1, ask=None, line=""):
     same = o.get("same_character")
     if sheet_url and same is not None and float(same) < 7:
         why.append("face drift (same_character %s)" % same)
+    for k, bad, msg in (("hair_match", False, "hair differs from the sheet"), ("face_match", False, "face differs from the sheet"),
+                        ("mouth_open", True, "mouth opens / teeth show"), ("render_match", False, "render look changed from the stills")):
+        if o.get(k) is bad:
+            why.append(msg)
+    props = [str(v) for v in (o.get("duplicate_objects") or []) + (o.get("illogical") or []) if str(v).strip()]
+    if int(o.get("phones") or 0) > max(1, expected):
+        props.append("%s phones" % o.get("phones"))
+    if int(o.get("max_hands_per_person") or 0) > 2:
+        props.append("%s hands on one person" % o.get("max_hands_per_person"))
+    if props:
+        why.append("props: " + "; ".join(props[:3]))
     return {"ok": not why, "why": why, "people": ppl, "text": txt, "quality": q, "same_character": same}
 
 I2V_PROMPT = ("Subtle idle motion only: slow breathing, a blink, slight head and hand movement, gentle camera drift. "
