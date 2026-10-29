@@ -73,11 +73,11 @@ def public(j):
 
 
 def test_params(qs):
-    """Test-clip mode from the query string: test_s clamped to 30-45 s, cap clamped to $0-10."""
+    """Test-clip mode from the query string: test_s clamped to 15-30 s, cap clamped to $0-10."""
     out = {}
     try:
         v = float((qs.get("test_s") or [""])[0])
-        out["test_s"] = min(45.0, max(30.0, v))
+        out["test_s"] = min(30.0, max(15.0, v))
     except ValueError:
         pass
     try:

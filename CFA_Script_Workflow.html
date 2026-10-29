@@ -1979,7 +1979,7 @@ select option{background:var(--surface2)}
     </div>
     <div class="complete-actions" style="margin-top:-4px">
       <button class="btn bprim" onclick="sendToGrokRender()" id="btn-send-grok" style="font-size:13px;padding:11px 22px;background:linear-gradient(135deg,#7c3aed,#2563eb)" title="Upload every scene, the voiceover and the timings to Grok Bot, which plans the edit and renders the finished MP4 for review here">&#x1F680; Send to Grok for final edit</button>
-      <label style="font-size:12px;display:flex;align-items:center;gap:6px" title="Render only the first ~30-45 s of beats under a hard billed cap (music included)"><input type="checkbox" id="tc-on" onchange="setTestClip(this.checked)"> 🧪 Test clip (40 s, $6 cap)</label>
+      <label style="font-size:12px;display:flex;align-items:center;gap:6px" title="Render only the first ~15-30 s of beats under a hard billed cap (music included)"><input type="checkbox" id="tc-on" onchange="setTestClip(this.checked)"> 🧪 Test clip (25 s, $3 cap)</label>
       <span id="tc-status" style="font-size:11px;color:var(--muted)"></span>
       <label style="font-size:12px;display:flex;align-items:center;gap:6px">Format
         <select id="rs-aspect" class="inp" style="width:auto;padding:6px 8px"><option value="landscape">16:9 (YouTube)</option><option value="vertical">9:16 vertical (Shorts / Reels)</option></select></label>
@@ -3823,8 +3823,8 @@ function keyBeats(data){ const n=(data||[]).length; if(!n) return new Set();
   return new Set([0, Math.max(0,tp-1), tp, n-1]); }
 function beatSecs(x){ return Math.max(2,beatLen(x)||wordCount(splitTag(x.line).text)/2.4); }
 function motionCostEstimate(mode){
-  let usd=0, clips=0, stills=0; const KB=keyBeats(sceneData);
-  for(const x of sceneData){
+  let usd=0, clips=0, stills=0; const KB=keyBeats(sceneData), lim=testClipLimit();
+  for(const x of sceneData.slice(0,lim)){ // test-clip mode: only the beats that will be generated
     if(x.tag==='TALK'){ usd+=0.04+beatSecs(x)*TALK_COST_PER_S; continue; }
     const vid=mode==='full'?true:mode==='keybeat'?KB.has(sceneData.indexOf(x)):(x.origTag||x.tag)==='VIDEO';
     if(vid){ clips++; usd+=0.04+MODEL_COSTS.video['kling-o1v']*Math.max(3,Math.min(10,Math.round(beatSecs(x)))); }
@@ -4522,15 +4522,16 @@ function renderBudgetUI(){
 // Pre-flight before an expensive step. est in $ (or chars for ElevenLabs live). Only warns when a balance is known.
 
 // ── Test-clip mode (fix 6): generate/render only the first ~30-45 s of beats under a hard billed cap (music included) ──
-const TEST_CLIP_MUSIC_RESERVE=0.45; // renderer score for <=45 s at $0.65/min, rounded up
-function testClipCfg(){ const c=budgetLoad('cfa_test_clip',{on:false,sec:40,cap:6,base:0}); c.sec=Math.min(45,Math.max(30,+c.sec||40)); c.cap=Math.min(10,Math.max(0.5,+c.cap||6)); return c; }
+const TEST_CLIP_MUSIC_RESERVE=0.35; // renderer score for <=30 s at $0.65/min, rounded up
+const TEST_CLIP_MIN_S=15, TEST_CLIP_MAX_S=30, TEST_CLIP_DEFAULT_S=25, TEST_CLIP_DEFAULT_CAP=3;
+function testClipCfg(){ const c=budgetLoad('cfa_test_clip',{on:false,sec:TEST_CLIP_DEFAULT_S,cap:TEST_CLIP_DEFAULT_CAP,base:0}); c.sec=Math.min(TEST_CLIP_MAX_S,Math.max(TEST_CLIP_MIN_S,+c.sec||TEST_CLIP_DEFAULT_S)); c.cap=Math.min(10,Math.max(0.5,+c.cap||TEST_CLIP_DEFAULT_CAP)); return c; }
 function testClipOn(){ return !!testClipCfg().on; }
 function totalSpendNow(){ return (+sessionSpend||0)+(+voiceSpend||0)+(+textSpend||0); }
 function setTestClip(on,sec,cap){ const c=testClipCfg(); c.on=!!on; if(sec!=null) c.sec=+sec; if(cap!=null) c.cap=+cap; if(on && !testClipCfg().on) c.base=totalSpendNow(); safeSetItem('cfa_test_clip',JSON.stringify(c)); try{ renderTestClipUI(); updateBatchButton(); }catch(e){} return testClipCfg(); }
 function testClipSpent(){ const c=testClipCfg(); return Math.max(0, totalSpendNow()-(c.base||0)); }
-function beatSecs(x){ const L=beatLen(x); if(L>0) return L; const w=String(splitTag(x.line||'').text||x.line||'').split(/\s+/).filter(Boolean).length; return Math.max(1.5,w/2.6); }
+function tcBeatSecs(x){ const L=beatLen(x); if(L>0) return L; const w=String(splitTag(x.line||'').text||x.line||'').split(/\s+/).filter(Boolean).length; return Math.max(1.5,w/2.6); }
 // Index limit: beats 0..n-1 whose cumulative length stays within the test seconds (always >= 1 beat).
-function testClipLimit(){ if(!testClipOn()||!sceneData.length) return sceneData.length; const sec=testClipCfg().sec; let t=0,n=0; for(const x of sceneData){ t+=beatSecs(x); if(n && t>sec) break; n++; } return n; }
+function testClipLimit(){ if(!testClipOn()||!sceneData.length) return sceneData.length; const sec=testClipCfg().sec; let t=0,n=0; for(const x of sceneData){ t+=tcBeatSecs(x); if(n && t>sec) break; n++; } return n; }
 function inTestClip(i){ return i<testClipLimit(); }
 // Hard cap: refuses (no "try anyway") any call that would push spend + the renderer music reserve over the cap.
 function testClipGuard(est,what){ if(!testClipOn()) return true; const c=testClipCfg(), e=typeof est==='object'?(est.usd||0):(+est||0), after=testClipSpent()+e+TEST_CLIP_MUSIC_RESERVE;
