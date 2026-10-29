@@ -1298,7 +1298,7 @@ def edge_gate(path, every=0.5):
         f = np.frombuffer(raw[i * W * H:(i + 1) * W * H], dtype=np.uint8).reshape(H, W).astype(np.float32)
         for side, (dark, blur, r) in edge_band_stats(f).items():
             if side in ("left", "right") and (dark or blur):
-                bad.append({"t": round(i * every, 2), "side": side, "dark": dark, "blurry": blur, "detail": r})
+                bad.append({"t": round(i * every, 2), "side": side, "dark": bool(dark), "blurry": bool(blur), "detail": float(r)})
     return {"pass": not bad, "frames": n, "n_bad": len(bad), "bad": bad[:20]}
 
 
