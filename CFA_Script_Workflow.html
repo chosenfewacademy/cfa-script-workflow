@@ -4541,6 +4541,8 @@ function testClipPickAction(){ const sec=testClipCfg().sec;
   while(f>0 && t+tcBeatSecs(sceneData[f-1])<=sec){ f--; t+=tcBeatSecs(sceneData[f]); }
   setTestClip(true,null,null,f); return f; }
 function inTestClip(i){ return i>=testClipFrom() && i<testClipLimit(); }
+// Bundle scope for beat i: before the window -> skip, past it -> stop.
+function tcScope(i){ return i>=testClipLimit()?'stop':i<testClipFrom()?'skip':'in'; }
 // Hard cap: refuses (no "try anyway") any call that would push spend + the renderer music reserve over the cap.
 function testClipGuard(est,what){ if(!testClipOn()) return true; const c=testClipCfg(), e=typeof est==='object'?(est.usd||0):(+est||0), after=testClipSpent()+e+TEST_CLIP_MUSIC_RESERVE;
   if(after>c.cap+1e-9){ alert('🧪 Test-clip cap: '+what+' would bring billed spend to ≈ $'+after.toFixed(2)+' (incl. $'+TEST_CLIP_MUSIC_RESERVE.toFixed(2)+' music reserve), over the $'+c.cap.toFixed(2)+' cap. Stopped.'); return false; } return true; }
@@ -5221,7 +5223,7 @@ async function buildFinalEditZip(say){
     const lines=sceneData.map(x=>x.line);
     const times=lineTimes()||(voWords.length?computeBeatTimes(lines,voWords):[]);
     for(let i=0;i<sceneData.length;i++){
-      if(!inTestClip(i)) break;
+      const sc=tcScope(i); if(sc==='stop') break; if(sc==='skip') continue;
       const s=sceneData[i], n=String(i+1).padStart(3,'0');
       say('Fetching scene '+(i+1)+' of '+sceneData.length+'…');
       let media=null, kind='';
