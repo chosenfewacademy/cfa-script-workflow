@@ -878,7 +878,7 @@ def detect_bars(src, kind):
         dims = re.search(r"Stream.*Video.* (\d{2,5})x(\d{2,5})", err)
         if m and dims:
             w, h, x, y = map(int, m[-1]); iw, ih = int(dims.group(1)), int(dims.group(2))
-            if w >= iw * 0.3 and h >= ih * 0.3 and (w < iw * 0.93 or h < ih * 0.93):
+            if w >= iw * 0.3 and h >= ih * 0.3 and (w < iw * 0.93 or h < ih * 0.93) and bars_are_flat(src, kind, (w, h, x, y), iw, ih):
                 box = (w, h, x, y)
     except Exception:
         box = None
@@ -886,11 +886,27 @@ def detect_bars(src, kind):
     return box
 
 
+def bars_are_flat(src, kind, box, iw, ih):
+    """Real letterbox/pillar bars are flat near-black strips. A dark scene edge (shadowed wall, wheel) is not:
+    cropping it away upscaled the art ~1.5x and pillar-filled it with blur (v6 shots 2-4)."""
+    try:
+        import numpy as np
+        from PIL import Image
+        if kind in ("video", "lipsync"):
+            return True   # cropdetect on video frames already uses several frames
+        a = np.asarray(Image.open(src).convert("L"), dtype=np.float32)
+        w, h, x, y = box
+        strips = [a[:, :x], a[:, x + w:], a[:y, :], a[y + h:, :]]
+        strips = [t for t in strips if t.size > 0]
+        return bool(strips) and all(float(t.mean()) < 12 and float(t.std()) < 6 for t in strips)
+    except Exception:
+        return False
+
+
 def fill_graph(box, W, H):
     """-vf prefix: crop away baked-in bars and place the art over a blurred fill of itself at the canvas size."""
     w, h, x, y = box
-    return ("crop=%d:%d:%d:%d,split[a][b];[a]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,boxblur=20:2,eq=brightness=-0.08[bg];"
-            "[b]scale=%d:%d:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1" % (w, h, x, y, W, H, W, H, W, H))
+    return ("crop=%d:%d:%d:%d,scale=%d:%d:force_original_aspect_ratio=increase:flags=lanczos,crop=%d:%d,setsar=1" % (w, h, x, y, W, H, W, H))
 
 
 # ── 2.5D depth parallax for stills (replaces the Ken Burns fallback; Oct 28 motion audit) ──
@@ -1188,6 +1204,42 @@ def _ssim(a, b):
     s2 = cv2.GaussianBlur(b * b, (7, 7), 1.5) - mu2 ** 2
     s12 = cv2.GaussianBlur(a * b, (7, 7), 1.5) - mu1 * mu2
     return float((((2 * mu1 * mu2 + C1) * (2 * s12 + C2)) / ((mu1 ** 2 + mu2 ** 2 + C1) * (s1 + s2 + C2))).mean())
+
+
+EDGE_FRAC = 0.04          # edge band width checked on each side
+EDGE_DARK_Y = 14.0        # band mean luma below this (while the interior is brighter) = black bar
+EDGE_SHARP_MIN = 0.2      # band Laplacian energy / interior energy below this = blurred band (v6 blurred fill 0.05-0.14; real art >= 0.5)
+
+
+def edge_band_stats(frame):
+    """(dark, blurry, detail) for the left/right/top/bottom bands of one grey frame (numpy float)."""
+    import numpy as np
+    H, W = frame.shape
+    b = max(4, int(W * EDGE_FRAC)); bh = max(4, int(H * EDGE_FRAC))
+    lap = np.abs(frame[1:-1, 1:-1] * 4 - frame[:-2, 1:-1] - frame[2:, 1:-1] - frame[1:-1, :-2] - frame[1:-1, 2:])
+    inner = float(lap[bh:-bh, b:-b].mean()) + 1e-6
+    ymid = float(frame[bh:-bh, b:-b].mean())
+    out = {}
+    for k, band, lb in (("left", frame[:, :b], lap[:, :b]), ("right", frame[:, -b:], lap[:, -b:]),
+                        ("top", frame[:bh, :], lap[:bh, :]), ("bottom", frame[-bh:, :], lap[-bh:, :])):
+        out[k] = (float(band.mean()) < EDGE_DARK_Y and ymid > EDGE_DARK_Y * 2.5, float(lb.mean()) / inner < EDGE_SHARP_MIN, round(float(lb.mean()) / inner, 3))
+    return out
+
+
+def edge_gate(path, every=0.5):
+    """Zero black or blurred edge bands: samples a frame every `every` s. Fails on any dark or blurry side band."""
+    import numpy as np
+    W, H = 480, 270
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-vf", "fps=%g,scale=%d:%d,format=gray" % (1.0 / every, W, H), "-f", "rawvideo", "-"],
+                         capture_output=True).stdout
+    n = len(raw) // (W * H)
+    bad = []
+    for i in range(n):
+        f = np.frombuffer(raw[i * W * H:(i + 1) * W * H], dtype=np.uint8).reshape(H, W).astype(np.float32)
+        for side, (dark, blur, r) in edge_band_stats(f).items():
+            if side in ("left", "right") and (dark or blur):
+                bad.append({"t": round(i * every, 2), "side": side, "dark": dark, "blurry": blur, "detail": r})
+    return {"pass": not bad, "frames": n, "n_bad": len(bad), "bad": bad[:20]}
 
 
 def similarity_gate(path, shots):
@@ -2560,6 +2612,11 @@ def main():
             gate["fails"].append("motion off its phrase by %.2fs" % gate["phrase_align"]["max_offset_s"]); gate["pass"] = False
         log("similarity gate:", "PASS" if gate["similarity"]["pass"] else "FAIL", gate["similarity"]["fails"], "| phrase align:", gate["phrase_align"])
     log("distortion gate:", "PASS" if not gate["distortion"]["over"] else "FAIL", gate["distortion"])
+    try:
+        gate["edges"] = edge_gate(final)
+        log("edge gate:", "PASS" if gate["edges"]["pass"] else "FAIL", gate["edges"]["bad"][:4])
+    except Exception as e:
+        gate["edges"] = {"pass": None, "error": str(e)[:120]}
     if not CAPTIONS_ON and key and not os.environ.get("CFA_NO_TEXT_GATE"):
         try:
             tg = text_gate(final, key, allow_scene=True)
