@@ -32,6 +32,7 @@ GRADES = {"cool_low": "eq=brightness=-0.03:saturation=0.82:gamma=0.97,colorbalan
           "golden": "eq=saturation=1.08:brightness=0.02,colorbalance=rs=0.05:rm=0.06:bm=-0.05:bh=-0.03"}
 ROLE_GRADE = {"montage": "sterile", "hook": "cool_low", "tension": "sterile", "turn": "golden", "realization": "golden", "resolve": "golden"}
 DRIFT_MAX = 3.2         # stills longer than this are split into 3-4 s parts with constant slow drift
+TITLE_DEFAULT_ON = os.environ.get("CFA_TITLE", "0") == "1"   # fix (b): title card off unless asked for
 PUNCH_ZOOM = 1.28      # punch-in framing (second half of a split still)
 TENSE_MAX = 2.6         # tense beats (hook, turn, montage, crisis words, or the tool marks pace=tense): ~2 s cuts
 TENSE_TARGET = 2.0
@@ -1896,7 +1897,8 @@ def main():
     ap.add_argument("--min-hold", type=float, default=MIN_HOLD, help="min seconds per shot; short beats are merged (default 3.75)")
     ap.add_argument("--beat-pause", type=float, default=0.6, help="min silence between beats, padded from timestamps (0 = off)")
     ap.add_argument("--sentence-pause", type=float, default=0.45, help="min silence after a sentence inside a beat (0 = off)")
-    ap.add_argument("--no-title", action="store_true")
+    ap.add_argument("--no-title", action="store_true", help="(default) no title card")
+    ap.add_argument("--title", action="store_true", default=TITLE_DEFAULT_ON, help="opt back in to the opening title card")
     ap.add_argument("--lut", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "luts", "cfa_warm.cube"), help="shared .cube grade")
     ap.add_argument("--no-lut", action="store_true")
     ap.add_argument("--grok-title", action="store_true", help="let Grok write the title/thumbnail text (default: bundle title only)")
@@ -1976,7 +1978,7 @@ def main():
         edl, _ = validate_edl(fallback_edl(b, base_shots), b, base_shots)
     if a.caption_style:
         edl["caption_style"]["preset"] = a.caption_style
-    if a.no_title:
+    if a.no_title or not a.title:   # fix (b): no title slide by default; the audience gets the topic from what they hear and see
         edl["title_card"]["enabled"] = False
     if a.no_end_card:
         edl["end_card"]["enabled"] = False

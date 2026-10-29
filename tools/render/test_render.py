@@ -107,8 +107,7 @@ def main():
     check(1.5 <= wpc <= 5, "punchy captions: %.1f words per cue" % wpc)
     ass = open(os.path.join(d, "out_h", "captions.ass")).read()
     check("\\fscx118" in ass, "keyword emphasis pops in captions")
-    title = [l for l in ass.splitlines() if ",Title," in l][0]
-    check(not title.split(",")[1].startswith("0:00:00.00"), "title card lands after the hook, not over it")
+    check(not [l for l in ass.splitlines() if ",Title," in l and "fad(250,350)" in l], "fix (b): no title slide by default (end card may remain)")
     ws = json.load(zipfile.ZipFile(z).open("bundle.json"))["words"]
     import shutil
     wk = tempfile.mkdtemp()
