@@ -928,7 +928,7 @@ def fill_graph(box, W, H):
 
 
 # ── 2.5D depth parallax for stills (replaces the Ken Burns fallback; Oct 28 motion audit) ──
-STILL_MOTION = os.environ.get("CFA_STILL_MOTION", "parallax")   # "parallax" | "kenburns"
+STILL_MOTION = os.environ.get("CFA_STILL_MOTION", "kenburns")   # ref-style: linear ffmpeg zoom/pan; depth parallax warp caused edge bands   # "parallax" | "kenburns"
 DEPTH_PY = os.environ.get("CFA_DEPTH_PY") or next((p for p in ("/workspace/.venv_depth/bin/python",) if os.path.exists(p)), None)
 PARALLAX_PX_S = 9.0       # foreground lateral travel at 1280 px wide (px/s), eased; background ~0 (fix a: was 48)
 PARALLAX_ZOOM_S = 0.012  # depth-scaled dolly per second (was 0.05)
@@ -1200,9 +1200,29 @@ def action_i2v_plan(shots, mode, cap):
     return pick, round(est, 2)
 
 
+LINEAR_MOVES = os.environ.get("CFA_LINEAR_MOVES", "1") != "0"
+AIM_SYS = ("You locate things in an image. Given the narration line, find the single object or body part the line is about "
+           "(e.g. the phone, the laptop screen, the face). Return JSON only: {\"what\":\"...\",\"x\":0-1,\"y\":0-1} "
+           "(centre of it, fractions of width/height from top-left); if nothing in the line is visible use the character's face.")
+
+
+def narration_aim(src, line, key):
+    """(x, y) the camera should move toward for this line, or None. One xAI vision call per still."""
+    if not (src and key and line):
+        return None
+    try:
+        j = _vision_json(key, AIM_SYS, [{"type": "text", "text": "Line: " + line[:300]}] + [{"type": "image_url", "image_url": {"url": u}} for u in _frame_uris(src, [None], 1024)], 200)
+        x, y = float(j["x"]), float(j["y"])
+        if 0 <= x <= 1 and 0 <= y <= 1:
+            return (round(min(max(x, 0.15), 0.85), 3), round(min(max(y, 0.15), 0.8), 3), str(j.get("what", ""))[:40])
+    except Exception as e:
+        log("aim failed: %s" % str(e)[:80])
+    return None
+
+
 def action_prompt(x):
     who = (x.get("one_char") or "the character").title()
-    return ("%s acts out this moment with clear, natural body movement and an expression that fits it: %s. Only %s in frame, no second person "
+    return ("%s makes one small, subtle action that matches this line, timed to it: %s. Use only objects already in the image: no new props, no second phone or device, nothing appears or vanishes. Only %s in frame, no second person "
             "(anyone else named stays off-screen). Mouth stays closed, no talking, same 3D Pixar style, same character as the image, smooth steady camera, "
             "crisp clean frames, no text, captions, signs or writing anywhere." % (who, (x.get("line") or "")[:220], who))
 
@@ -1369,8 +1389,11 @@ def render_shot(src, kind, shot, W, H, out, frames):
     m, k = shot["motion"], shot["intensity"]
     W2, H2 = W * 2, H * 2
     p = "(on/%d)" % (frames - 1)
-    ease = "(0.5-0.5*cos(PI*%s))" % p
-    if m == "zoom_in":
+    ease = p if LINEAR_MOVES else "(0.5-0.5*cos(PI*%s))" % p   # ref-style: constant-speed moves
+    aim = shot.get("_aim")
+    if m == "zoom_in" and aim:   # zoom toward what the narration names
+        z, x, y = "1+%.3f*%s" % (k, ease), "(iw-iw/zoom)*%.3f" % aim[0], "(ih-ih/zoom)*%.3f" % aim[1]
+    elif m == "zoom_in":
         z, x, y = "1+%.3f*%s" % (k, ease), "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
     elif m == "zoom_out":
         z, x, y = "%.3f-%.3f*%s" % (1 + k, k, ease), "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
@@ -2446,6 +2469,19 @@ def main():
                 v = {"ok": None, "error": str(e)[:80]}
             still_props[m] = v
             log("still props", m, "ok" if v.get("ok") else v.get("why") or v.get("error"))
+    if pk and not os.environ.get("CFA_NO_AIM") and STILL_MOTION != "parallax":   # ref-style: camera moves toward what the line names
+        byi = {str(g.get("index")): g for g in segs}
+        aims = {}
+        for x in shots:
+            if x.get("media") and (x.get("mediaType") or "image") == "image" and x.get("motion") != "punch_in":
+                line = " ".join(str(byi.get(str(b), {}).get("text") or "") for b in x.get("beats", [])).strip() or str(x.get("line") or "")
+                key_ = (x["media"], line)
+                if key_ not in aims:
+                    aims[key_] = narration_aim(os.path.join(d, x["media"]), line, pk)
+                if aims[key_]:
+                    x["_aim"] = aims[key_][:2]; x["motion"] = "zoom_in"
+                    x["intensity"] = max(x.get("intensity") or 0, 0.08)
+                    log("aim", x["media"], "->", aims[key_][2], aims[key_][:2])
     if STILL_MOTION == "parallax":
         import hashlib
         dc = os.path.expanduser(os.environ.get("CFA_DEPTH_CACHE", "~/cfa-render-data/depth_cache"))
