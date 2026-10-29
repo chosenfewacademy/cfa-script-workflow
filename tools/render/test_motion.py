@@ -10,7 +10,7 @@ check(R.CALM_TARGET <= 2.8 and R.TENSE_TARGET <= 2.2 and R.SPLIT_OVER <= 3.4 and
 sh = [{"index": i, "role": r, "transition_in": "cut", "transition_duration": 0.0, "mediaType": "image"} for i, r in enumerate(["hook", "tension", "tension", "realization", "turn"])]
 R.smooth_transitions(sh)
 check([x["transition_in"] for x in sh[1:3]] == ["cut", "cut"], "scene changes are hard cuts (no 0.45 s dissolves)")
-check(R.STILL_MOTION == "parallax", "stills default to depth parallax")
+check(R.STILL_MOTION == "kenburns", "stills default to linear ffmpeg zoom/pan (ref style; depth warp caused edge bands)")
 I = R.I2V_MODELS
 check(R.i2v_plan([{"media": "a.png"}], "off", 5) == ([], 0.0), "i2v off -> nothing planned")
 shots = [{"media": "s%d.png" % (k % 7)} for k in range(40)]
