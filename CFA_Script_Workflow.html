@@ -7177,6 +7177,14 @@ const WRITING_RE=/[^.,;]*(?:\d+\s*%|\b(?:percent|battery (?:bar|level)|shows? (?
 // clauses that forbid writing ("NO WRITING ANYWHERE", "without labels") are kept
 function stripWriting(p){ return String(p||'').replace(WRITING_RE,m=>/\b(no|not|never|without|avoid|nothing)\b/i.test(m)?m:'').replace(/\s*,\s*(,\s*)+/g,', ').replace(/\s+([.,;])/g,'$1').replace(/([.,;])\1+/g,'$1').replace(/\s{2,}/g,' ').trim(); }
 const NO_TEXT_NOTE=' No signage, no text, no letters or numbers anywhere: screens, papers and walls are blank or show simple shapes.';
+// Eased identity: a still whose only miss is a named character scoring IDENTITY_EASE_MIN..IDENTITY_MIN-1 (visible,
+// no hard rule broken) passes when every other vision check passes.
+const IDENTITY_EASE_MIN=6;
+function easeIdentity(c){ if(!c || c.identity_match!==false) return c;
+  const others=c.style_match && c.logic_ok!==false && !c.stray_text && !c.too_dark && !c.people_bad && !c.bg_repeat && !c.line_bad && !c.emotion_bad && !c.quality_bad && !c.framing_bad;
+  const near=(c.identity||[]).filter(x=>(c.identity_misses||[]).some(n=>x.name.toLowerCase().includes(n.toLowerCase())));
+  if(others && near.length===(c.identity_misses||[]).length && near.every(x=>x.visible && x.score>=IDENTITY_EASE_MIN && !x.duplicate && x.ageOk!==false && !(x.forbidden||[]).length && !(x.count>1))){ c.identity_match=true; c.identity_eased=true; }
+  return c; }
 function stillGateWhy(c){ if(!c) return []; const w=[]; if(c.people_bad) w.push('people'); if(c.stray_text) w.push('text'); if(c.quality_bad) w.push('quality'); if(c.line_bad) w.push('script match'); if(c.emotion_bad) w.push('emotion'); if(c.framing_bad) w.push('framing'); if(c.identity_match===false) w.push('identity'); return w; }
 function stillBlockOn(){ try{ return localStorage.getItem('cfa_still_block')!=='0'; }catch(e){ return true; } }
 async function styledImageRequest(idx, model, prompt, refs, status){
@@ -7224,6 +7232,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(check) check.stray_text=!needsText && check.has_text;
     if(check){ const y=await imageLuma(r.url); check.luma=y; check.too_dark=y!=null && y<DARK_LUMA; }
     if(check && s.planMotion){ try{ const pc=await visionPeopleCount(r.url, shotVisionCtx(idx)); if(pc){ const au=sceneShotAudit(idx,pc); check.line_bad=!au.match_ok; check.line_match=au.line_match; check.missing=au.missing; check.emotion_bad=!au.emotion_ok; check.emotion_match=au.emotion_match; check.quality_bad=!au.quality_ok; check.quality=au.quality; check.defects=au.defects; check.framing_bad=!au.framing_ok; if(!au.text_ok) check.stray_text=true; check.people=au.people; check.people_bad=!au.people_ok; check.bg_repeat=au.bg_repeat; check.bg=pc.background; if(au.text.length && !needsText) check.stray_text=true; s.shotAudit=au; s.bgDesc=pc.background; } }catch(e){} }
+    easeIdentity(check);
     if(!best || rank(check)>rank(best.check)) best={r,check};
     if(!check || (check.style_match && check.identity_match!==false && check.logic_ok!==false && !check.stray_text && !check.too_dark && !check.people_bad && !check.bg_repeat && !check.line_bad && !check.emotion_bad && !check.quality_bad && !check.framing_bad)) break;
   }
@@ -7250,7 +7259,7 @@ async function styledImageRequest(idx, model, prompt, refs, status){
     if(check) check.textRemoved=gptText && !check.stray_text;
   }
   if(sceneData[idx]===s) s.styleQA={score:check?check.style_score:null, match:check?check.style_match:null, identity:check?check.identity:[], identityMatch:check?check.identity_match:null, strayText:check?!!check.stray_text:null, logicOk:check?check.logic_ok!==false:null, logicProblems:check?check.logic_problems||[]:[], luma:check&&check.luma!=null?Math.round(check.luma):null, tooDark:check?!!check.too_dark:null, attempts, text:check?check.text:[], gptText, gptErr, checkErr};
-  const why=stillGateWhy(check);
+  easeIdentity(check); const why=stillGateWhy(check);
   if(s.planMotion && why.length && stillBlockOn()){ s.stillBlocked={why, attempts}; throw new Error('Still blocked by image check ('+why.join(', ')+') after '+attempts+' tries — not used.'); }
   if(sceneData[idx]===s) s.stillBlocked=null;
   return {url, label, model, refs, check, attempts, gptText, cost};
