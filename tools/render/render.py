@@ -1102,7 +1102,7 @@ def action_i2v_plan(shots, mode, cap):
     unit, pick, est, seen = I2V_MODELS[mode][1], [], 0.0, set()
     for x in shots:
         m = x.get("media")
-        if x.get("plan_shot") != "action" or not m or (x.get("mediaType") or "image") != "image" or m in seen:
+        if x.get("plan_shot") != "action" or not x.get("one_char") or not m or (x.get("mediaType") or "image") != "image" or m in seen:
             continue
         if est + unit > (cap or 0) + 1e-9:
             x["i2v_skipped_cost"] = unit; continue

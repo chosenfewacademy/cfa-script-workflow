@@ -5922,7 +5922,7 @@ function planShots(){
       // switching between the two people of a two-person beat = reverse shot (hard cut, eyeline kept)
       if(prevChar && oc!==prevChar && /^BOTH/.test(x.charsOrig) && !['whip','time_jump','jcut'].includes(x.planLink)) x.planLink='reverse';
       prevChar=oc; } else x.oneChar=null;
-    x.planShot=planShotFor(sp.text,sp.speaker);
+    x.planShot=oc?planShotFor(sp.text,sp.speaker):'still';   // only a character on screen can act a line out
     if(x.planShot==='action' && x.planMotion==='hold') x.planMotion='track';
     if(x.planLink==='whip') dir=-dir;                               // a reversal turns the camera; otherwise keep travelling
     x.planDir=dir;
