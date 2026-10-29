@@ -964,7 +964,7 @@ def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry=
     lat = PARALLAX_PX_S * dur * sc * {"pan_left": -1.0, "pan_right": 1.0}.get(motion, 0.6 * side)
     zr = PARALLAX_ZOOM_S * dur * (-1.0 if motion == "zoom_out" else 1.0)
     if motion == "static":          # hold on a quote: barely breathing, no travel
-        lat, zr = 0.15 * lat, 0.25 * zr
+        lat, zr = 0.4 * lat, 0.4 * zr
     elif motion == "zoom_in":       # motivated push-in: the dolly leads, little truck
         lat, zr = 0.3 * lat, 1.25 * zr
     elif motion in ("pan_left", "pan_right"):
@@ -978,9 +978,10 @@ def parallax_maps(d, W, H, w, h, frames, motion, focus, punch, direction, carry=
     import cv2
     dd = cv2.remap(d, gx, gy, cv2.INTER_LINEAR)
     pcx, pcy = ox + W / 2 / punch, oy + H / 2 / punch
+    zdep = (0.85 + 0.3 * dd) if motion == "zoom_in" else (0.6 + 0.8 * dd)   # push-in: dolly feel with less depth warp
     for i in ([0, frames // 2, frames - 1] if probe else range(frames)):
         t = _ease(i / max(1, frames - 1), *carry)
-        z = 1.0 + (zr * t if zr > 0 else -zr * (1 - t)) * (0.6 + 0.8 * dd)
+        z = 1.0 + (zr * t if zr > 0 else -zr * (1 - t)) * zdep
         mx = (gx - pcx) / z + pcx - (t - 0.5) * lat * dd
         my = (gy - pcy) / z + pcy - (t - 0.5) * vert * dd
         yield np.clip(mx, 0, w - 1.001), np.clip(my, 0, h - 1.001)
