@@ -1,0 +1,721 @@
+{
+ "test_clip": {
+  "max_seconds": 20.0,
+  "from_seconds": 13.36,
+  "beats": 5,
+  "of_beats": 5,
+  "seconds": 20.03,
+  "first_beat": 4,
+  "stretched_for_action": false
+ },
+ "billed_usd_total": 0.0,
+ "total_cap_usd": null,
+ "motion_gate": {
+  "pass": true,
+  "fails": [],
+  "median_shot_s": 4.33,
+  "shots": 5,
+  "motion_px_s": 7.27,
+  "static_pct": 0.0,
+  "distortion": {
+   "max_stretch": null,
+   "shots": 0,
+   "over": 0,
+   "limit": 1.08
+  },
+  "similarity": {
+   "pass": true,
+   "fails": [],
+   "pairs": [
+    {
+     "i": 1,
+     "dhash": 22,
+     "ssim": 0.111,
+     "same_media": false,
+     "ok": true
+    },
+    {
+     "i": 2,
+     "dhash": 21,
+     "ssim": 0.211,
+     "same_media": false,
+     "ok": true
+    },
+    {
+     "i": 3,
+     "dhash": 26,
+     "ssim": 0.238,
+     "same_media": false,
+     "ok": true
+    },
+    {
+     "i": 4,
+     "dhash": 39,
+     "ssim": 0.184,
+     "same_media": false,
+     "ok": true
+    }
+   ],
+   "dhash_min": 10,
+   "ssim_max": 0.72
+  },
+  "phrase_align": {
+   "shots": 5,
+   "max_offset_s": 0.3,
+   "pass": true
+  },
+  "one_character": {
+   "pass": true,
+   "fails": []
+  },
+  "edges": {
+   "pass": true,
+   "frames": 42,
+   "n_bad": 0,
+   "bad": []
+  },
+  "holes": {
+   "pass": true,
+   "held": []
+  },
+  "sharpness": {
+   "pass": true,
+   "upscale": [
+    [
+     1,
+     1.25
+    ],
+    [
+     2,
+     1.412
+    ],
+    [
+     3,
+     1.25
+    ],
+    [
+     4,
+     0.706
+    ],
+    [
+     5,
+     1.0
+    ]
+   ],
+   "over": [],
+   "kbps": 10112
+  },
+  "text": {
+   "pass": true,
+   "items": [],
+   "fails": []
+  }
+ },
+ "i2v": {
+  "mode": "hailuo",
+  "clips": 0,
+  "est_usd": 0.0,
+  "planned": 0,
+  "cap_usd": 0.0,
+  "skipped": [],
+  "music_reserve_usd": 0.0,
+  "checks": [],
+  "ref": true
+ },
+ "still_props": {
+  "media/scene_004.png": {
+   "ok": true,
+   "why": [],
+   "phones": [
+    0
+   ],
+   "note": "no phones",
+   "times": [
+    null
+   ]
+  },
+  "media/scene_005.png": {
+   "ok": true,
+   "why": [],
+   "phones": [
+    1
+   ],
+   "note": "single black phone held",
+   "times": [
+    null
+   ]
+  },
+  "media/scene_006.png": {
+   "ok": true,
+   "why": [],
+   "phones": [
+    0
+   ],
+   "note": "no phones visible",
+   "times": [
+    null
+   ]
+  },
+  "media/scene_007.png": {
+   "ok": true,
+   "why": [],
+   "phones": [
+    0
+   ],
+   "note": "only laptop, no phones",
+   "times": [
+    null
+   ]
+  }
+ },
+ "final": "/tmp/v8out2/final.mp4",
+ "whisper": {
+  "enabled": false
+ },
+ "motion_qa": {
+  "frozen": [
+   {
+    "shot": 1,
+    "motion": 0.397,
+    "type": "image",
+    "fix": "animate this beat (image-to-video) or give the still parallax/idle motion"
+   },
+   {
+    "shot": 2,
+    "motion": 0.191,
+    "type": "image",
+    "fix": "animate this beat (image-to-video) or give the still parallax/idle motion"
+   },
+   {
+    "shot": 3,
+    "motion": 0.299,
+    "type": "image",
+    "fix": "animate this beat (image-to-video) or give the still parallax/idle motion"
+   },
+   {
+    "shot": 4,
+    "motion": 0.162,
+    "type": "image",
+    "fix": "animate this beat (image-to-video) or give the still parallax/idle motion"
+   }
+  ],
+  "jarring_cuts": [],
+  "motion": [
+   0.397,
+   0.191,
+   0.299,
+   0.162,
+   0.752
+  ]
+ },
+ "lipsync_sync": [],
+ "music": {
+  "source": "cache",
+  "cache_key": "v23__cinematic",
+  "style": "cinematic",
+  "billed_usd": 0.0,
+  "below_voice_db_raw": 19.6,
+  "below_voice_db": 17.0
+ },
+ "thumbnail": "/tmp/v8out2/thumbnail.jpg",
+ "duration": 20.884,
+ "voice_duration": 20.88,
+ "resolution": "1920x1080",
+ "audio_streams": 1,
+ "lufs": -14.13,
+ "edl_source": "grok:grok-4.3",
+ "edl_problems": [],
+ "grok_usage": {
+  "prompt_tokens": 1215,
+  "completion_tokens": 580,
+  "total_tokens": 3104,
+  "prompt_tokens_details": {
+   "text_tokens": 1215,
+   "audio_tokens": 0,
+   "image_tokens": 0,
+   "cached_tokens": 1152
+  },
+  "completion_tokens_details": {
+   "reasoning_tokens": 1309,
+   "audio_tokens": 0,
+   "accepted_prediction_tokens": 0,
+   "rejected_prediction_tokens": 0
+  },
+  "num_sources_used": 0,
+  "cost_in_usd_ticks": 50316500
+ },
+ "beats": 5,
+ "voice_raw_duration": 20.03,
+ "pauses_added": 0.85,
+ "pause_count": 2,
+ "shots": [
+  {
+   "index": 1,
+   "beats": [
+    4
+   ],
+   "media": "media/scene_004.png",
+   "type": "image",
+   "start": 0.0,
+   "duration": 3.12,
+   "motion": "zoom_in",
+   "role": "hook",
+   "part": "",
+   "transition": "cut",
+   "xfade": 0.0,
+   "plan_motion": "track",
+   "plan_link": "cut",
+   "plan_shot": "still",
+   "one_char": null
+  },
+  {
+   "index": 2,
+   "beats": [
+    5
+   ],
+   "media": "media/scene_005.png",
+   "type": "image",
+   "start": 3.12,
+   "duration": 4.909999999999999,
+   "motion": "zoom_in",
+   "role": "tension",
+   "part": "",
+   "transition": "cut",
+   "xfade": 0.0,
+   "plan_motion": "hold",
+   "plan_link": "jcut",
+   "plan_shot": "still",
+   "one_char": "JORDAN"
+  },
+  {
+   "index": 3,
+   "beats": [
+    6
+   ],
+   "media": "media/scene_006.png",
+   "type": "image",
+   "start": 8.03,
+   "duration": 4.440000000000001,
+   "motion": "zoom_in",
+   "role": "tension",
+   "part": "",
+   "transition": "cut",
+   "xfade": 0.0,
+   "plan_motion": "push_in",
+   "plan_link": "cut",
+   "plan_shot": "still",
+   "one_char": "JORDAN"
+  },
+  {
+   "index": 4,
+   "beats": [
+    7
+   ],
+   "media": "media/scene_007.png",
+   "type": "image",
+   "start": 12.47,
+   "duration": 3.379999999999999,
+   "motion": "zoom_in",
+   "role": "tension",
+   "part": "",
+   "transition": "cut",
+   "xfade": 0.0,
+   "plan_motion": "track",
+   "plan_link": "cut",
+   "plan_shot": "still",
+   "one_char": "JORDAN"
+  },
+  {
+   "index": 5,
+   "beats": [
+    8
+   ],
+   "media": "media/scene_008.mp4",
+   "type": "video",
+   "start": 15.85,
+   "duration": 5.03,
+   "motion": "push_in",
+   "role": "turn",
+   "part": "",
+   "transition": "cut",
+   "xfade": 0.0,
+   "plan_motion": "track",
+   "plan_link": "jcut",
+   "plan_shot": "action",
+   "one_char": "JORDAN"
+  }
+ ],
+ "arc": {
+  "hook_end_shot": 1,
+  "turning_point_shot": 5,
+  "realization_shots": []
+ },
+ "arc_times": {
+  "hook_end": 2.61,
+  "turn": 15.34
+ },
+ "sfx_events": [],
+ "ambience": {
+  "scenes": 0,
+  "generated": 0,
+  "errors": [],
+  "skipped": "off",
+  "placed": 0
+ },
+ "foley": {
+  "skipped": "off (default; pass --foley)"
+ },
+ "punch_ins": 0,
+ "shot_lengths": [
+  3.12,
+  3.38,
+  4.44,
+  4.91,
+  5.03
+ ],
+ "held_neighbour": [],
+ "fallback_same_line": [],
+ "avg_shot": 4.176,
+ "min_shot": 3.12,
+ "interpolated_beats": [],
+ "caption_cues": [
+  {
+   "start": 0.3,
+   "end": 0.86,
+   "text": "and the next",
+   "speaker": "NARRATOR"
+  },
+  {
+   "start": 0.86,
+   "end": 1.82,
+   "text": "order slipped a",
+   "speaker": "NARRATOR"
+  },
+  {
+   "start": 1.82,
+   "end": 2.92,
+   "text": "week.",
+   "speaker": "NARRATOR"
+  },
+  {
+   "start": 2.92,
+   "end": 3.84,
+   "text": "That payment is",
+   "speaker": "JORDAN"
+  },
+  {
+   "start": 3.84,
+   "end": 5.53,
+   "text": "in my wallet.",
+   "speaker": "JORDAN"
+  },
+  {
+   "start": 5.53,
+   "end": 6.41,
+   "text": "This screen will",
+   "speaker": "JORDAN"
+  },
+  {
+   "start": 6.41,
+   "end": 8.03,
+   "text": "not wait.",
+   "speaker": "JORDAN"
+  },
+  {
+   "start": 8.03,
+   "end": 9.39,
+   "text": "Jordan already knew",
+   "speaker": "NARRATOR"
+  },
+  {
+   "start": 9.39,
+   "end": 10.35,
+   "text": "a private key",
+   "speaker": "NARRATOR"
+  },
+  {
+   "start": 10.35,
+   "end": 12.47,
+   "text": "controls access,",
+   "speaker": "NARRATOR"
+  },
+  {
+   "start": 12.47,
+   "end": 12.95,
+   "text": "and that the",
+   "speaker": "NARRATOR"
+  },
+  {
+   "start": 12.95,
+   "end": 14.23,
+   "text": "key must stay",
+   "speaker": "NARRATOR"
+  },
+  {
+   "start": 14.23,
+   "end": 15.65,
+   "text": "secret.",
+   "speaker": "NARRATOR"
+  },
+  {
+   "start": 15.65,
+   "end": 16.69,
+   "text": "Hang on.",
+   "speaker": "JORDAN"
+  },
+  {
+   "start": 16.69,
+   "end": 18.09,
+   "text": "I screenshot them,",
+   "speaker": "JORDAN"
+  },
+  {
+   "start": 18.09,
+   "end": 19.17,
+   "text": "pay Dee, and",
+   "speaker": "JORDAN"
+  },
+  {
+   "start": 19.17,
+   "end": 19.81,
+   "text": "write the paper",
+   "speaker": "JORDAN"
+  },
+  {
+   "start": 19.81,
+   "end": 20.88,
+   "text": "after.",
+   "speaker": "JORDAN"
+  }
+ ],
+ "padded_words": [
+  [
+   "and",
+   0.3,
+   0.38
+  ],
+  [
+   "the",
+   0.42,
+   0.46
+  ],
+  [
+   "next",
+   0.54,
+   0.78
+  ],
+  [
+   "order",
+   0.86,
+   1.18
+  ],
+  [
+   "slipped",
+   1.22,
+   1.5
+  ],
+  [
+   "a",
+   1.58,
+   1.66
+  ],
+  [
+   "week.",
+   1.82,
+   2.3
+  ],
+  [
+   "That",
+   2.92,
+   3.16
+  ],
+  [
+   "payment",
+   3.24,
+   3.64
+  ],
+  [
+   "is",
+   3.72,
+   3.8
+  ],
+  [
+   "in",
+   3.84,
+   3.88
+  ],
+  [
+   "my",
+   3.96,
+   4.12
+  ],
+  [
+   "wallet.",
+   4.2,
+   5.08
+  ],
+  [
+   "This",
+   5.53,
+   5.65
+  ],
+  [
+   "screen",
+   5.85,
+   6.05
+  ],
+  [
+   "will",
+   6.17,
+   6.29
+  ],
+  [
+   "not",
+   6.41,
+   6.53
+  ],
+  [
+   "wait.",
+   6.69,
+   7.41
+  ],
+  [
+   "Jordan",
+   8.03,
+   8.51
+  ],
+  [
+   "already",
+   8.59,
+   8.99
+  ],
+  [
+   "knew",
+   9.07,
+   9.31
+  ],
+  [
+   "a",
+   9.39,
+   9.47
+  ],
+  [
+   "private",
+   9.55,
+   9.95
+  ],
+  [
+   "key",
+   10.03,
+   10.27
+  ],
+  [
+   "controls",
+   10.35,
+   10.83
+  ],
+  [
+   "access,",
+   10.99,
+   11.87
+  ],
+  [
+   "and",
+   12.47,
+   12.55
+  ],
+  [
+   "that",
+   12.63,
+   12.71
+  ],
+  [
+   "the",
+   12.75,
+   12.79
+  ],
+  [
+   "key",
+   12.95,
+   13.27
+  ],
+  [
+   "must",
+   13.51,
+   13.83
+  ],
+  [
+   "stay",
+   13.91,
+   14.15
+  ],
+  [
+   "secret.",
+   14.23,
+   15.03
+  ],
+  [
+   "Hang",
+   15.65,
+   15.89
+  ],
+  [
+   "on.",
+   16.01,
+   16.21
+  ],
+  [
+   "I",
+   16.69,
+   16.77
+  ],
+  [
+   "screenshot",
+   16.85,
+   17.41
+  ],
+  [
+   "them,",
+   17.49,
+   17.97
+  ],
+  [
+   "pay",
+   18.09,
+   18.21
+  ],
+  [
+   "Dee,",
+   18.29,
+   18.85
+  ],
+  [
+   "and",
+   18.97,
+   19.09
+  ],
+  [
+   "write",
+   19.17,
+   19.33
+  ],
+  [
+   "the",
+   19.37,
+   19.41
+  ],
+  [
+   "paper",
+   19.49,
+   19.73
+  ],
+  [
+   "after.",
+   19.81,
+   20.53
+  ]
+ ],
+ "render_seconds": 148.8,
+ "lut": null,
+ "sharpness": null
+}
