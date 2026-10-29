@@ -1344,6 +1344,10 @@ async def main():
               return {cut:sceneShotAudit(0,Object.assign({},base,{head_cut:true})), ok:sceneShotAudit(0,Object.assign({},base,{head_cut:false})),
                 strip:stripWriting('A laptop screen shows 3 % battery, the wallet app shows twelve words, a green notebook lies open. Jordan leans in'),
                 why:[stillGateWhy({people_bad:true,quality_bad:true}),stillGateWhy({style_match:true}),stillGateWhy({framing_bad:true})], blockOn:stillBlockOn()}}""")
+            r8=await J(pg,"""()=>{const ok={style_match:true,identity_match:false,identity_misses:['Jordan']};
+              const mk=(sc,x)=>Object.assign({},ok,{identity:[{name:'Jordan',visible:true,score:sc}]},x||{});
+              return [easeIdentity(mk(6)).identity_match, easeIdentity(mk(5)).identity_match, easeIdentity(mk(6,{quality_bad:true})).identity_match, easeIdentity(mk(6,{identity:[{name:'Jordan',visible:false,score:6}]})).identity_match]}""")
+            check('identity ease: Jordan at 6 passes only when every other check passes (5, other failure or off-screen still fail)', r8==[True,False,False,False], r8)
             check('framing: a cut-off head fails the image check, full head passes', not r7['cut']['framing_ok'] and not r7['cut']['ok'] and r7['ok']['framing_ok'], [r7['cut'],r7['ok']])
             check('prompts: writing requests are stripped (battery %, twelve words) and the rest kept', '%' not in r7['strip'] and 'twelve' not in r7['strip'] and 'green notebook' in r7['strip'] and 'Jordan leans in' in r7['strip'], r7['strip'])
             check('block: failed checks block the still (people, quality, framing); a clean check does not', r7['why']==[['people','quality'],[],['framing']] and r7['blockOn'], r7['why'])
