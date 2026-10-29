@@ -1278,8 +1278,23 @@ async def main():
             check('phrase: quotes hold, realization pushes in', rows[0]['m']=='hold' and rows[3]['m']=='hold' and rows[4]['m']=='push_in', [x['m'] for x in rows])
             check('phrase: links follow the story (therefore=push_link, voice=jcut, but=whip)', rows[2]['k']=='push_link' and rows[3]['k']=='jcut' and rows[5]['k']=='whip' and rows[6]['k']=='cut', [x['k'] for x in rows])
             check('phrase: direction carries, flips on a BUT', [x['d'] for x in rows]==[1,1,1,1,1,-1,-1], [x['d'] for x in rows])
-            check('phrase: new-shot prompt forbids re-angles, locks references, mouths closed', 'NOT be a re-angle' in r['note'] and 'reference sheet' in r['note'] and 'mouths closed' in r['note'], r['note'])
+            check('phrase: new-shot prompt forbids re-angles, locks references, mouths closed', 'NOT be a re-angle' in r['note'] and 'reference sheet' in r['note'] and 'mouth closed' in r['note'] and 'ONE CHARACTER ONLY: show Jordan' in r['note'], r['note'])
             check('phrase: plan flag on', r['on'])
+            r2=await J(pg,"""()=>{sceneData.length=0;
+              ['1. NARRATOR: Marcus and Jordan sat at the counter while the printer hummed in the back.',
+               '2. MARCUS: Write it on paper, not on the phone.',
+               '3. JORDAN: Why paper?',
+               '4. NARRATOR: Jordan slid the card into the drawer and turned the key.',
+               '5. NARRATOR: She finally understood why the words mattered.'].forEach((l,i)=>sceneData.push({line:l,tag:'IMAGE',characters:i==3||i==4?'JORDAN':'BOTH',prompt:'p'}));
+              planShots(); const bnd=sceneData.map(x=>[x.characters,x.oneChar,x.planLink,x.planShot,x.planMotion]);
+              return {bnd, bad:oneCharViolations(), note:phraseShotNote(1), note4:phraseShotNote(3)}}""")
+            bd=r2['bnd']
+            check('phrase: two-person beats become one character per shot, alternating', [x[0] for x in bd[:3]]==['JORDAN','MARCUS','JORDAN'] and r2['bad']==[], bd)
+            check('phrase: switching characters is a reverse shot (or J-cut on a new voice)', bd[1][2] in ('reverse','jcut') and bd[2][2] in ('reverse','jcut'), bd)
+            check('phrase: physical action line is a moving shot, realization a still', bd[3][3]=='action' and bd[4][3]=='still' and bd[4][4]=='push_in', bd)
+            check('phrase: prompt enforces one character and no text', 'ONE CHARACTER ONLY: show Marcus alone' in r2['note'] and 'No written words' in r2['note'] and 'mid-action' in r2['note4'], r2['note'])
+            r3=await J(pg,"()=>{sceneData[2].characters='BOTH'; return oneCharViolations();}")
+            check('phrase: one-character check flags a two-person shot', r3==[2], r3)
             check('phrase: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
         if want('stress'):

@@ -5229,7 +5229,7 @@ async function buildFinalEditZip(say){
       const sp=splitTag(s.line);
       segs.push({index:i+1,text:sp.text,tag:s.tag,characters:s.characters||'',
         speaker:sp.speaker||(dialogueOn()?'NARRATOR':null), voice_id:sp.speaker?lockedVoice(sp.speaker).voiceId:(dialogueOn()?lockedVoice('NARRATOR').voiceId:null),
-        media, mediaType:media?(kind==='video'&&s.lipsync?'lipsync':kind):'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'', planMotion:s.planMotion||null, planLink:s.planLink||null, planDir:s.planDir||null, shot:s.shot||'', pace:s.pace||'',
+        media, mediaType:media?(kind==='video'&&s.lipsync?'lipsync':kind):'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'', planMotion:s.planMotion||null, planLink:s.planLink||null, planDir:s.planDir||null, planShot:s.planShot||null, oneChar:s.oneChar||null, shot:s.shot||'', pace:s.pace||'',
         start:t?t.start:null, end:t?t.end:null});
     }
     say('Packing bundle…');
@@ -5900,17 +5900,38 @@ function applyPhraseShots(limit){
   planShots(); try{ assignBeatTimes(); }catch(e){}
   return n;
 }
+// Shot type from the line: a character physically acting -> moving shot (image-to-video); emotion/reaction/info -> 3D still + camera move.
+const PS_SUBJ_RE=/\b(he|she|they|i|we|jordan|marcus|dee|bill)\b/i;
+function planShotFor(text,speaker){ const t=String(text||''); return PS_ACTION_RE.test(t) && PS_SUBJ_RE.test(t) && !/^\s*["“]/.test(t) ? 'action' : 'still'; }
+// One character per shot: a two-person beat becomes shot/reverse-shot (speaker first, then alternate).
+function oneCharFor(x,prevChar,speaker){
+  const c=x.charsOrig||x.characters;
+  if(c==='MARCUS'||c==='JORDAN') return c;
+  if(c==='BOTH'||c==='BOTH_JM'){ if(speaker==='MARCUS'||speaker==='JORDAN') return speaker; return prevChar==='JORDAN'?'MARCUS':'JORDAN'; }
+  return null;
+}
 function planShots(){
-  let dir=1;
+  let dir=1, prevChar=null;
   sceneData.forEach((x,i)=>{
     const sp=splitTag(x.line), pv=i?splitTag(sceneData[i-1].line):null;
     x.planMotion=planMotionFor(sp.text,sp.speaker);
     x.planLink=planLinkFor(pv&&pv.text,sp.text,pv&&pv.speaker,sp.speaker);
+    if(x.charsOrig==null) x.charsOrig=x.characters;
+    const oc=oneCharFor(x,prevChar,sp.speaker);
+    if(oc){ if(oc!==x.characters){ x.characters=oc; } x.oneChar=oc;
+      // switching between the two people of a two-person beat = reverse shot (hard cut, eyeline kept)
+      if(prevChar && oc!==prevChar && /^BOTH/.test(x.charsOrig) && !['whip','time_jump','jcut'].includes(x.planLink)) x.planLink='reverse';
+      prevChar=oc; } else x.oneChar=null;
+    x.planShot=planShotFor(sp.text,sp.speaker);
+    if(x.planShot==='action' && x.planMotion==='hold') x.planMotion='track';
     if(x.planLink==='whip') dir=-dir;                               // a reversal turns the camera; otherwise keep travelling
     x.planDir=dir;
   });
   return sceneData.map(x=>[x.planMotion,x.planLink,x.planDir]);
 }
+// Check: every planned shot shows at most one character.
+function oneCharViolations(limit){ const lim=limit==null?sceneData.length:limit, bad=[];
+  for(let i=0;i<lim;i++){ const x=sceneData[i]; if(/^BOTH/.test(x.characters||'') || (x.oneChar && x.characters!==x.oneChar)) bad.push(i); } return bad; }
 function phrasePlanOn(){ return sceneData.some(x=>x.planMotion); }
 // New-shot prompt note: depict this phrase's new content, never a re-angle of the previous frame.
 function phraseShotNote(i){
@@ -5918,7 +5939,7 @@ function phraseShotNote(i){
   const pv=i?sceneData[i-1]:null, nw=pv?psNew(splitTag(pv.line).text,splitTag(s.line).text):[];
   return '\n[NEW SHOT: show the new visual information in this line'+(nw.length?' ('+nw.slice(0,6).join(', ')+')':'')+' as its own subject and composition'+
     (pv&&(pv.sceneDesc||pv.prompt)?'. It must NOT be a re-angle or re-crop of the previous shot ('+String(pv.sceneDesc||pv.prompt).slice(0,160)+')':'')+
-    (s.distinctNote?'. '+s.distinctNote:'')+'. Keep every character exactly as in their reference sheet (same face, hair, skin tone, outfit), mouths closed.]';
+    (s.distinctNote?'. '+s.distinctNote:'')+(s.oneChar?'. ONE CHARACTER ONLY: show '+s.oneChar[0]+s.oneChar.slice(1).toLowerCase()+' alone in frame (no second person, not even partly visible)':'')+(s.planShot==='action'?'. Pose them mid-action, clearly doing what the line describes':'')+'. No written words, signs or labels anywhere. Keep the character exactly as in the reference sheet (same face, hair, skin tone, outfit), mouth closed.]';
 }
 // Similarity check on generated images (8x8 difference hash); consecutive pairs below the threshold are re-angles.
 const PS_SIM_MIN=10;

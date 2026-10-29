@@ -1046,8 +1046,9 @@ def render_still_parallax(src, shot, W, H, out, frames, fit_vf, depth_png=None):
 
 # ── Phrase shot plan (tool sends shotPlan="phrase"): one new image per phrase, motivated motion, story-led transitions ──
 PLAN_MOTION = {"push_in": "zoom_in", "track": "pan", "hold": "static", "reveal": "pan"}
-PLAN_TRANS = {"cut": ("cut", 0.0), "match": ("cut", 0.0), "jcut": ("cut", 0.0), "push_link": ("cut", 0.0),
+PLAN_TRANS = {"cut": ("cut", 0.0), "match": ("cut", 0.0), "jcut": ("cut", 0.0), "push_link": ("cut", 0.0), "reverse": ("cut", 0.0),
               "whip": ("whip", 0.18), "time_jump": ("dissolve", 0.30)}
+MUSIC_RESERVE_USD = 0.35   # held back from the total cap for music when sizing action i2v
 J_LEAD = 0.20          # J-cut: the next line's audio leads the picture cut by this much
 SIM_DHASH_MIN = 10     # similarity gate: consecutive shots closer than this (of 64 bits) ...
 SIM_SSIM_MAX = 0.72    # ... or more structurally similar than this read as a re-angle of the same frame
@@ -1072,6 +1073,7 @@ def apply_shot_plan(shots, segs):
         x["_dir"] = d
         x["plan_motion"], x["plan_link"] = pm, sg.get("planLink") or "cut"
         x["phrase_start"] = sg.get("start")
+        x["plan_shot"], x["one_char"], x["line"] = sg.get("planShot") or "still", sg.get("oneChar"), sg.get("text") or ""
         if i:
             tr, td = PLAN_TRANS.get(x["plan_link"], ("cut", 0.0))
             x["transition_in"], x["transition_duration"] = tr, td
@@ -1084,6 +1086,34 @@ def apply_shot_plan(shots, segs):
         x["_carry"] = bool(nxt is not None)                          # cut on movement: keep velocity into the cut
         x["_carry_in"] = i > 0 and shots[i - 1].get("_dir") == d
     return shots
+
+
+def one_character_gate(segs, limit_beats=None):
+    """Every planned shot shows one character at most (two-person beats are shot/reverse-shot)."""
+    bad = [sg["index"] for sg in segs if (limit_beats is None or sg["index"] in limit_beats)
+           and (str(sg.get("characters") or "").startswith("BOTH") or (sg.get("oneChar") and sg.get("characters") != sg.get("oneChar")))]
+    return {"pass": not bad, "fails": bad}
+
+
+def action_i2v_plan(shots, mode, cap):
+    """Phrase plan: only shots whose line is physical action get image-to-video, never over `cap`."""
+    if mode not in I2V_MODELS:
+        return [], 0.0
+    unit, pick, est, seen = I2V_MODELS[mode][1], [], 0.0, set()
+    for x in shots:
+        m = x.get("media")
+        if x.get("plan_shot") != "action" or not m or (x.get("mediaType") or "image") != "image" or m in seen:
+            continue
+        if est + unit > (cap or 0) + 1e-9:
+            x["i2v_skipped_cost"] = unit; continue
+        seen.add(m); pick.append(x); est += unit
+    return pick, round(est, 2)
+
+
+def action_prompt(x):
+    who = (x.get("one_char") or "the character").title()
+    return ("%s acts out this moment with clear, natural body movement: %s. Only %s in frame, no second person. "
+            "Mouth stays closed, no talking, same 3D Pixar style, same character as the image, steady camera, no text." % (who, (x.get("line") or "")[:220], who))
 
 
 def _dhash(g):
@@ -2134,7 +2164,23 @@ def main():
     clips, last_media = [], None
     shots = edl["shots"]
     i2v_info = {"mode": a.i2v, "clips": 0, "est_usd": 0.0}
-    if a.i2v != "off":
+    if PHRASE:
+        mode = b.get("i2vModel") or ("hailuo" if a.i2v == "off" else a.i2v)
+        cap = max(0.0, (a.total_cap - getattr(a, "spent_usd", 0.0) - MUSIC_RESERVE_USD) if a.total_cap else a.i2v_cap)
+        acts, est = action_i2v_plan(shots, mode, cap)
+        fk = env_key("FAL_KEY", a.keys_env)
+        i2v_info.update(mode=mode, planned=len(acts), est_usd=est, cap_usd=round(cap, 2),
+                        skipped=[x.get("beats") for x in shots if x.get("i2v_skipped_cost")])
+        n = 0
+        for x in acts if fk else []:
+            try:
+                x["media"] = i2v_clip(os.path.join(d, x["media"]), mode, fk, os.path.join(work, "act_%d.mp4" % n), prompt=action_prompt(x))
+                x["mediaType"] = "video"; n += 1
+                a.spent_usd = getattr(a, "spent_usd", 0.0) + I2V_MODELS[mode][1]
+            except Exception as e:
+                i2v_info.setdefault("errors", []).append(str(e)[:120])
+        i2v_info["clips"] = n
+    elif a.i2v != "off":
         pick, est = i2v_plan(shots, a.i2v, a.i2v_cap)
         fk = env_key("FAL_KEY", a.keys_env)
         i2v_info.update(planned=len(pick), est_usd=est)
@@ -2343,6 +2389,9 @@ def main():
     if PHRASE:
         gate["similarity"] = similarity_gate(final, shots)
         gate["phrase_align"] = phrase_alignment(shots)
+        gate["one_character"] = one_character_gate(segs, {bb for x in shots for bb in (x.get("beats") or [])})
+        if not gate["one_character"]["pass"]:
+            gate["fails"].append("more than one character in beats %s" % gate["one_character"]["fails"]); gate["pass"] = False
         if not gate["similarity"]["pass"]:
             gate["fails"].append("re-angled shots %s" % gate["similarity"]["fails"]); gate["pass"] = False
         if not gate["phrase_align"]["pass"]:
@@ -2357,7 +2406,7 @@ def main():
               "voice_raw_duration": voice_raw, "pauses_added": round(added, 3), "pause_count": len(pauses),
               "shots": [{"index": x["index"], "beats": x["beats"], "media": x["media"], "type": x["mediaType"],
                          "start": x["start"], "duration": x["duration"], "motion": x["motion"], "role": x.get("role"),
-                         "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"], "plan_motion": x.get("plan_motion"), "plan_link": x.get("plan_link")} for x in shots],
+                         "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"], "plan_motion": x.get("plan_motion"), "plan_link": x.get("plan_link"), "plan_shot": x.get("plan_shot"), "one_char": x.get("one_char")} for x in shots],
               "arc": edl.get("arc"), "arc_times": edl.get("arc_times"), "sfx_events": [list(e) for e in events], "ambience": dict(amb_info, placed=len(amb)), "foley": foley_info,
               "punch_ins": sum(1 for x in shots if x.get("part") == "b"),
               "shot_lengths": sorted(round(x["duration"], 2) for x in shots),
@@ -2442,12 +2491,12 @@ def i2v_plan(shots, mode, cap):
     return pick, round(est, 2)
 
 
-def i2v_clip(img_path, mode, key, out, fetch=None):
+def i2v_clip(img_path, mode, key, out, fetch=None, prompt=None):
     """One fal queue i2v job -> mp4 at `out`. `fetch(model, payload)` can be injected for tests."""
     import base64
     model, _ = I2V_MODELS[mode]
     uri = "data:image/png;base64," + base64.b64encode(open(img_path, "rb").read()).decode()
-    payload = {"image_url": uri, "prompt": I2V_PROMPT}
+    payload = {"image_url": uri, "prompt": prompt or I2V_PROMPT}
     if fetch:
         data = fetch(model, payload)
     else:
