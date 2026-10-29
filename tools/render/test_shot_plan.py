@@ -48,13 +48,14 @@ check("one-character gate flags a two-person shot", R.one_character_gate(sg)["fa
 check("one-character gate ignores beats outside the clip", R.one_character_gate(sg, {1})["pass"])
 acts = [{"media": "a.png", "mediaType": "image", "plan_shot": "action", "one_char": "JORDAN", "line": "Jordan slides the card into the drawer"},
         {"media": "b.png", "mediaType": "image", "plan_shot": "still"},
-        {"media": "c.png", "mediaType": "image", "plan_shot": "action"}]
+        {"media": "c.png", "mediaType": "image", "plan_shot": "action", "one_char": "MARCUS"}, {"media": "e.png", "mediaType": "image", "plan_shot": "action"}]
 pk, est = R.action_i2v_plan(acts, "hailuo", 0.30)
 check("only action lines animate, capped", [x["media"] for x in pk] == ["a.png"] and est == 0.27 and acts[2].get("i2v_skipped_cost"), (pk, est))
 pr = R.action_prompt(acts[0])
 check("action prompt: acts the line, one character, mouth closed", "slides the card" in pr and "Only Jordan" in pr and "Mouth stays closed" in pr, pr)
 got = {}
 R.i2v_clip(__file__, "hailuo", "k", os.path.join(d, "o.mp4"), fetch=lambda m, p: got.update(p) or b"x", prompt=pr)
+check("action with no character on screen never animates", "e.png" not in [x["media"] for x in R.action_i2v_plan(acts, "hailuo", 9)[0]])
 check("i2v sends the action prompt", got.get("prompt") == pr)
 check("reverse shot is a hard cut", R.PLAN_TRANS["reverse"] == ("cut", 0.0))
 print("%d failure(s)" % len(fails)); sys.exit(1 if fails else 0)
