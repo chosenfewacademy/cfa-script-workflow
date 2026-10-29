@@ -4537,7 +4537,7 @@ function tcBeatSecs(x){ const L=beatLen(x); if(L>0) return L; const w=String(spl
 // Index limit: beats 0..n-1 whose cumulative length stays within the test seconds (always >= 1 beat).
 function testClipFrom(){ if(!testClipOn()||!sceneData.length) return 0; return Math.min(sceneData.length-1, Math.max(0, testClipCfg().from|0)); }
 // Window = beats from..n-1 (absolute index, exclusive end) whose cumulative length stays within the test seconds (always >= 1 beat).
-function testClipLimit(){ if(!testClipOn()||!sceneData.length) return sceneData.length; const sec=testClipCfg().sec, f=testClipFrom(); let t=0,n=f; for(const x of sceneData.slice(f)){ t+=tcBeatSecs(x); if(n>f && t>sec) break; n++; } return n; }
+function testClipLimit(){ if(!testClipOn()||!sceneData.length) return sceneData.length; const sec=testClipCfg().sec, f=testClipFrom(); let t=0,n=f; for(const x of sceneData.slice(f)){ t+=tcBeatSecs(x); if(n>f && t>sec){ const sp=splitTag(x.line||''); if(x.tag==='IMAGE' && t<=TEST_CLIP_MAX_S && planShotFor(sp.text,sp.speaker)==='action') n++; break; } n++; } return n; }  // an action line that only partly fits stretches the window to <=30 s
 // Pick a window that ends on (or contains) the first physical-action line with a character on screen.
 function testClipPickAction(){ const sec=testClipCfg().sec;
   const i=sceneData.findIndex(x=>{ const sp=splitTag(x.line); return x.tag==='IMAGE' && /^(MARCUS|JORDAN|BOTH)/.test(x.charsOrig||x.characters||'') && planShotFor(sp.text,sp.speaker)==='action'; });

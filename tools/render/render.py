@@ -2098,16 +2098,22 @@ def measure_lufs(path):
         return None
 
 
+TEST_STRETCH_MAX_S = 30.0
+
+
 def trim_to_seconds(d, b, segs, words, total, max_s, work, from_s=0.0):
     """Test-clip mode: keep the beats from `from_s` whose end <= from_s + max_s (always >= 1), cut voice/words to match
     and shift the kept window to start at 0."""
-    keep = []
+    keep, stretched = [], False
     from_s = max(0.0, from_s or 0.0)
     for sg in segs:
         if from_s and sg.get("start") is not None and sg["start"] < from_s - 0.05:
             continue
         e = sg.get("end")
         if keep and (e is None or e > from_s + max_s):
+            # an action line that only partly fits stretches the window (up to TEST_STRETCH_MAX_S) instead of being dropped
+            if e is not None and (sg.get("planShot") or sg.get("plan_shot")) == "action" and e <= from_s + TEST_STRETCH_MAX_S:
+                keep.append(sg); stretched = True
             break
         keep.append(sg)
     end = min(total, max(x.get("end") or 0 for x in keep) + 0.35)
@@ -2121,7 +2127,7 @@ def trim_to_seconds(d, b, segs, words, total, max_s, work, from_s=0.0):
                 if sg.get(k) is not None:
                     sg[k] = round(max(0.0, sg[k] - from_s), 3)
     info = {"max_seconds": max_s, "from_seconds": from_s, "beats": len(keep), "of_beats": len(segs), "seconds": round(end - from_s, 2),
-            "first_beat": keep[0].get("index")}
+            "first_beat": keep[0].get("index"), "stretched_for_action": stretched}
     log("test clip: %d of %d beats from %.1fs, %.1fs" % (len(keep), len(segs), from_s, end - from_s))
     return keep, words, media_duration(out), info
 
