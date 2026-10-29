@@ -4522,12 +4522,16 @@ function renderBudgetUI(){
 // Pre-flight before an expensive step. est in $ (or chars for ElevenLabs live). Only warns when a balance is known.
 
 // ── Test-clip mode (fix 6): generate/render only the first ~30-45 s of beats under a hard billed cap (music included) ──
-const TEST_CLIP_MUSIC_RESERVE=0.35; // renderer score for <=30 s at $0.65/min, rounded up
+const TEST_CLIP_MUSIC_COST=0.35; // renderer score for <=30 s at $0.65/min, rounded up
+// Music reserve mirrors the renderer (#85): nothing is held back once the episode score is cached (render service /health says so).
+let musicCachedKnown=null;
+function musicReserveNow(){ return musicCachedKnown===true?0:TEST_CLIP_MUSIC_COST; }
+async function refreshMusicCached(){ try{ const r=await fetch(renderBase()+'/health',{cache:'no-store',headers:{'ngrok-skip-browser-warning':'1'}}); const j=await r.json(); musicCachedKnown=j.music_cached===true; }catch(e){ musicCachedKnown=null; } return musicCachedKnown; }
 const TEST_CLIP_MIN_S=15, TEST_CLIP_MAX_S=30, TEST_CLIP_DEFAULT_S=25, TEST_CLIP_DEFAULT_CAP=3;
 function testClipCfg(){ const c=budgetLoad('cfa_test_clip',{on:false,sec:TEST_CLIP_DEFAULT_S,cap:TEST_CLIP_DEFAULT_CAP,base:0}); c.sec=Math.min(TEST_CLIP_MAX_S,Math.max(TEST_CLIP_MIN_S,+c.sec||TEST_CLIP_DEFAULT_S)); c.cap=Math.min(10,Math.max(0.5,+c.cap||TEST_CLIP_DEFAULT_CAP)); return c; }
 function testClipOn(){ return !!testClipCfg().on; }
 function totalSpendNow(){ return (+sessionSpend||0)+(+voiceSpend||0)+(+textSpend||0); }
-function setTestClip(on,sec,cap,from){ const c=testClipCfg(); c.on=!!on; if(sec!=null) c.sec=+sec; if(cap!=null) c.cap=+cap; if(from!=null) c.from=Math.max(0,from|0); if(on && !testClipCfg().on) c.base=totalSpendNow(); safeSetItem('cfa_test_clip',JSON.stringify(c)); try{ renderTestClipUI(); updateBatchButton(); }catch(e){} return testClipCfg(); }
+function setTestClip(on,sec,cap,from){ if(on){ try{ if(renderServiceReady()) refreshMusicCached(); }catch(e){} } const c=testClipCfg(); c.on=!!on; if(sec!=null) c.sec=+sec; if(cap!=null) c.cap=+cap; if(from!=null) c.from=Math.max(0,from|0); if(on && !testClipCfg().on) c.base=totalSpendNow(); safeSetItem('cfa_test_clip',JSON.stringify(c)); try{ renderTestClipUI(); updateBatchButton(); }catch(e){} return testClipCfg(); }
 function testClipSpent(){ const c=testClipCfg(); return Math.max(0, totalSpendNow()-(c.base||0)); }
 function tcBeatSecs(x){ const L=beatLen(x); if(L>0) return L; const w=String(splitTag(x.line||'').text||x.line||'').split(/\s+/).filter(Boolean).length; return Math.max(1.5,w/2.6); }
 // Index limit: beats 0..n-1 whose cumulative length stays within the test seconds (always >= 1 beat).
@@ -4544,8 +4548,8 @@ function inTestClip(i){ return i>=testClipFrom() && i<testClipLimit(); }
 // Bundle scope for beat i: before the window -> skip, past it -> stop.
 function tcScope(i){ return i>=testClipLimit()?'stop':i<testClipFrom()?'skip':'in'; }
 // Hard cap: refuses (no "try anyway") any call that would push spend + the renderer music reserve over the cap.
-function testClipGuard(est,what){ if(!testClipOn()) return true; const c=testClipCfg(), e=typeof est==='object'?(est.usd||0):(+est||0), after=testClipSpent()+e+TEST_CLIP_MUSIC_RESERVE;
-  if(after>c.cap+1e-9){ alert('🧪 Test-clip cap: '+what+' would bring billed spend to ≈ $'+after.toFixed(2)+' (incl. $'+TEST_CLIP_MUSIC_RESERVE.toFixed(2)+' music reserve), over the $'+c.cap.toFixed(2)+' cap. Stopped.'); return false; } return true; }
+function testClipGuard(est,what){ if(!testClipOn()) return true; const c=testClipCfg(), e=typeof est==='object'?(est.usd||0):(+est||0), after=testClipSpent()+e+musicReserveNow();
+  if(after>c.cap+1e-9){ alert('🧪 Test-clip cap: '+what+' would bring billed spend to ≈ $'+after.toFixed(2)+' (incl. $'+musicReserveNow().toFixed(2)+' music reserve), over the $'+c.cap.toFixed(2)+' cap. Stopped.'); return false; } return true; }
 function testClipRenderQuery(){ if(!testClipOn()) return ''; const c=testClipCfg(); const f=testClipFrom(), fs=f&&sceneData[f]&&sceneData[f].tStart!=null?Math.max(0,sceneData[f].tStart-0.3):0; return (fs?'&test_from='+fs.toFixed(2):'')+'&test_s='+c.sec.toFixed(0)+'&cap='+Math.max(0,c.cap-testClipSpent()).toFixed(2); }
 function renderTestClipUI(){ const el=document.getElementById('tc-status'); if(!el) return; const c=testClipCfg(); const cb=document.getElementById('tc-on'); if(cb) cb.checked=c.on;
   el.textContent=c.on?('🧪 Test clip: beats '+(testClipFrom()+1)+'–'+testClipLimit()+' ≈ '+c.sec+' s · spent $'+testClipSpent().toFixed(2)+' of $'+c.cap.toFixed(2)+' cap (music included)'):'Full episode'; }
