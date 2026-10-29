@@ -10,6 +10,7 @@ covered by a caption cue at its own time, and on-screen text never says "crypto"
 import json, os, re, subprocess, sys, tempfile, zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+os.environ["CFA_CAPTIONS"] = "on"   # these checks cover the caption styles; zero-text default is in test_shot_plan
 import render  # noqa: E402
 
 fails = []

@@ -1293,6 +1293,44 @@ def ass_esc(s):
     return s.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", " ")
 
 
+CAPTIONS_ON = os.environ.get("CFA_CAPTIONS", "off") == "on"   # default: zero burned-in text
+
+
+TEXT_GATE_SYS = ("You read a contact sheet of video frames from a 3D animated clip. List every piece of readable or pseudo writing you can see "
+                 "(captions, subtitles, titles, overlays, signs, labels, screens, paper), per tile number (tiles numbered left-to-right, top-to-bottom from 1). "
+                 'Mark each as "overlay" (burned-in caption/title over the picture) or "scene" (part of the drawn world) and whether it is correctly spelled real words. '
+                 'JSON only: {"items":[{"tile":<int>,"text":"...","kind":"overlay|scene","spelled_ok":<bool>}]}')
+
+
+def text_gate(mp4, key, every=1.0, ask=None, allow_scene=False):
+    """Zero on-screen text: samples a frame every `every` s into tiled sheets and asks the vision model for any writing.
+    Fails on any overlay text, and on scene writing unless allowed (then it must be correctly spelled)."""
+    import base64, tempfile
+    items = []
+    if ask:
+        items = ask(None).get("items") or []
+    else:
+        d = tempfile.mkdtemp()
+        dur = media_duration(mp4)
+        n = max(1, int(dur / every))
+        for k0 in range(0, n, 12):
+            sheet = os.path.join(d, "t%d.jpg" % k0)
+            run(["ffmpeg", "-y", "-v", "error", "-ss", "%.2f" % (k0 * every), "-i", mp4, "-vf",
+                 "fps=1/%.2f,scale=480:-2,tile=4x3" % every, "-frames:v", "1", sheet])
+            url = "data:image/jpeg;base64," + base64.b64encode(open(sheet, "rb").read()).decode()
+            body = json.dumps({"model": "grok-4.3", "response_format": {"type": "json_object"}, "max_tokens": 400, "messages": [
+                {"role": "system", "content": TEXT_GATE_SYS}, {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}]}]}).encode()
+            req = urllib.request.Request(XAI_URL, data=body, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                txt = json.load(r)["choices"][0]["message"]["content"]
+            o = json.loads(re.sub(r"^```(?:json)?|```$", "", txt.strip()).strip())
+            for it in o.get("items") or []:
+                it["t"] = round((k0 + int(it.get("tile") or 1) - 1) * every, 2)
+                items.append(it)
+    bad = [it for it in items if str(it.get("text", "")).strip() and (it.get("kind") != "scene" or not allow_scene or it.get("spelled_ok") is False)]
+    return {"pass": not bad, "items": items, "fails": bad[:10]}
+
+
 def build_ass(words, segs, edl, W, H, total, path):
     cap = edl["caption_style"]
     vertical = H > W
@@ -1380,6 +1418,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if ec["enabled"]:
         d = min(ec["duration"], total / 3)
         ev.append("Dialogue: 2,%s,%s,Title,,0,0,0,,{\\an5\\pos(%d,%d)\\fad(400,300)}%s" % (ass_time(total - d), ass_time(total), W // 2, int(H * 0.38), ass_esc(ec["text"])))
+    if not CAPTIONS_ON:   # no on-screen text at all: no captions, overlays, title or end card burned in
+        ev = []
     open(path, "w", encoding="utf-8").write(head + "\n".join(ev) + "\n")
     return cues
 
@@ -2083,10 +2123,13 @@ def main():
     ap.add_argument("--foley", action="store_true", default=FOLEY_DEFAULT_ON, help="add sparse foley hits (typing, pencil, paper, door, tool) from the spoken lines; off by default")
     ap.add_argument("--no-ambience", action="store_true", help="skip per-scene ElevenLabs ambience from the director's sfx text")
     ap.add_argument("--no-end-card", action="store_true")
+    ap.add_argument("--captions", action="store_true", help="burn in captions/overlays/end card (off: zero on-screen text)")
     ap.add_argument("--keep-work", action="store_true")
     a = ap.parse_args()
 
     ensure_ffmpeg()
+    global CAPTIONS_ON
+    CAPTIONS_ON = CAPTIONS_ON or a.captions
     global GROK_TITLE
     GROK_TITLE = bool(a.grok_title)
     global LUT_PATH
@@ -2147,7 +2190,7 @@ def main():
         edl["caption_style"]["preset"] = a.caption_style
     if a.no_title or not a.title:   # fix (b): no title slide by default; the audience gets the topic from what they hear and see
         edl["title_card"]["enabled"] = False
-    if a.no_end_card:
+    if a.no_end_card or not CAPTIONS_ON:   # no text: the end card (text only) goes too
         edl["end_card"]["enabled"] = False
     PHRASE = b.get("shotPlan") == "phrase"   # tool planned one new image per phrase: no re-angled splits of a still
     if not PHRASE:
@@ -2450,6 +2493,15 @@ def main():
             gate["fails"].append("motion off its phrase by %.2fs" % gate["phrase_align"]["max_offset_s"]); gate["pass"] = False
         log("similarity gate:", "PASS" if gate["similarity"]["pass"] else "FAIL", gate["similarity"]["fails"], "| phrase align:", gate["phrase_align"])
     log("distortion gate:", "PASS" if not gate["distortion"]["over"] else "FAIL", gate["distortion"])
+    if not CAPTIONS_ON and key and not os.environ.get("CFA_NO_TEXT_GATE"):
+        try:
+            tg = text_gate(final, key, allow_scene=True)
+        except Exception as e:
+            tg = {"pass": True, "error": str(e)[:120], "items": []}
+        gate["text"] = tg
+        if not tg["pass"]:
+            gate["fails"].append("on-screen text %s" % [x.get("text") for x in tg["fails"]][:5]); gate["pass"] = False
+        log("text gate:", "PASS" if tg["pass"] else "FAIL", tg.get("items"))
     log("motion gate:", "PASS" if gate["pass"] else "FAIL " + "; ".join(gate["fails"]))
     report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
