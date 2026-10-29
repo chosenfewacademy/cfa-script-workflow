@@ -96,6 +96,14 @@ def chunk_groups(n, size):
     return groups
 
 
+FINAL_CRF, FINAL_PRESET, FINAL_MINRATE = 14, "slow", "8M"   # v6 final was crf 18 medium = 3.1 Mbps at 1080p
+INTER_CRF = 8                     # per-shot intermediates near-lossless (they are re-encoded once more)
+FINAL_MIN_KBPS = 7600             # quality gate: 1080p final must average >= ~8 Mbps
+SHARPEN_VF = ",unsharp=5:5:0.45:5:5:0.0"   # light luma sharpen after the lanczos scale
+HEADROOM_Y = 0.15                 # cover crops keep the top of the art (heads sit high in 3:2 stills; centre crops cut them)
+UPSCALE_MAX = 1.7                 # sharpness gate: no still is blown up more than this (v6 shot 2: false bar crop -> 2.3x)
+
+
 def encode_video(clips, shots, total, tail_filter, audio, final, work, chunk=None):
     """Encode the shot chain. Long edits are pre-joined in chunks so ffmpeg never holds
     more than `chunk` decoders at once (a single 100+ input graph got OOM-killed)."""
@@ -116,7 +124,7 @@ def encode_video(clips, shots, total, tail_filter, audio, final, work, chunk=Non
             for k in g:
                 ins += ["-i", clips[k]]
             run(["ffmpeg", "-y", "-v", "error"] + ins + ["-filter_complex_script", gfile, "-map", "[v]",
-                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-pix_fmt", "yuv420p", "-r", str(FPS), out])
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", str(INTER_CRF), "-pix_fmt", "yuv420p", "-r", str(FPS), out])
             srcs.append(out)
             sshots.append(shots[g[0]])
     fc, prev = chain_graph(len(srcs), sshots, 0.0)
@@ -127,9 +135,18 @@ def encode_video(clips, shots, total, tail_filter, audio, final, work, chunk=Non
     for c in srcs:
         inputs += ["-i", c]
     run(["ffmpeg", "-y", "-v", "error"] + inputs + ["-i", audio, "-filter_complex_script", fcs,
-         "-map", "[v]", "-map", "%d:a" % len(srcs), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+         "-map", "[v]", "-map", "%d:a" % len(srcs), "-c:v", "libx264", "-preset", FINAL_PRESET, "-crf", str(FINAL_CRF), "-minrate", FINAL_MINRATE, "-maxrate", "30M", "-bufsize", "30M",
          "-profile:v", "high", "-pix_fmt", "yuv420p", "-r", str(FPS), "-c:a", "copy", "-t", "%.3f" % total,
          "-movflags", "+faststart", final])
+    try:
+        kb = float(json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=bit_rate", "-of", "json", final], capture_output=True, text=True).stdout)["format"]["bit_rate"]) / 1000
+    except Exception:
+        kb = None
+    if kb is not None and kb < FINAL_MIN_KBPS:   # flat cartoon art: CRF alone lands under the floor -> constrained rate at >= 9 Mbps
+        tmp = final + ".rate.mp4"
+        run(["ffmpeg", "-y", "-v", "error", "-i", final, "-c:v", "libx264", "-preset", FINAL_PRESET, "-b:v", "10M", "-minrate", "9M", "-maxrate", "16M",
+             "-bufsize", "10M", "-profile:v", "high", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", tmp])
+        os.replace(tmp, final)
 
 def ensure_ffmpeg():
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):
@@ -801,6 +818,7 @@ _BARS = {}
 _SUBJ = {}
 _LUMA = {}
 DARK_LIFT_BELOW, DARK_TARGET = 80.0, 95.0
+DARK_GAMMA_MAX = 1.35   # v6 lifted luma-37 stills by gamma 1.9 -> washed out, noisy; too-dark stills are rejected at generation instead
 
 
 def mean_luma(src, kind):
@@ -824,7 +842,7 @@ def lift_filter(y):
     """Gamma lift that brings a too-dark frame's mean luma to ~DARK_TARGET (keeps blacks black, opens midtones)."""
     if y is None or y >= DARK_LIFT_BELOW or y <= 1:
         return ""
-    g = max(1.05, min(1.9, math.log(y / 255.0) / math.log(DARK_TARGET / 255.0)))
+    g = max(1.05, min(DARK_GAMMA_MAX, math.log(y / 255.0) / math.log(DARK_TARGET / 255.0)))
     return ",eq=gamma=%.2f:contrast=1.12:saturation=1.1" % g
 SUBJECT_KEY = None  # xAI key for subject location (vertical reframing); None -> centre
 
@@ -906,7 +924,7 @@ def bars_are_flat(src, kind, box, iw, ih):
 def fill_graph(box, W, H):
     """-vf prefix: crop away baked-in bars and place the art over a blurred fill of itself at the canvas size."""
     w, h, x, y = box
-    return ("crop=%d:%d:%d:%d,scale=%d:%d:force_original_aspect_ratio=increase:flags=lanczos,crop=%d:%d,setsar=1" % (w, h, x, y, W, H, W, H))
+    return ("crop=%d:%d:%d:%d,scale=%d:%d:force_original_aspect_ratio=increase:flags=lanczos,crop=%d:%d:(iw-ow)/2:(ih-oh)*%.2f,setsar=1" % (w, h, x, y, W, H, W, H, HEADROOM_Y))
 
 
 # ── 2.5D depth parallax for stills (replaces the Ken Burns fallback; Oct 28 motion audit) ──
@@ -1051,9 +1069,9 @@ def render_still_parallax(src, shot, W, H, out, frames, fit_vf, depth_png=None):
     depth = dm.astype(np.float32) / 255.0 if dm is not None else synthetic_depth(Ho, Wo)
     m = shot.get("motion") or "zoom_in"
     punch = PUNCH_ZOOM if m == "punch_in" else 1.0
-    focus = FOCI.get(shot.get("focus"), (0.5, 0.5)) if m == "punch_in" else (0.5, 0.5)
+    focus = FOCI.get(shot.get("focus"), (0.5, 0.4)) if m == "punch_in" else (0.5, 0.42)   # bias up: never trim heads
     p = subprocess.Popen(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", "%dx%d" % (W, H), "-r", str(FPS),
-                          "-i", "-", "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast", "-crf", "14",
+                          "-i", "-", "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast", "-crf", str(INTER_CRF),
                           "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", out], stdin=subprocess.PIPE)
     try:
         st = {}
@@ -1222,7 +1240,7 @@ def edge_band_stats(frame):
     out = {}
     for k, band, lb in (("left", frame[:, :b], lap[:, :b]), ("right", frame[:, -b:], lap[:, -b:]),
                         ("top", frame[:bh, :], lap[:bh, :]), ("bottom", frame[-bh:, :], lap[-bh:, :])):
-        out[k] = (float(band.mean()) < EDGE_DARK_Y and ymid > EDGE_DARK_Y * 2.5, float(lb.mean()) / inner < EDGE_SHARP_MIN, round(float(lb.mean()) / inner, 3))
+        out[k] = (float(band.mean()) < EDGE_DARK_Y and ymid > EDGE_DARK_Y * 2.5 and float(lb.mean()) / inner < 0.3, float(lb.mean()) / inner < EDGE_SHARP_MIN, round(float(lb.mean()) / inner, 3))
     return out
 
 
@@ -1310,8 +1328,14 @@ def render_shot(src, kind, shot, W, H, out, frames):
         pre = ("crop=%d:%d:%d:%d," % box) if box else ""
         if reframe:
             return pre + subject_crop(w, h, reframe) + ",setsar=1" + lift
-        return (fill_graph(box, w, h) if box else "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1" % (w, h, w, h)) + lift
-    enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-pix_fmt", "yuv420p", "-r", str(FPS), "-an"]
+        return (fill_graph(box, w, h) if box else "scale=%d:%d:force_original_aspect_ratio=increase:flags=lanczos,crop=%d:%d:(iw-ow)/2:(ih-oh)*%.2f,setsar=1" % (w, h, w, h, HEADROOM_Y)) + SHARPEN_VF + lift
+    try:
+        iw, ih = (box[0], box[1]) if box else probe_wh(src)
+        ov = PARALLAX_OVERSCAN if (kind or "image") == "image" and STILL_MOTION == "parallax" else 1.0
+        shot["_upscale"] = round(max(W * ov / float(iw), H * ov / float(ih)), 3) if iw and ih else None
+    except Exception:
+        shot["_upscale"] = None
+    enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(INTER_CRF), "-pix_fmt", "yuv420p", "-r", str(FPS), "-an"]
     if src is None:
         vf = "color=c=0x101418:s=%dx%d:r=%d" % (W, H, FPS)
         run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", vf, "-frames:v", str(frames)] + enc + [out])
@@ -2449,7 +2473,10 @@ def main():
         elif last_media:  # last resort: hold the previous visual rather than going black (reported as a hole)
             src, kind = last_media
             shot["held_neighbour"] = True
-            log("HOLE: shot", i, "holds the neighbouring shot (no image on its line)")
+            # never the same frame frozen twice in a row: a tight punch-in, moving the other way
+            shot["motion"] = "punch_in"; shot["focus"] = "top"
+            shot["_dir"] = -(shots[i - 1].get("_dir") or 1) if i else -1
+            log("HOLE: shot", i, "holds the neighbouring shot (no image on its line) - punch-in reframe; hole gate fails")
         else:  # nothing before it (missing opening scene): borrow the next available visual
             nx = next((x for x in shots[i + 1:] if x.get("media")), None)
             if nx:
@@ -2637,6 +2664,16 @@ def main():
         log("edge gate:", "PASS" if gate["edges"]["pass"] else "FAIL", gate["edges"]["bad"][:4])
     except Exception as e:
         gate["edges"] = {"pass": None, "error": str(e)[:120]}
+    gate["holes"] = {"pass": not any(x.get("held_neighbour") for x in shots), "held": [x.get("index") for x in shots if x.get("held_neighbour")]}
+    log("hole gate:", "PASS" if gate["holes"]["pass"] else "FAIL", gate["holes"]["held"])
+    try:
+        ups = [(x.get("index"), x.get("_upscale")) for x in shots if x.get("_upscale")]
+        kbps = int(float(json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=bit_rate", "-of", "json", final], capture_output=True, text=True).stdout)["format"].get("bit_rate") or 0) / 1000)
+        over = [u for u in ups if u[1] > UPSCALE_MAX]
+        gate["sharpness"] = {"pass": not over and kbps >= FINAL_MIN_KBPS, "upscale": ups, "over": over, "kbps": kbps}
+        log("sharpness gate:", "PASS" if gate["sharpness"]["pass"] else "FAIL", gate["sharpness"])
+    except Exception as e:
+        gate["sharpness"] = {"pass": None, "error": str(e)[:120]}
     if not CAPTIONS_ON and key and not os.environ.get("CFA_NO_TEXT_GATE"):
         try:
             tg = text_gate(final, key, allow_scene=True)
@@ -2649,7 +2686,7 @@ def main():
     if i2v_info.get("degraded"):
         gate["fails"].append("action shot(s) %s became stills (no character motion)" % i2v_info["degraded"]); gate["pass"] = False
     log("motion gate:", "PASS" if gate["pass"] else "FAIL " + "; ".join(gate["fails"]))
-    report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "still_props": still_props if "still_props" in dir() else {}, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
+    report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "still_props": still_props, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
               "audio_streams": len(au), "lufs": measure_lufs(final), "edl_source": source,
               "edl_problems": problems, "grok_usage": usage, "beats": len(segs),
