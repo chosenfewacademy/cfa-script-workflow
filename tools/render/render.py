@@ -99,7 +99,7 @@ def chunk_groups(n, size):
 FINAL_CRF, FINAL_PRESET, FINAL_MINRATE = 14, "slow", "8M"   # v6 final was crf 18 medium = 3.1 Mbps at 1080p
 INTER_CRF = 8                     # per-shot intermediates near-lossless (they are re-encoded once more)
 FINAL_MIN_KBPS = 7600             # quality gate: 1080p final must average >= ~8 Mbps
-SHARPEN_VF = ",unsharp=5:5:0.45:5:5:0.0"   # light luma sharpen after the lanczos scale
+SHARPEN_VF = os.environ.get("CFA_SHARPEN_VF", ",unsharp=5:5:0.45:5:5:0.0")   # light luma sharpen after the lanczos scale
 HEADROOM_Y = 0.15                 # cover crops keep the top of the art (heads sit high in 3:2 stills; centre crops cut them)
 UPSCALE_MAX = 1.7                 # sharpness gate: no still is blown up more than this (v6 shot 2: false bar crop -> 2.3x)
 
