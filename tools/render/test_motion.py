@@ -46,4 +46,23 @@ with tempfile.TemporaryDirectory() as d:
     calls = []
     R.i2v_clip(img, "wan", "k", os.path.join(d, "c.mp4"), fetch=lambda m, pl: calls.append((m, "closed" in pl["prompt"])) or b"x" * 2000)
     check(calls == [("fal-ai/wan/v2.2-a14b/image-to-video", True)], "i2v uses the fal queue model with the mouth-closed idle prompt (mocked)")
+
+# fix (a): smoothing + distortion gate
+import numpy as np
+yy, xx = np.mgrid[0:720, 0:1280].astype(np.float32)
+check(abs(R.map_stretch(xx / 1.03, yy / 1.03) - 1.0) < 0.01, "uniform zoom has stretch ~1.0")
+mx = xx.copy(); mx[:, 600:700] = 600.0
+check(R.map_stretch(mx, yy) > 1.5, "edge-clamped (smeared) band is flagged as stretch")
+check(abs(R._ease(0) - 0) < 1e-9 and abs(R._ease(1) - 1) < 1e-9 and abs(R._ease(0.5) - 0.5) < 1e-9 and R._ease(0.1) < 0.1, "moves are eased (slow in/out)")
+step = np.zeros((720, 1280), np.float32); step[:, 640:] = 1.0
+img = (np.random.RandomState(1).rand(806, 1434, 3) * 255).astype(np.uint8)
+st = {}; list(R.parallax_frames(img, step, 1280, 720, 60, "pan_right", (0.5, 0.5), 1.0, 1, st))
+check(st["stretch"] <= R.GATE_STRETCH_MAX, "new amplitude on a hard depth step stays under the stretch gate (%.3f)" % st["stretch"])
+o = (R.PARALLAX_PX_S, R.PARALLAX_ZOOM_S, R.PARALLAX_DEPTH_SCALE); R.PARALLAX_PX_S, R.PARALLAX_ZOOM_S, R.PARALLAX_DEPTH_SCALE = 48.0, 0.05, 1.0
+st2 = {}; list(R.parallax_frames(img, step, 1280, 720, 60, "pan_right", (0.5, 0.5), 1.0, 1, st2))
+R.PARALLAX_PX_S, R.PARALLAX_ZOOM_S, R.PARALLAX_DEPTH_SCALE = o
+check(st2["stretch"] > st["stretch"], "old strong amplitude stretches more (%.3f > %.3f)" % (st2["stretch"], st["stretch"]))
+sh = R.assign_directions([{"role": "hook"}, {"role": "tension"}, {"role": "tension"}, {"role": "turn"}, {"role": "resolve"}])
+check([x["_dir"] for x in sh] == [1, 1, 1, -1, -1], "one drift direction across adjacent shots, flips at the turn")
+check(R.PARALLAX_PX_S <= 12 and R.PARALLAX_DEPTH_SCALE <= 0.5, "parallax amplitude/depth scale are small")
 print("\n%d failure(s)" % fails); sys.exit(1 if fails else 0)
