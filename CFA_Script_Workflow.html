@@ -5905,6 +5905,20 @@ function capStillPiece(text){
     if(best-st<minW||w.length-best<minW) continue; out.push(w.slice(st,best).join(' ')); st=best; }
   out.push(w.slice(st).join(' ')); return out; }
 function stillLengthViolations(from,to){ const bad=[]; for(let i=from||0;i<(to==null?sceneData.length:to);i++){ const x=sceneData[i]; if(x.tag==='IMAGE' && x.planShot!=='action' && beatLen(x)>STILL_MAX_S+0.5) bad.push([i,+beatLen(x).toFixed(2)]); } return bad; }
+// Every still shot lasts at least STILL_MIN_S: a shorter piece merges into the shorter neighbouring piece of the
+// SAME script line (if the result stays <= STILL_MAX_S+0.5s). Keeps the first piece's media, else the other's.
+function shotKey(x){ const m=String(x?.line||'').match(/^\s*(\d+)\.\s*([A-Z][A-Z .']*:)?/); return m?m[1]+'|'+(m[2]||''):null; }
+function shotLen(x){ return (x&&x.tEnd!=null&&x.tStart!=null)?x.tEnd-x.tStart:beatLen(x); }
+function mergeShortShots(lim){ lim=lim==null?sceneData.length:Math.min(lim,sceneData.length);
+  for(let i=0;i<lim;i++){ const x=sceneData[i]; if(x.tag!=='IMAGE'||x.planShot==='action') continue; const L=shotLen(x); if(!(L>0&&L<STILL_MIN_S)) continue;
+    const k=shotKey(x); const cand=[i-1,i+1].filter(j=>j>=0&&j<lim&&sceneData[j].tag==='IMAGE'&&sceneData[j].planShot!=='action'&&shotKey(sceneData[j])===k&&L+shotLen(sceneData[j])<=STILL_MAX_S+0.5).sort((a,b)=>shotLen(sceneData[a])-shotLen(sceneData[b]));
+    if(!cand.length) continue; const j=cand[0], a=Math.min(i,j), b=Math.max(i,j), A=sceneData[a], B=sceneData[b];
+    const pre=String(A.line).match(/^\s*\d+\.\s*([A-Z][A-Z .']*:\s*)?/)[0];
+    A.line=pre+splitTag(A.line).text.trim()+' '+splitTag(B.line).text.trim();
+    if(!A.resultURL && B.resultURL){ A.resultURL=B.resultURL; A.resultType=B.resultType; A.resultModel=B.resultModel; }
+    if(A.tStart!=null&&B.tEnd!=null){ A.tStart=Math.min(A.tStart,B.tStart??A.tStart); A.tEnd=B.tEnd; }
+    sceneData.splice(b,1); return true; }
+  return false; }
 // Rewrites sceneData (first `limit` beats) into phrase shots; keeps media of a beat's first phrase and its VIDEO beats.
 function applyPhraseShots(limit){
   const lim=limit==null?sceneData.length:limit, out=[]; let n=0;
@@ -5921,6 +5935,7 @@ function applyPhraseShots(limit){
   });
   sceneData.length=0; out.forEach(x=>sceneData.push(x));
   planShots(); try{ assignBeatTimes(); }catch(e){}
+  for(let pass=0; pass<6 && mergeShortShots(lim); pass++){ planShots(); try{ assignBeatTimes(); }catch(e){} }
   return n;
 }
 // Shot type from the line: a character physically acting -> moving shot (image-to-video); emotion/reaction/info -> 3D still + camera move.

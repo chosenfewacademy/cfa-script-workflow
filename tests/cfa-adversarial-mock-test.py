@@ -1348,6 +1348,11 @@ async def main():
               const mk=(sc,x)=>Object.assign({},ok,{identity:[{name:'Jordan',visible:true,score:sc}]},x||{});
               return [easeIdentity(mk(6)).identity_match, easeIdentity(mk(5)).identity_match, easeIdentity(mk(6,{quality_bad:true})).identity_match, easeIdentity(mk(6,{identity:[{name:'Jordan',visible:false,score:6}]})).identity_match]}""")
             check('identity ease: Jordan at 6 passes only when every other check passes (5, other failure or off-screen still fail)', r8==[True,False,False,False], r8)
+            r9=await J(pg,"""()=>{const keep=sceneData.slice(); sceneData.length=0;
+              [['2. NARRATOR: Dee had',0,1.3],['2. NARRATOR: to reach the supplier today.',1.3,3.4],['2. NARRATOR: by five.',3.4,4.2],['3. JORDAN: Hang on.',4.2,5.0]].forEach(([l,a,b])=>sceneData.push({line:l,tag:'IMAGE',characters:'NONE',prompt:'p',tStart:a,tEnd:b}));
+              sceneData[0].resultURL='blob:a'; while(mergeShortShots()){}
+              const r=sceneData.map(x=>[x.line,+(x.tEnd-x.tStart).toFixed(2),x.resultURL||null]); sceneData.length=0; keep.forEach(x=>sceneData.push(x)); return r;}""")
+            check('min shot: pieces under 2s merge into a neighbour of the same line, other lines untouched', r9[0][0]=='2. NARRATOR: Dee had to reach the supplier today. by five.' and r9[0][1]==4.2 and r9[0][2]=='blob:a' and len(r9)==2 and r9[-1][0]=='3. JORDAN: Hang on.', r9)
             check('framing: a cut-off head fails the image check, full head passes', not r7['cut']['framing_ok'] and not r7['cut']['ok'] and r7['ok']['framing_ok'], [r7['cut'],r7['ok']])
             check('prompts: writing requests are stripped (battery %, twelve words) and the rest kept', '%' not in r7['strip'] and 'twelve' not in r7['strip'] and 'green notebook' in r7['strip'] and 'Jordan leans in' in r7['strip'], r7['strip'])
             check('block: failed checks block the still (people, quality, framing); a clean check does not', r7['why']==[['people','quality'],[],['framing']] and r7['blockOn'], r7['why'])
