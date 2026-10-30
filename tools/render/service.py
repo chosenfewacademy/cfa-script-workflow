@@ -310,12 +310,28 @@ class H(BaseHTTPRequestHandler):
         got = self.headers.get("Authorization", "")
         ok = bool(t) and hmac.compare_digest(got.encode(), ("Bearer " + t).encode())
         if not ok:
+            self.drain()
             self.send(401, {"error": "missing or wrong access token"})
         return ok
+
+    def drain(self, cap=32 << 20):
+        """Read (and drop) a rejected request body so the client gets the 401/403 instead of a broken pipe."""
+        n = int(self.headers.get("Content-Length") or 0)
+        if self.command != "POST" or n <= 0:
+            return
+        if n > cap:
+            self.close_connection = True
+            return
+        while n > 0:
+            c = self.rfile.read(min(n, 1 << 20))
+            if not c:
+                break
+            n -= len(c)
 
     def origin_ok(self):
         o = self.headers.get("Origin")
         if o and o not in ORIGINS:
+            self.drain()
             self.send(403, {"error": "origin not allowed"})
             return False
         return True
