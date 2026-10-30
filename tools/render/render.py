@@ -99,7 +99,7 @@ def chunk_groups(n, size):
 FINAL_CRF, FINAL_PRESET, FINAL_MINRATE = 14, "slow", "8M"   # v6 final was crf 18 medium = 3.1 Mbps at 1080p
 INTER_CRF = 8                     # per-shot intermediates near-lossless (they are re-encoded once more)
 FINAL_MIN_KBPS = 8000             # quality gate: 1080p final must average >= ~8 Mbps
-SHARPEN_VF = os.environ.get("CFA_SHARPEN_VF", ",unsharp=5:5:0.45:5:5:0.0")   # light luma sharpen after the lanczos scale
+SHARPEN_VF = os.environ.get("CFA_SHARPEN_VF", ",unsharp=3:3:0.9:3:3:0,cas=0.35")   # v8 locked: crisp props, no halos   # light luma sharpen after the lanczos scale
 HEADROOM_Y = 0.15                 # cover crops keep the top of the art (heads sit high in 3:2 stills; centre crops cut them)
 UPSCALE_MAX = 1.7                 # sharpness gate: no still is blown up more than this (v6 shot 2: false bar crop -> 2.3x)
 
@@ -2455,10 +2455,19 @@ def main():
                         ck = i2v_frame_check(out_mp4, xk, ref, 1, line=x.get("line") or "", prior=src_img)
                     except Exception as e:
                         ck = {"ok": True, "why": [], "error": str(e)[:80]}
+                if xk and ck["ok"] and not os.environ.get("CFA_NO_FIDELITY"):   # the clip must act out ITS line: action, object, emotion
+                    try:
+                        fv = script_fidelity(out_mp4, x.get("line") or "", xk, "video")
+                    except Exception as e:
+                        fv = {"ok": None, "error": str(e)[:80]}
+                    ck["fidelity"] = fv
+                    if fv.get("ok") is False:
+                        ck["ok"] = False; ck.setdefault("why", []).append("script fidelity: %s" % fv.get("why"))
                 checks.append(dict(ck, media=x["media"], try_=t))
                 log("i2v check", x["media"], "try", t, "ok" if ck["ok"] else ck["why"])
                 if ck["ok"]:
-                    x["media"] = out_mp4; x["mediaType"] = "video"; n += 1; break
+                    x["media"] = upscale_clip(out_mp4, fk, os.path.join(work, "act_%d_%d_up.mp4" % (n, t)), W) if VIDEO_UPSCALE else out_mp4
+                    x["mediaType"] = "video"; x["_upscaled"] = x["media"] != out_mp4; n += 1; break
             if x.get("mediaType") != "video":
                 x["i2v_rejected"] = True   # every try failed the frame check, errored or hit the cap
                 i2v_info.setdefault("degraded", []).append(x.get("beats") or x.get("media"))
@@ -2725,6 +2734,23 @@ def main():
         gate["edges"] = {"pass": None, "error": str(e)[:120]}
     gate["holes"] = {"pass": not any(x.get("held_neighbour") for x in shots), "held": [x.get("index") for x in shots if x.get("held_neighbour")]}
     log("hole gate:", "PASS" if gate["holes"]["pass"] else "FAIL", gate["holes"]["held"])
+    if key and not os.environ.get("CFA_NO_FIDELITY"):   # v8: every still must act out its own line (action, object, emotion)
+        fid, seen = [], set()
+        for x in shots:
+            m, ln = x.get("media"), x.get("line") or ""
+            if not m or m in seen or x.get("mediaType") == "video" or not ln:
+                continue
+            seen.add(m)
+            try:
+                fv = script_fidelity(m if os.path.isabs(m) else os.path.join(d, m), ln, key, "image")
+            except Exception as e:
+                fv = {"ok": None, "error": str(e)[:80]}
+            fid.append(dict(fv, media=m, index=x.get("index")))
+        bad = [f for f in fid if f.get("ok") is False]
+        gate["fidelity"] = {"pass": not bad, "checked": len(fid), "fails": [(f["media"], f.get("why")) for f in bad]}
+        if bad:
+            gate["fails"].append("shots off their line %s (regenerate these stills)" % [f["media"] for f in bad]); gate["pass"] = False
+        log("fidelity gate:", "PASS" if not bad else "FAIL", gate["fidelity"]["fails"][:3])
     try:
         ups = [(x.get("index"), x.get("_upscale")) for x in shots if x.get("_upscale")]
         kbps = int(float(json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=bit_rate", "-of", "json", final], capture_output=True, text=True).stdout)["format"].get("bit_rate") or 0) / 1000)
@@ -2832,10 +2858,69 @@ def i2v_duration(mode, shot_s):
     return 6
 
 
+VIDEO_UPSCALE = os.environ.get("CFA_VIDEO_UPSCALE", "1") != "0"   # v8 locked: fal RealESRGAN on every accepted i2v clip
+VIDEO_UPSCALE_MODEL = "fal-ai/video-upscaler"
+VIDEO_UPSCALE_PER_MP = 0.0008     # fal price, billed on OUTPUT megapixels (v8: 150 frames @1080p = $0.237)
+VIDEO_UPSCALE_FPS = 30
+
+
+def upscale_cost(shot_s=None, W=1920, H=1080):
+    return round(VIDEO_UPSCALE_PER_MP * W * H / 1e6 * VIDEO_UPSCALE_FPS * float(shot_s or 6.0) + 0.01, 3) if VIDEO_UPSCALE else 0.0
+
+
+def upscale_clip(raw, key, out, W=1920, fetch=None):
+    """Raw i2v clip -> fal video upscaler at exactly the factor that lands on the output width (no extra MP billed). Keeps raw on failure."""
+    import base64, requests
+    try:
+        iw, ih = probe_wh(raw)
+        sc = round(max(1.0, W / float(iw or W)), 3)
+        if sc <= 1.01:
+            return raw
+        uri = "data:video/mp4;base64," + base64.b64encode(open(raw, "rb").read()).decode()
+        if fetch:
+            data = fetch(VIDEO_UPSCALE_MODEL, {"video_url": uri, "scale": sc})
+        else:
+            h = {"Authorization": "Key " + key}
+            j = net_retry(lambda: requests.post("https://queue.fal.run/" + VIDEO_UPSCALE_MODEL, headers=h, json={"video_url": uri, "scale": sc}, timeout=120).json(), post=True)
+            for _ in range(240):
+                if net_retry(lambda: requests.get(j["status_url"], headers=h, timeout=30).json()).get("status") == "COMPLETED":
+                    break
+                time.sleep(5)
+            res = net_retry(lambda: requests.get(j["response_url"], headers=h, timeout=60).json())
+            data = net_retry(lambda: requests.get(res["video"]["url"], timeout=180).content)
+        open(out, "wb").write(data)
+        log("upscaled i2v clip x%.2f -> %s" % (sc, os.path.basename(out)))
+        return out
+    except Exception as e:
+        log("video upscale failed (%s); keeping the raw clip" % str(e)[:80])
+        return raw
+
+
+FIDELITY_SYS = ("You check that one shot of an animated story brings its script line to life. Given the line and the shot (1-3 frames), judge: "
+                "action (what the character does matches what the line says or implies), object (the thing the line is about is visible and right, "
+                "or the line names no object), emotion (face/body show the feeling the line carries). Return JSON only "
+                "{\"action\":bool,\"object\":bool,\"emotion\":bool,\"why\":\"short\"}.")
+
+
+def script_fidelity(path, line, key, kind="image", ask=None):
+    """Does the shot match its line (action, object, emotion)? {ok, action, object, emotion, why}. ok=None when unchecked."""
+    if not (line and (key or ask)):
+        return {"ok": None}
+    if ask:
+        o = ask(line)
+    else:
+        times = [None] if kind == "image" else [0.3, max(0.4, (media_duration(path) or 3) * 0.5), max(0.5, (media_duration(path) or 3) - 0.3)]
+        imgs = [{"type": "image_url", "image_url": {"url": u}} for u in _frame_uris(path, times, 768)]
+        o = _vision_json(key, FIDELITY_SYS, [{"type": "text", "text": "Line: " + line[:300]}] + imgs, 200)
+    ok = all(o.get(k) is not False for k in ("action", "object", "emotion"))
+    return {"ok": ok, "action": o.get("action"), "object": o.get("object"), "emotion": o.get("emotion"), "why": str(o.get("why") or "")[:120]}
+
+
 def i2v_cost(mode, shot_s=None):
+    up = upscale_cost(i2v_duration(mode, shot_s) if mode in I2V_PER_S else shot_s)
     if mode in I2V_PER_S:
-        return round(I2V_PER_S[mode] * i2v_duration(mode, shot_s), 3)
-    return I2V_MODELS[mode][1]
+        return round(I2V_PER_S[mode] * i2v_duration(mode, shot_s) + up, 3)
+    return round(I2V_MODELS[mode][1] + up, 3)
 
 
 I2V_CHECK_SYS = ("You audit frames from one animated clip. For EACH frame count distinct people (face, head or torso, even partly at the edge; "
