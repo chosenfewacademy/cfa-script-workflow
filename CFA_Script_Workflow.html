@@ -6080,6 +6080,7 @@ async function generatePromptForScene(i){
 }
 
 function startSceneGeneration(){
+  if(!Array.isArray(sceneData)||!sceneData.length){ alert('No scenes yet. Finish the shot list first.'); return; }
   if(Array.isArray(sceneData)&&sceneData.length){ const mm=motionMode(), est=motionCostEstimate(mm);
     if(!budgetPreflight('fal', est.usd, 'this episode ('+(mm==='full'?'fully animated':'mixed')+', ≈ $'+est.usd.toFixed(2)+')')) return; }
   currentScene=0;
@@ -7911,6 +7912,7 @@ async function downloadScene(){
 }
 
 function confirmScene(){
+  if(!Array.isArray(sceneData)||!sceneData[currentScene]){ alert('No scene to confirm yet.'); return; }
   sceneData[currentScene].done=true;
   saveWorkflowState();
   const next=currentScene+1;
