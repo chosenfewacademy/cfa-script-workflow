@@ -48,7 +48,7 @@ def main():
     open(os.path.join(d, "token"), "w").write(tok + "\n")
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     base = "http://127.0.0.1:%d" % port
-    env = dict(os.environ, CFA_RENDER_DATA=os.path.join(d, "data"), CFA_RENDER_TOKEN_FILE=os.path.join(d, "token"),
+    env = dict(os.environ, CFA_RENDER_DATA=os.path.join(d, "data"), CFA_RENDER_TOKEN_FILE=os.path.join(d, "token"), CFA_RENDER_KEYS_FILE=os.path.join(d, "keys.json"),
                CFA_RENDER_PORT=str(port), CFA_RENDER_ARGS="--no-grok --no-score --no-whisper --no-ambience --keys-env /dev/null", CFA_RENDER_MUSIC="", BASE=base)
     p = start(env)
     try:

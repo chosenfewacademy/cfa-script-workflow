@@ -22,6 +22,9 @@ from urllib.parse import urlparse, parse_qs
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("CFA_RENDER_DATA", "/home/box/cfa-render-data")
 TOKEN_FILE = os.environ.get("CFA_RENDER_TOKEN_FILE", "/home/box/secrets/cfa_render_token")
+# per-person keys: {"name": "<sha256 hex of the key>"} in a 0600 file outside the repo; read on every request,
+# so removing a name revokes that key at once (no restart). Manage with keys.py.
+KEYS_FILE = os.environ.get("CFA_RENDER_KEYS_FILE", "/home/box/secrets/cfa_render_keys.json")
 ORIGINS = [o.strip() for o in os.environ.get("CFA_ALLOWED_ORIGINS", "https://chosenfewacademy.github.io").split(",") if o.strip()]
 MUSIC = os.environ.get("CFA_RENDER_MUSIC", os.path.join(DATA, "music.wav"))
 MAX_UPLOAD = int(os.environ.get("CFA_MAX_UPLOAD_MB", "600")) * 1024 * 1024
@@ -30,6 +33,30 @@ KEEP_DAYS = 7
 STAGES = [("queued", 0), ("unpacking", 2), ("planning edit", 5), ("rendering", 15), ("captions", 78), ("mixing", 82), ("encoding", 86), ("done", 100)]
 
 jobs, lock, q = {}, threading.Lock(), queue.Queue()
+
+
+def person_keys():
+    try:
+        d = json.load(open(KEYS_FILE))
+        return {str(k): str(v).lower() for k, v in d.items()} if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def key_owner(got):
+    """Name of the person whose key this is ("owner" for the main token), else None."""
+    import hashlib
+    if not got.startswith("Bearer "):
+        return None
+    k = got[7:].strip()
+    t = token()
+    if t and hmac.compare_digest(k.encode(), t.encode()):
+        return "owner"
+    h = hashlib.sha256(k.encode()).hexdigest()
+    for name, kh in person_keys().items():
+        if k and hmac.compare_digest(h, kh):
+            return name
+    return None
 
 
 def token():
@@ -306,9 +333,8 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def authed(self):
-        t = token()
-        got = self.headers.get("Authorization", "")
-        ok = bool(t) and hmac.compare_digest(got.encode(), ("Bearer " + t).encode())
+        self.who = key_owner(self.headers.get("Authorization", ""))
+        ok = self.who is not None
         if not ok:
             self.drain()
             self.send(401, {"error": "missing or wrong access token"})

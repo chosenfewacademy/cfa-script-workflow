@@ -27,3 +27,11 @@ Every render follows the v8 standard in `docs/V8_LOCKED_STYLE.md`:
   - `tools/render/test_*.py`
   - `tests/cfa-adversarial-mock-test.py`
 - **Quality check:** `tools/render/baseline_check.py` compares any render against v8.
+
+## Access keys (owner)
+- Chris has his **own** renderer key, separate from the owner's.
+  - The renderer stores only a SHA-256 hash of it, in `/home/box/secrets/cfa_render_keys.json` (mode 0600, outside the repo). You can point it elsewhere with `CFA_RENDER_KEYS_FILE`.
+  - The owner's token (`CFA_RENDER_TOKEN_FILE`) keeps working.
+- **Add a key:** `python3 ~/cfa-render/keys.py add NAME /path/to/key.txt`. The key is written only to that file (mode 0600) and is never printed. Hand it over privately.
+- **Revoke a key:** `python3 ~/cfa-render/keys.py revoke NAME`. The key stops working on the next request, with no restart. You can also delete the name from the keys file.
+- **List keys:** `python3 ~/cfa-render/keys.py list` shows names only.
