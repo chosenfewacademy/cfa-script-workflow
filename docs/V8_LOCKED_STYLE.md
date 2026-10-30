@@ -5,11 +5,7 @@ v8 is the approved standard: "the best version we've had, let's lock this in". E
 ## Look
 - 3D Pixar-style characters. The narrator stays outside the story, and mouths stay closed.
 - One character per shot, with exactly one phone. No captions, overlays or on-screen writing.
-- **Cinema look** (`CINEMA_LOOK_RULE`):
-  - medium close-up;
-  - warm rim light on hair and shoulders;
-  - high contrast, with shadows that are deep but readable;
-  - shallow depth of field.
+- **Cinema look** (`CINEMA_LOOK_RULE`): "medium close-up, warm rim light, high contrast, shallow depth of field, character tack-sharp."
 - **Crisp props** (`CRISP_PROPS_RULE`): "Sharp, detailed foreground objects, crisp edges on props; background softly blurred."
 - Edges are never smeared. The edge gate allows depth-of-field falloff but fails on a blurry band with a seam.
 
