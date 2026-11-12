@@ -10,6 +10,8 @@
   GET  /feedback/<id>      -> item          GET /feedback/memory -> {memory: [...]}
   POST /feedback/<id>/status JSON {status: in_progress|ready|declined|reverted, resolution, accept} -> item
   GET  /health             -> {"ok": true, "queue": n, "music_cached": bool}   (no auth)
+  POST /keys/claim         JSON {name} -> {name, key}  (no auth; allowed Origin required; only for a one-time slot
+                           the owner opened with `keys.py open-claim NAME`; rate-limited; key returned once, hash stored)
 
 Auth: "Authorization: Bearer <token>"; the token lives in CFA_RENDER_TOKEN_FILE (never in the repo).
 CORS: only origins in CFA_ALLOWED_ORIGINS (default https://chosenfewacademy.github.io).
@@ -33,6 +35,18 @@ KEEP_DAYS = 7
 STAGES = [("queued", 0), ("unpacking", 2), ("planning edit", 5), ("rendering", 15), ("captions", 78), ("mixing", 82), ("encoding", 86), ("done", 100)]
 
 jobs, lock, q = {}, threading.Lock(), queue.Queue()
+claim_lock = threading.Lock()
+CLAIM_PER_IP, CLAIM_ALL, CLAIM_WINDOW = 5, 30, 600   # attempts per client / in total per 10 minutes
+claim_hits = []                                        # [(time, client)]
+
+
+def claim_limited(client, now=None):
+    now = time.time() if now is None else now
+    claim_hits[:] = [h for h in claim_hits if now - h[0] < CLAIM_WINDOW]
+    if len(claim_hits) >= CLAIM_ALL or sum(1 for h in claim_hits if h[1] == client) >= CLAIM_PER_IP:
+        return True
+    claim_hits.append((now, client))
+    return False
 
 
 def person_keys():
@@ -420,8 +434,38 @@ class H(BaseHTTPRequestHandler):
         with open(path, "rb") as f:
             shutil.copyfileobj(f, self.wfile, 1 << 20)
 
+    def claim_key(self):
+        """One-time self-serve key (see keys.py open-claim). Browser-only: the Origin must be the tool's."""
+        sys.path.insert(0, HERE)
+        import keys
+        o = self.headers.get("Origin")
+        if not o or o not in ORIGINS:
+            self.drain()
+            return self.send(403, {"error": "origin not allowed"})
+        client = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or self.client_address[0]
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > 4096:
+            self.drain()
+            return self.send(413, {"error": "request too large"})
+        raw = self.rfile.read(n) if n > 0 else b""
+        with claim_lock:
+            if claim_limited(client):
+                return self.send(429, {"error": "Too many tries. Wait 10 minutes and try again."})
+            try:
+                body = json.loads(raw or b"{}")
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                return self.send(400, {"error": "JSON body {\"name\": ...} expected"})
+            code, out = keys.claim(body.get("name"))
+        if code == 200:
+            sys.stderr.write("%s key claimed for %s\n" % (time.strftime("%H:%M:%S"), out["name"]))
+        return self.send(code, out)
+
     def do_POST(self):
         parts, qs = self.route()
+        if parts == ["keys", "claim"]:
+            return self.claim_key()
         if not self.origin_ok() or not self.authed():
             return
         n = int(self.headers.get("Content-Length") or 0)

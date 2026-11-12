@@ -2131,6 +2131,25 @@ select option{background:var(--surface2)}
           <button class="settings-save" onclick="smSaveRender()">Save</button>
         </div>
         <div class="settings-ok" id="sm-render-ok">&#x2713; Render service saved for this session</div>
+        <div class="settings-row" style="margin-top:6px">
+          <button class="settings-save" id="sm-claim-open" type="button" onclick="smClaimToggle()">&#x1F511; Get my access key</button>
+          <span style="font-size:10.5px;color:var(--muted)">First time? If the owner set one up for you, collect your own key here (works once).</span>
+        </div>
+        <div id="sm-claim-panel" style="display:none;margin-top:6px">
+          <div class="settings-row">
+            <input class="inp" id="sm-claim-name" type="text" placeholder="your first name (e.g. chris)" autocomplete="off" aria-label="Your name for the access key" onkeydown="if(event.key==='Enter')smClaimKey()"/>
+            <button class="settings-save" id="sm-claim-go" type="button" onclick="smClaimKey()">Get key</button>
+          </div>
+          <div id="sm-claim-err" role="alert" style="display:none;font-size:11px;color:#e5484d;margin-top:4px"></div>
+          <div id="sm-claim-result" style="display:none;margin-top:4px">
+            <div style="font-size:11px;color:#e5a00d;font-weight:600;margin-bottom:4px">&#x26A0; This key is shown only once. Copy it now and keep it somewhere private (a password manager). You'll paste it here each time you open the tool.</div>
+            <div class="settings-row">
+              <input class="inp" id="sm-claim-key" type="text" readonly aria-label="Your new access key" onfocus="this.select()"/>
+              <button class="settings-save" id="sm-claim-copy" type="button" onclick="smClaimCopy()">Copy</button>
+            </div>
+            <div class="settings-ok show" id="sm-claim-copied" style="display:none">&#x2713; Copied</div>
+          </div>
+        </div>
       </div>
 
       <div class="settings-section" id="sm-format-panel">
@@ -2515,6 +2534,44 @@ function smSaveRender(){
   if(renderUrlBlocked(u.value)){ alert(RENDER_URL_BLOCKED_MSG); u.focus(); return; }
   saveSessionKey('cfa_render_url','sm-render-url','sm-render-ok'); saveSessionKey('cfa_render_token','sm-render-token','sm-render-ok');
   const d=document.getElementById('sm-ks-render'); if(d) d.className='ks-dot '+(renderServiceReady()?'ok':'miss');
+}
+// Settings → "Get my access key": one-time self-serve key. The owner opens a slot for a name on the renderer
+// (keys.py open-claim NAME); the renderer returns a fresh key once, stores only its hash, and locks the slot.
+function smClaimToggle(){ const p=document.getElementById('sm-claim-panel'); p.style.display=p.style.display==='none'?'':'none'; if(p.style.display==='') document.getElementById('sm-claim-name').focus(); }
+function smClaimMsg(status, body){
+  const m=body&&body.error;
+  if(status===403) return 'The render service only hands out keys to the official tool page. Open the tool from https://chosenfewacademy.github.io and try again.';
+  if(status===404&&!m) return 'This render service doesn\u2019t support self-serve keys yet. Ask the owner.';
+  if(status===429) return m||'Too many tries. Wait 10 minutes and try again.';
+  return m||('The render service said '+status+'. Ask the owner.');
+}
+async function smClaimKey(){
+  const err=document.getElementById('sm-claim-err'), res=document.getElementById('sm-claim-result'), btn=document.getElementById('sm-claim-go');
+  const showE=t=>{ err.textContent=t; err.style.display=t?'':'none'; };
+  showE('');
+  const uIn=document.getElementById('sm-render-url'); const u=String(uIn.value||sessionStorage.getItem('cfa_render_url')||'').trim().replace(/\/+$/,'');
+  const name=String(document.getElementById('sm-claim-name').value||'').trim();
+  if(!u){ showE('Paste the renderer URL above first.'); uIn.focus(); return; }
+  if(renderUrlBlocked(u)){ showE(RENDER_URL_BLOCKED_MSG); return; }
+  if(!/^https?:\/\//i.test(u)){ showE('The renderer URL should start with https://'); return; }
+  if(!name){ showE('Enter your first name.'); document.getElementById('sm-claim-name').focus(); return; }
+  btn.disabled=true; const lbl=btn.textContent; btn.textContent='Getting\u2026';
+  try{
+    let r;
+    try{ r=await fetch(u+'/keys/claim',{method:'POST',headers:{'Content-Type':'application/json','ngrok-skip-browser-warning':'1'},body:JSON.stringify({name})}); }
+    catch(e){ showE('Couldn\u2019t reach the render service. Check the URL, or the renderer may be offline \u2014 ask the owner.'); return; }
+    let b={}; try{ b=await r.json(); }catch(e){}
+    if(!r.ok||!b.key){ showE(smClaimMsg(r.status,b)); return; }
+    document.getElementById('sm-claim-key').value=b.key;
+    res.style.display='';
+    uIn.value=u; document.getElementById('sm-render-token').value=b.key;
+    smSaveRender();
+  } finally { btn.disabled=false; btn.textContent=lbl; }
+}
+async function smClaimCopy(){
+  const k=document.getElementById('sm-claim-key'); let ok=false;
+  try{ await navigator.clipboard.writeText(k.value); ok=true; }catch(e){ try{ k.select(); ok=document.execCommand('copy'); }catch(e2){} }
+  const c=document.getElementById('sm-claim-copied'); c.textContent=ok?'\u2713 Copied':'Select the key and press Ctrl/Cmd+C'; c.style.display='';
 }
 // Settings → "Test fal.ai Endpoints". Exercises the production paths cheaply:
 // storage upload (free), Nano Banana (~$0.04) and Kling o1 with the Marcus reference
