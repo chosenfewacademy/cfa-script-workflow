@@ -749,6 +749,114 @@ def split_drift(shots, words, max_len=DRIFT_MAX, segs=None):
     return out
 
 
+# ── Cut style (opt-in). "v8" (default, locked): 2-5 s shots with slow drift. "fast_cuts": the direct-response ad edit
+# (Nov 16 study): a new picture every 1-3 s, each showing exactly what the words say at that moment, new places as the
+# story moves; hard cuts, no captions, same v8 look (2K stills, crisp sharpen, 8 Mbps floor, aimed linear moves).
+CUT_STYLES = ("v8", "fast_cuts")
+FAST_MIN_HOLD = 1.0      # s: a picture stays up at least this long
+FAST_MAX = 3.0           # s: no still holds longer; longer shots split at word gaps
+FAST_TARGET = 2.0        # s: split target
+FAST_GATE_MEDIAN_MAX = 3.0   # motion gate: median visible shot must be <= this in fast cuts
+FAST_SNAP_MIN = 0.75     # s: phrase snap floor in fast cuts (the following snap gives most of it back)
+FAST_SLACK = 0.25        # s: a still this close to FAST_MAX stays one picture (a split would re-show the same frame)
+FAST_PAUSES = (0.3, 0.25)    # beat / sentence pause in fast cuts (the ad runs with almost no dead air); v8 keeps 0.6 / 0.45
+FAST_EDL_NOTE = ("FAST CUTS style: hard cuts every 1-3 s; each shot shows literally what its words say at that moment; "
+                 "change place/angle as the story moves; no dissolves, no captions.")
+
+
+def cut_style(b=None, cli=None):
+    """Bundle cutStyle (from the tool) unless the CLI overrides it; anything unknown is v8."""
+    v = str(cli or (b or {}).get("cutStyle") or "v8").strip().lower().replace("-", "_").replace(" ", "_")
+    return v if v in CUT_STYLES else "v8"
+
+
+def _words_in(words, a, b):
+    return " ".join(str(w[0]) for w in words if a - 0.05 <= float(w[1]) < b - 0.05).strip()
+
+
+def split_fast_cuts(shots, words, segs=None, max_len=FAST_MAX, target=FAST_TARGET, min_len=FAST_MIN_HOLD):
+    """Fast Cuts: split any still (or clip with cutaways) longer than max_len at word gaps into ~target s parts.
+    Part k>0 shows the beat's next cutaway (segment "cutaways": extra stills, one per phrase) so every cut is a new
+    picture of what is being said; with no cutaway left it falls back to an aimed punch-in reframe of the same
+    still (marked fast_reframe, reported as reuse). Every join becomes a hard cut. Each part's line = its own words."""
+    by = {s.get("index"): s for s in (segs or [])}
+    out = []
+    for sh in shots:
+        dur = sh["end"] - sh["start"]
+        beats = sh.get("beats") or []
+        cut_pool = []
+        for bi in beats:
+            for m in (by.get(bi, {}).get("cutaways") or []):
+                if m and m != sh.get("media") and m not in cut_pool:
+                    cut_pool.append(m)
+        vid = sh.get("mediaType") in ("video", "lipsync")
+        if dur <= max_len + (FAST_SLACK if not cut_pool else 0.0) + 1e-6 or sh.get("mediaType") == "lipsync" or (vid and not cut_pool):
+            x = dict(sh, cut_style="fast_cuts", line=sh.get("line") or sh.get("text") or "")
+            if not vid and x.get("motion") in (None, "", "static"):
+                x["motion"] = "zoom_in"   # v8 look: every still moves (slow linear push), even a held quote
+            out.append(x)
+            continue
+        # as many parts as there are pictures for (never fewer than keeps parts <= max_len, never more than ~target s each)
+        n = max(2, int(math.ceil(dur / max_len - 1e-9)), min(int(math.ceil(dur / target)), 1 + len(cut_pool)))
+        gaps = [float(w[1]) for w in words if sh["start"] + min_len <= float(w[1]) <= sh["end"] - min_len]
+        cuts = []
+        for k in range(1, n):
+            t = sh["start"] + dur * k / n
+            c = (min(gaps, key=lambda g: abs(g - t)) - 0.05) if gaps else t
+            if (not cuts or c - cuts[-1] >= min_len) and c - sh["start"] >= min_len and sh["end"] - c >= min_len:
+                cuts.append(round(c, 3))
+        edges = [sh["start"]] + cuts + [sh["end"]]
+        # a part still longer than max_len (no word gap fits): split it evenly
+        fixed = [edges[0]]
+        for e in edges[1:]:
+            seg_len = e - fixed[-1]
+            m = int(math.ceil(seg_len / max_len - 1e-9))
+            for j in range(1, m):
+                fixed.append(round(fixed[-1] + seg_len / m, 3))
+            fixed.append(e)
+        edges = fixed
+        for k in range(len(edges) - 1):
+            a, b = edges[k], edges[k + 1]
+            p = dict(sh, start=round(a, 3), end=round(b, 3), duration=round(b - a, 3), cut_style="fast_cuts",
+                     line=_words_in(words, a, b) or sh.get("line") or sh.get("text") or "")
+            if not vid and p.get("motion") in (None, "", "static"):
+                p["motion"] = "zoom_in"
+            if k:
+                p.update(part="b", transition_in="cut", transition_duration=0.0, phrase_start=round(a, 3))
+                p.pop("_aim", None)
+                if k - 1 < len(cut_pool):
+                    p.update(media=cut_pool[k - 1], mediaType="image", motion="zoom_in" if k % 2 else "pan_right",
+                             intensity=max(sh.get("intensity") or 0, 0.08), fast_cutaway=True)
+                    p.pop("lip_offset", None)
+                else:
+                    if vid:   # a clip only splits onto cutaways; past them it would freeze - keep it running
+                        out[-1]["end"] = round(b, 3); out[-1]["duration"] = round(b - out[-1]["start"], 3)
+                        continue
+                    p.update(motion="punch_in", focus="left" if k % 2 else "right", intensity=0.04, fast_reframe=True)
+            out.append(p)
+    for k, sh in enumerate(out):
+        sh["index"] = k + 1
+        if k:
+            sh["transition_in"], sh["transition_duration"] = "cut", 0.0
+    return out
+
+
+def fast_cuts_gate(shots, max_len=FAST_MAX):
+    """Fast Cuts pacing: median <= FAST_GATE_MEDIAN_MAX, no still over max_len (+0.25 s slack), reframes reported."""
+    d = sorted(x["end"] - x["start"] for x in shots) or [0.0]
+    med = d[len(d) // 2] if len(d) % 2 else (d[len(d) // 2 - 1] + d[len(d) // 2]) / 2
+    long_ = [x.get("index") for x in shots if x.get("mediaType") not in ("video", "lipsync") and x["end"] - x["start"] > max_len + FAST_SLACK + 1e-6]
+    reframes = [x.get("index") for x in shots if x.get("fast_reframe")]
+    fails = []
+    if med > FAST_GATE_MEDIAN_MAX:
+        fails.append("fast cuts: median shot %.2fs > %.1fs" % (med, FAST_GATE_MEDIAN_MAX))
+    if long_:
+        fails.append("fast cuts: stills over %.1fs %s" % (max_len, long_))
+    return {"pass": not fails, "fails": fails, "shots": len(shots), "median_s": round(med, 3),
+            "avg_s": round(sum(d) / len(d), 3), "max_still_s": round(max([x["end"] - x["start"] for x in shots if x.get("mediaType") not in ("video", "lipsync")] or [0]), 3),
+            "long_stills": long_, "reframes": reframes, "cutaways": sum(1 for x in shots if x.get("fast_cutaway"))}
+
+
 MONTAGE_RE = re.compile(r"\b(day|days|week|weeks|hour|hours|night|morning|attempt|try|tries|again|then|by|first|second|third|one|two|three|four|five|\d+)\b", re.I)
 
 
@@ -1116,7 +1224,7 @@ SIM_SSIM_MAX = 0.72    # ... or more structurally similar than this read as a re
 PHRASE_ALIGN_MAX = 0.30  # motion must start within this many seconds of its phrase's first word
 
 
-def apply_shot_plan(shots, segs):
+def apply_shot_plan(shots, segs, min_dur=1.0):
     """Map each shot to its phrase segment: motivated motion, transition from the story link, carry direction, J-cut timing."""
     by = {s["index"]: s for s in segs}
     d = 1
@@ -1144,7 +1252,7 @@ def apply_shot_plan(shots, segs):
                 # picture cut + motion start snap to the phrase's first word; a J-cut lands J_LEAD after it (audio leads)
                 want = x["phrase_start"] + (J_LEAD if x["plan_link"] == "jcut" else 0.0)
                 delta = want - x["start"]
-                if abs(delta) > 1e-6 and x["duration"] - delta > 1.0 and shots[i - 1]["duration"] + delta > 1.0:
+                if abs(delta) > 1e-6 and x["duration"] - delta > min_dur and shots[i - 1]["duration"] + delta > min_dur:
                     x["start"] = want; x["duration"] -= delta
                     shots[i - 1]["end"] = want; shots[i - 1]["duration"] += delta
         nxt = shots[i + 1] if i + 1 < len(shots) else None
@@ -2295,6 +2403,8 @@ def main():
     ap.add_argument("--no-end-card", action="store_true")
     ap.add_argument("--captions", action="store_true", help="burn in captions/overlays/end card (off: zero on-screen text)")
     ap.add_argument("--keep-work", action="store_true")
+    ap.add_argument("--cut-style", choices=CUT_STYLES, default=None,
+                    help="v8 (default, locked look) or fast_cuts (new picture every 1-3 s); default: the bundle's cutStyle")
     a = ap.parse_args()
 
     ensure_ffmpeg()
@@ -2318,6 +2428,11 @@ def main():
     for s in segs:
         if s.get("media") and not os.path.exists(os.path.join(d, s["media"])):
             s["media"] = None
+        if isinstance(s.get("cutaways"), list):
+            s["cutaways"] = [m for m in s["cutaways"] if isinstance(m, str) and m and os.path.exists(os.path.join(d, m))]
+    CUT = cut_style(b, a.cut_style)
+    FAST = CUT == "fast_cuts"
+    log("cut style:", CUT)
     fill_timings(segs, words, total)
     test_clip = None
     if a.max_seconds and a.max_seconds > 0:
@@ -2327,11 +2442,14 @@ def main():
         a.music_cap = min(a.music_cap, a.total_cap)
         a.i2v_cap = min(a.i2v_cap, a.total_cap)
     voice_raw = total
+    if FAST:   # fast cuts: tighter pauses unless they were set on the command line
+        a.beat_pause = FAST_PAUSES[0] if a.beat_pause == 0.6 else a.beat_pause
+        a.sentence_pause = FAST_PAUSES[1] if a.sentence_pause == 0.45 else a.sentence_pause
     voice, words, pauses, added = add_pauses(voice, words, segs, work, a.beat_pause, a.sentence_pause)
     if added:
         total = media_duration(voice)
     cuts = cut_points(segs, total)
-    base_shots = group_shots(segs, cuts, a.min_hold)
+    base_shots = group_shots(segs, cuts, min(a.min_hold, FAST_MIN_HOLD) if FAST else a.min_hold)
     log("%s | %d beats -> %d shots | voice %.2fs (+%.2fs pauses) | %dx%d" % (
         b.get("title"), len(segs), len(base_shots), total, added, W, H))
 
@@ -2348,7 +2466,7 @@ def main():
     if key and not a.no_grok:
         for attempt in range(2):
             try:
-                raw, usage = grok_edl(b, base_shots, key, a.model, notes=a.notes or "")
+                raw, usage = grok_edl(b, base_shots, key, a.model, notes=((a.notes or "") + (" " + FAST_EDL_NOTE if FAST else "")).strip())
                 edl, problems = validate_edl(raw, b, base_shots)
                 source = "grok:" + a.model
                 break
@@ -2363,9 +2481,9 @@ def main():
     if a.no_end_card or not CAPTIONS_ON:   # no text: the end card (text only) goes too
         edl["end_card"]["enabled"] = False
     PHRASE = b.get("shotPlan") == "phrase"   # tool planned one new image per phrase: no re-angled splits of a still
-    if not PHRASE:
+    if not PHRASE and not FAST:
         edl["shots"] = split_punch_ins(edl["shots"], words)
-    if not a.no_drift_split and not PHRASE:
+    if not a.no_drift_split and not PHRASE and not FAST:
         edl["shots"] = split_drift(edl["shots"], words, segs=segs)
     by_media = {s.get("media"): s for s in segs if s.get("mediaType") == "lipsync" and s.get("media")}
     for x in edl["shots"]:
@@ -2392,8 +2510,11 @@ def main():
             x["role"] = "montage"
     if mont and not a.raw_transitions:
         edl["shots"] = smooth_transitions(edl["shots"])
-    if PHRASE:
-        apply_shot_plan(edl["shots"], segs)
+    if PHRASE:   # fast cuts: short quotes ("Hang on.") may give up to 0.25 s so the cut still lands on the first word
+        apply_shot_plan(edl["shots"], segs, FAST_SNAP_MIN if FAST else 1.0)
+    if FAST:
+        edl["shots"] = split_fast_cuts(edl["shots"], words, segs)
+    edl["cut_style"] = CUT
     assign_grades(edl["shots"], not a.no_beat_grades)
     edl["source"] = source
     edl["pauses_added"] = round(added, 3)
@@ -2708,7 +2829,12 @@ def main():
             log("motion QA: %d near-frozen shot(s), %d jarring cut(s)" % (len(mqa["frozen"]), len(mqa["jarring_cuts"])))
     except Exception as e:
         mqa = {"error": str(e)[:160]}
-    gate = motion_gate(final, median_max=GATE_MEDIAN_PHRASE_MAX if PHRASE else None)
+    gate = motion_gate(final, median_max=FAST_GATE_MEDIAN_MAX if FAST else (GATE_MEDIAN_PHRASE_MAX if PHRASE else None))
+    if FAST:
+        gate["fast_cuts"] = fast_cuts_gate(shots)
+        if not gate["fast_cuts"]["pass"]:
+            gate["fails"] += gate["fast_cuts"]["fails"]; gate["pass"] = False
+        log("fast cuts gate:", "PASS" if gate["fast_cuts"]["pass"] else "FAIL", gate["fast_cuts"])
     st = [x.get("_stretch") for x in shots if x.get("_stretch")]
     gate["distortion"] = {"max_stretch": round(max(st), 4) if st else None, "shots": len(st),
                           "over": sum(1 for v in st if v > GATE_STRETCH_MAX), "limit": GATE_STRETCH_MAX}
@@ -2771,14 +2897,14 @@ def main():
     if i2v_info.get("degraded"):
         gate["fails"].append("action shot(s) %s became stills (no character motion)" % i2v_info["degraded"]); gate["pass"] = False
     log("motion gate:", "PASS" if gate["pass"] else "FAIL " + "; ".join(gate["fails"]))
-    report = {"test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "still_props": still_props, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
+    report = {"cut_style": CUT, "test_clip": test_clip, "billed_usd_total": round(getattr(a, "spent_usd", 0.0), 3), "total_cap_usd": a.total_cap or None, "motion_gate": gate, "i2v": i2v_info, "still_props": still_props, "final": final, "whisper": whisper, "motion_qa": mqa, "lipsync_sync": lipsync_check, "music": music_info, "thumbnail": thumb, "duration": float(pr["format"]["duration"]),
               "voice_duration": total, "resolution": "%sx%s" % (v["width"], v["height"]),
               "audio_streams": len(au), "lufs": measure_lufs(final), "edl_source": source,
               "edl_problems": problems, "grok_usage": usage, "beats": len(segs),
               "voice_raw_duration": voice_raw, "pauses_added": round(added, 3), "pause_count": len(pauses),
               "shots": [{"index": x["index"], "beats": x["beats"], "media": x["media"], "type": x["mediaType"],
                          "start": x["start"], "duration": x["duration"], "motion": x["motion"], "role": x.get("role"),
-                         "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"], "plan_motion": x.get("plan_motion"), "plan_link": x.get("plan_link"), "plan_shot": x.get("plan_shot"), "one_char": x.get("one_char")} for x in shots],
+                         "part": x.get("part", ""), "transition": x["transition_in"], "xfade": x["transition_duration"], "plan_motion": x.get("plan_motion"), "plan_link": x.get("plan_link"), "plan_shot": x.get("plan_shot"), "one_char": x.get("one_char"), "line": x.get("line") or ""} for x in shots],
               "arc": edl.get("arc"), "arc_times": edl.get("arc_times"), "sfx_events": [list(e) for e in events], "ambience": dict(amb_info, placed=len(amb)), "foley": foley_info,
               "punch_ins": sum(1 for x in shots if x.get("part") == "b"),
               "shot_lengths": sorted(round(x["duration"], 2) for x in shots), "held_neighbour": [i for i, x in enumerate(shots) if x.get("held_neighbour")], "fallback_same_line": [i for i, x in enumerate(shots) if x.get("fallback_same_line")],

@@ -35,3 +35,10 @@ edge, hole, sharpness (kbps ≥ 8000 and upscale ≤ 1.5×), text, motion, simil
 - 20.88 s, 5 shots (3.12, 3.38, 4.44, 4.91, 5.03 s).
 - Median shot 4.33 s; motion 7.27 px/s.
 - 1 Hailuo clip; 10.1 Mbps.
+
+## Fast Cuts (opt-in style, Nov 16, 2026)
+v8 stays the default. **⚙ Settings → Episode format → Cut style → "Fast Cuts"** switches one episode to the editing borrowed from the top-ranked direct-response ad the team studied (camera cuts and scene changes only; **no captions**):
+- **Tool:** on entering Scene Generation (Step 6) the script is split into 1–3 s phrase shots (still cap 3 s, minimum 1 s, emotional lines too). Every shot prompt adds a FAST CUTS note: show literally and only what those words describe, one readable subject, the new place when the story moves, no on-screen words. The export bundle carries `cutStyle: "fast_cuts"`.
+- **Renderer:** `cutStyle` from the bundle (or `--cut-style v8|fast_cuts`) picks the edit. Fast Cuts uses a 1 s minimum hold, no drift/punch-in re-angles, hard cuts only, and tighter pauses (0.3 s between beats and 0.25 s between sentences, unless you set them on the command line). Any still over 3 s is split at word gaps onto the beat's `cutaways` (extra stills), with each part getting its own words as its line. With no cutaway left it falls back to an aimed punch-in, and the report flags it as `fast_reframe`. Lip-sync shots are never split, and clips only split onto cutaways.
+- **Gate:** `motion_gate.fast_cuts` fails if the median shot is over 3 s or any still is over 3.25 s. The report records `cut_style`.
+- Everything else is v8: 2K stills, crisp sharpen, ≥ 8 Mbps, aimed linear moves, one character per shot, one phone, and no text.

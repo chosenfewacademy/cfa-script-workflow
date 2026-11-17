@@ -16,6 +16,7 @@ python3 tools/render/render.py bundle.zip -o out_v/ --vertical                  
 python3 tools/render/render.py bundle.zip -o out/ --music bed.mp3                     # music ducked under the voice
 #  --no-grok  deterministic edit only   --caption-style bold_pop|clean_lower|boxed
 #  --no-title / --no-end-card            --model grok-4.3   --keep-work
+#  --cut-style v8|fast_cuts              (default: the bundle's cutStyle, else v8; see docs/V8_LOCKED_STYLE.md)
 ```
 `XAI_API_KEY` comes from the environment (or `--keys-env FILE`, default `/home/box/secrets/cfa_keys.env`). Keys are never written to output.
 
