@@ -29,9 +29,9 @@ def make_bundle(d):
              "Today we open that notebook together."]
     os.makedirs(os.path.join(d, "media"))
     cols = ["0x2b4c7e", "0x7e2b4c", "0x4c7e2b"]
+    from test_unique_shots import unique_still   # every shot is a genuinely different picture (unique-shots gate)
     for i, c in enumerate(cols):
-        ff("-f", "lavfi", "-i", "testsrc2=s=1600x900:d=1,drawbox=c=%s@0.6:t=fill" % c, "-frames:v", "1",
-           os.path.join(d, "media", "scene_%03d.png" % (i + 1)))
+        unique_still(os.path.join(d, "media", "scene_%03d.png" % (i + 1)), seed=40 + i, w=1600, h=900)
     ff("-f", "lavfi", "-i", "testsrc=s=1280x720:r=30:d=2", "-pix_fmt", "yuv420p", os.path.join(d, "media", "scene_004.mp4"))
     # fake narration: one tone burst per word, 0.32s word + 0.08s gap, 0.5s between beats
     words, t, segs, parts = [], 0.2, [], []
@@ -162,9 +162,8 @@ def main():
     check(roles == ["hook", "tension", "tension", "tension", "turn", "realization", "realization"], "roles %r" % roles)
     check(ev["shots"][4]["transition_in"] == "whip" and ev["shots"][5]["transition_in"] == "dissolve" and not ev["shots"][5]["punch_in"], "turn whips in, realization dissolves and holds")
     wds = [["w", 0.2 + 0.4 * k, 0.5 + 0.4 * k] for k in range(80)]
-    sp = render.split_punch_ins(ev["shots"], wds)
-    check(len(sp) > len(ev["shots"]) and any(x["motion"] == "punch_in" and x["transition_in"] == "cut" for x in sp), "long tension stills split into wide -> punch-in")
-    check(abs(sum(x["duration"] for x in sp) - 35.0) < 0.01, "splitting keeps total timing")
+    check(not hasattr(render, "split_punch_ins"), "no wide -> punch-in re-show of one still (unique shots)")
+    check(abs(sum(x["duration"] for x in ev["shots"]) - 35.0) < 0.01, "edit keeps total timing")
     check(render.pick_emphasis("Marcus had underlined October 2008 on the printout.")[:1] == ["2008"], "emphasis picks numbers first")
     check(abs(sum(s["duration"] for s in e["shots"]) - 12.0) < 1e-6, "durations locked to voice, Grok durations ignored")
     check("crypto" not in e["title_card"]["text"].lower(), "card text rewritten to digital assets")
@@ -184,15 +183,17 @@ def main():
     src2 = os.path.join(d, "src2"); shutil.copytree(os.path.join(d, "src"), src2)
     os.remove(os.path.join(src2, "bundle.zip"))
     bj = json.load(open(os.path.join(src2, "bundle.json"))) if os.path.exists(os.path.join(src2, "bundle.json")) else json.load(zipfile.ZipFile(z).open("bundle.json"))
-    bj["segments"][0]["media"] = None; bj["segments"][0]["mediaType"] = ""
     json.dump(bj, open(os.path.join(src2, "bundle.json"), "w"))
     out3 = os.path.join(d, "out_miss")
     r3 = subprocess.run([sys.executable, os.path.join(HERE, "render.py"), src2, "-o", out3, "--no-grok", "--no-score", "--no-whisper", "--no-ambience", "--keys-env", "/dev/null", "--music", os.path.join(d, "nope.wav")], capture_output=True, text=True)
     check(r3.returncode == 0 and "without a music bed" in (r3.stdout + r3.stderr), "missing music file: warns and renders without music")
-    if r3.returncode == 0:
-        ff("-ss", "0.3", "-i", os.path.join(out3, "final.mp4"), "-frames:v", "1", "-vf", "scale=64:36", os.path.join(bd, "first.png"))
-        so = subprocess.run(["ffmpeg", "-v", "info", "-i", os.path.join(bd, "first.png"), "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"], capture_output=True, text=True).stderr
-        check(float((re.findall(r"YAVG=([\d.]+)", so) or ["0"])[-1]) > 40, "missing opening scene borrows the next visual instead of a blank frame")
+    # a line with no picture is REFUSED - never covered by borrowing the next/previous visual (unique shots)
+    bj["segments"][0]["media"] = None; bj["segments"][0]["mediaType"] = ""
+    json.dump(bj, open(os.path.join(src2, "bundle.json"), "w"))
+    out4 = os.path.join(d, "out_hole")
+    r4 = subprocess.run([sys.executable, os.path.join(HERE, "render.py"), src2, "-o", out4, "--no-grok", "--no-score", "--no-whisper", "--no-ambience", "--keys-env", "/dev/null", "--music", os.path.join(d, "nope.wav")], capture_output=True, text=True)
+    check(r4.returncode != 0 and "line 1 has no picture of its own" in (r4.stdout + r4.stderr) and not os.path.exists(os.path.join(out4, "final.mp4")),
+          "missing opening picture refuses (names line 1) instead of borrowing the next visual")
     # vertical reframing follows the subject (hint path, no network)
     sys.path.insert(0, HERE); import render as R
     R.SUBJECT_KEY = None
@@ -226,14 +227,8 @@ def main():
            {"index": 2, "start": 11.0, "end": 19.0, "duration": 8.0, "mediaType": "video", "media": "v.mp4", "motion": "push_in", "intensity": 0.04, "role": "turn", "transition_in": "whip", "transition_duration": 0.3, "part": ""},
            {"index": 3, "start": 19.0, "end": 21.0, "duration": 2.0, "mediaType": "image", "media": "y.png", "motion": "pan_left", "intensity": 0.05, "role": "resolve", "transition_in": "dissolve", "transition_duration": 0.5, "part": ""}]
     wd = [["w", 0.1 + 0.5 * k, 0.45 + 0.5 * k] for k in range(42)]
-    ds = R.split_drift([dict(x) for x in lsh], wd)
-    parts = [x for x in ds if x["media"] == "x.png"]
-    check(len(parts) >= 3 and all(1.9 <= p["duration"] <= 3.3 for p in parts), "11 s still split into ~2-3 s parts (fix 5) %r" % [p["duration"] for p in parts])
-    check(abs(sum(x["duration"] for x in ds) - 21.0) < 0.01 and [x["index"] for x in ds] == list(range(1, len(ds) + 1)), "drift split keeps total timing and reindexes")
-    check(all(p["motion"] not in ("static", None) for p in parts) and any(p["motion"] == "punch_in" and p.get("focus") in ("left", "right") for p in parts), "every part drifts; punch-ins are off-centre")
-    check(all(p["transition_in"] == "cut" for p in parts[1:]) and parts[0]["transition_in"] == "dissolve", "inside a split: cuts; into it: the planned transition")
-    check(sum(1 for x in ds if x["media"] == "v.mp4") == 1 and sum(1 for x in ds if x["media"] == "y.png") == 1, "video and short shots are not split")
-    check(R.split_drift([], wd) == [] and len(R.split_drift([dict(lsh[0])], [])) >= 3, "edge: no shots / no word gaps")
+    ds = [dict(x) for x in lsh]
+    check(not hasattr(R, "split_drift"), "no drift re-show of one still (unique shots): an 11 s still stays one shot")
     sm = R.smooth_transitions([dict(x) for x in ds])
     check([x["transition_in"] for x in sm if x["role"] == "turn"] == ["whip"] and all(x["transition_in"] != "whip" for x in sm if x["role"] != "turn"), "whips only into the reveal")
     gr = R.assign_grades([{"role": r} for r in ("hook", "tension", "montage", "turn", "realization", "resolve", None)])

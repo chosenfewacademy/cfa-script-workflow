@@ -31,14 +31,14 @@ GRADES = {"cool_low": "eq=brightness=-0.03:saturation=0.82:gamma=0.97,colorbalan
           "sterile": "eq=saturation=0.72:contrast=1.04,colorbalance=bs=0.03:gs=0.02:rm=-0.02",
           "golden": "eq=saturation=1.08:brightness=0.02,colorbalance=rs=0.05:rm=0.06:bm=-0.05:bh=-0.03"}
 ROLE_GRADE = {"montage": "sterile", "hook": "cool_low", "tension": "sterile", "turn": "golden", "realization": "golden", "resolve": "golden"}
-DRIFT_MAX = 3.2         # stills longer than this are split into 3-4 s parts with constant slow drift
+DRIFT_MAX = 3.2         # (legacy) drift parts were removed Nov 16: a still is never split into re-shown parts of itself
 TITLE_DEFAULT_ON = os.environ.get("CFA_TITLE", "0") == "1"   # fix (b): title card off unless asked for
 PUNCH_ZOOM = 1.28      # punch-in framing (second half of a split still)
 TENSE_MAX = 2.6         # tense beats (hook, turn, montage, crisis words, or the tool marks pace=tense): ~2 s cuts
 TENSE_TARGET = 2.0
 CALM_TARGET = 2.6       # calm beats: 3-4 s parts
 TENSE_WORDS = re.compile(r"\b(gone|now|seconds?|locked|lost|deadline|frozen|failed|wrong|empty|zero|panic|too late|missing|stolen|drained|declined|ran out|run out|hurry|no time)\b", re.I)
-SPLIT_OVER = 3.2       # a still held longer than this (outside the realization) is split wide -> punch-in
+SPLIT_OVER = 3.2       # (legacy EDL flag only) wide -> punch-in splits of one still were removed Nov 16 (no reuse)
 TP_RE = re.compile(r"\b(that'?s why|which is why|so that|the point|realiz\w*|not a price|instead|because|the answer|it meant|that was it|finally|suddenly|clicked|understood|that's the)\b", re.I)
 FONT = "Montserrat"
 
@@ -675,26 +675,6 @@ def validate_edl(raw, bundle, shots_in):
             problems)
 
 
-def split_punch_ins(shots, words):
-    """Split each punch_in still at the word gap nearest its middle: wide (planned motion) -> hard cut -> punch-in."""
-    out = []
-    for sh in shots:
-        dur = sh["end"] - sh["start"]
-        if not sh.get("punch_in") or sh.get("mediaType") in ("video", "lipsync") or dur <= 3.2:
-            out.append(dict(sh, part=""))
-            continue
-        mid = sh["start"] + dur / 2
-        gaps = [float(w[1]) for w in words if sh["start"] + 1.4 <= float(w[1]) <= sh["end"] - 1.4]
-        cut = min(gaps, key=lambda t: abs(t - mid)) - 0.05 if gaps else mid
-        a = dict(sh, end=round(cut, 3), duration=round(cut - sh["start"], 3), part="a")
-        b = dict(sh, start=round(cut, 3), duration=round(sh["end"] - cut, 3), part="b", motion="punch_in",
-                 transition_in="cut", transition_duration=0.0, intensity=0.04)
-        out += [a, b]
-    for k, sh in enumerate(out):
-        sh["index"] = k + 1
-    return out
-
-
 def is_tense(sh, segs=None):
     """Tense beat: hook/turn role, crisis words in the line, or a beat the tool's director marked pace=tense."""
     if sh.get("role") in ("hook", "turn", "montage"):
@@ -705,48 +685,6 @@ def is_tense(sh, segs=None):
         if sg.get("pace") == "tense" and sg.get("start") is not None and sh["start"] - 0.3 <= sg["start"] < sh["end"]:
             return True
     return False
-
-
-def split_drift(shots, words, max_len=DRIFT_MAX, segs=None):
-    """Resilia pacing: split long stills at word gaps into ~2 s parts on tense beats and ~3-4 s parts on calm
-    beats; each part keeps a constant slow drift and alternates framing (wide drift -> off-centre punch-in
-    left/right). Video/lip-sync untouched."""
-    out = []
-    drifts = ["pan_right", "zoom_in", "pan_left", "zoom_out"]
-    for sh in shots:
-        dur = sh["end"] - sh["start"]
-        tense = is_tense(sh, segs)
-        lim, target = (TENSE_MAX, TENSE_TARGET) if tense else (max_len, CALM_TARGET)
-        if sh.get("mediaType") in ("video", "lipsync") or dur <= lim:
-            out.append(dict(sh, pace="tense" if tense else "calm"))
-            continue
-        n = max(2, int(math.ceil(dur / target)))
-        gaps = [float(w[1]) for w in words if sh["start"] + 1.2 <= float(w[1]) <= sh["end"] - 1.2]
-        cuts = []
-        for k in range(1, n):
-            t = sh["start"] + dur * k / n
-            c = min(gaps, key=lambda g: abs(g - t)) - 0.05 if gaps else t
-            if (not cuts or c - cuts[-1] >= 1.2) and c - sh["start"] >= 1.2 and sh["end"] - c >= 1.2:
-                cuts.append(round(c, 3))
-        edges = [sh["start"]] + cuts + [sh["end"]]
-        base_part = sh.get("part", "")
-        for k in range(len(edges) - 1):
-            p = dict(sh, start=round(edges[k], 3), end=round(edges[k + 1], 3), duration=round(edges[k + 1] - edges[k], 3),
-                     pace="tense" if tense else "calm")
-            if k:
-                p.update(part="b", transition_in="cut", transition_duration=0.0, intensity=0.035)
-                if k % 2:
-                    p.update(motion="punch_in", focus="left" if (k // 2) % 2 == 0 else "right")
-                else:
-                    p.update(motion=drifts[k % len(drifts)])
-            else:
-                p["part"] = base_part
-                if p.get("motion") in (None, "static"):
-                    p["motion"] = "zoom_in"
-            out.append(p)
-    for k, sh in enumerate(out):
-        sh["index"] = k + 1
-    return out
 
 
 # ── Cut style (opt-in). "v8" (default, locked): 2-5 s shots with slow drift. "fast_cuts": the direct-response ad edit
@@ -775,10 +713,10 @@ def _words_in(words, a, b):
 
 
 def split_fast_cuts(shots, words, segs=None, max_len=FAST_MAX, target=FAST_TARGET, min_len=FAST_MIN_HOLD):
-    """Fast Cuts: split any still (or clip with cutaways) longer than max_len at word gaps into ~target s parts.
-    Part k>0 shows the beat's next cutaway (segment "cutaways": extra stills, one per phrase) so every cut is a new
-    picture of what is being said; with no cutaway left it falls back to an aimed punch-in reframe of the same
-    still (marked fast_reframe, reported as reuse). Every join becomes a hard cut. Each part's line = its own words."""
+    """Fast Cuts: split a still (or clip) longer than max_len at word gaps ONLY onto the beat's own "cutaways" (extra,
+    distinct stills, one per phrase). Every part is a different picture; nothing is ever re-shown or reframed to fill
+    time. Without enough cutaways the shot stays long and the fast-cuts gate asks for more stills. Hard cuts only;
+    each part's line is its own words."""
     by = {s.get("index"): s for s in (segs or [])}
     out = []
     for sh in shots:
@@ -790,14 +728,13 @@ def split_fast_cuts(shots, words, segs=None, max_len=FAST_MAX, target=FAST_TARGE
                 if m and m != sh.get("media") and m not in cut_pool:
                     cut_pool.append(m)
         vid = sh.get("mediaType") in ("video", "lipsync")
-        if dur <= max_len + (FAST_SLACK if not cut_pool else 0.0) + 1e-6 or sh.get("mediaType") == "lipsync" or (vid and not cut_pool):
+        n = min(1 + len(cut_pool), max(int(math.ceil(dur / target)), int(math.ceil(dur / max_len - 1e-9))))
+        if dur <= max_len + FAST_SLACK + 1e-6 or sh.get("mediaType") == "lipsync" or n < 2:
             x = dict(sh, cut_style="fast_cuts", line=sh.get("line") or sh.get("text") or "")
             if not vid and x.get("motion") in (None, "", "static"):
                 x["motion"] = "zoom_in"   # v8 look: every still moves (slow linear push), even a held quote
             out.append(x)
             continue
-        # as many parts as there are pictures for (never fewer than keeps parts <= max_len, never more than ~target s each)
-        n = max(2, int(math.ceil(dur / max_len - 1e-9)), min(int(math.ceil(dur / target)), 1 + len(cut_pool)))
         gaps = [float(w[1]) for w in words if sh["start"] + min_len <= float(w[1]) <= sh["end"] - min_len]
         cuts = []
         for k in range(1, n):
@@ -806,33 +743,17 @@ def split_fast_cuts(shots, words, segs=None, max_len=FAST_MAX, target=FAST_TARGE
             if (not cuts or c - cuts[-1] >= min_len) and c - sh["start"] >= min_len and sh["end"] - c >= min_len:
                 cuts.append(round(c, 3))
         edges = [sh["start"]] + cuts + [sh["end"]]
-        # a part still longer than max_len (no word gap fits): split it evenly
-        fixed = [edges[0]]
-        for e in edges[1:]:
-            seg_len = e - fixed[-1]
-            m = int(math.ceil(seg_len / max_len - 1e-9))
-            for j in range(1, m):
-                fixed.append(round(fixed[-1] + seg_len / m, 3))
-            fixed.append(e)
-        edges = fixed
-        for k in range(len(edges) - 1):
+        for k in range(len(edges) - 1):   # part k shows picture k: the beat's own media, then its cutaways in order
             a, b = edges[k], edges[k + 1]
             p = dict(sh, start=round(a, 3), end=round(b, 3), duration=round(b - a, 3), cut_style="fast_cuts",
                      line=_words_in(words, a, b) or sh.get("line") or sh.get("text") or "")
-            if not vid and p.get("motion") in (None, "", "static"):
-                p["motion"] = "zoom_in"
             if k:
-                p.update(part="b", transition_in="cut", transition_duration=0.0, phrase_start=round(a, 3))
-                p.pop("_aim", None)
-                if k - 1 < len(cut_pool):
-                    p.update(media=cut_pool[k - 1], mediaType="image", motion="zoom_in" if k % 2 else "pan_right",
-                             intensity=max(sh.get("intensity") or 0, 0.08), fast_cutaway=True)
-                    p.pop("lip_offset", None)
-                else:
-                    if vid:   # a clip only splits onto cutaways; past them it would freeze - keep it running
-                        out[-1]["end"] = round(b, 3); out[-1]["duration"] = round(b - out[-1]["start"], 3)
-                        continue
-                    p.update(motion="punch_in", focus="left" if k % 2 else "right", intensity=0.04, fast_reframe=True)
+                p.update(part="b", transition_in="cut", transition_duration=0.0, phrase_start=round(a, 3),
+                         media=cut_pool[k - 1], mediaType="image", motion="zoom_in" if k % 2 else "pan_right",
+                         intensity=max(sh.get("intensity") or 0, 0.08), fast_cutaway=True)
+                p.pop("_aim", None); p.pop("lip_offset", None)
+            elif not vid and p.get("motion") in (None, "", "static"):
+                p["motion"] = "zoom_in"
             out.append(p)
     for k, sh in enumerate(out):
         sh["index"] = k + 1
@@ -846,15 +767,14 @@ def fast_cuts_gate(shots, max_len=FAST_MAX):
     d = sorted(x["end"] - x["start"] for x in shots) or [0.0]
     med = d[len(d) // 2] if len(d) % 2 else (d[len(d) // 2 - 1] + d[len(d) // 2]) / 2
     long_ = [x.get("index") for x in shots if x.get("mediaType") not in ("video", "lipsync") and x["end"] - x["start"] > max_len + FAST_SLACK + 1e-6]
-    reframes = [x.get("index") for x in shots if x.get("fast_reframe")]
     fails = []
     if med > FAST_GATE_MEDIAN_MAX:
         fails.append("fast cuts: median shot %.2fs > %.1fs" % (med, FAST_GATE_MEDIAN_MAX))
     if long_:
-        fails.append("fast cuts: stills over %.1fs %s" % (max_len, long_))
+        fails.append("fast cuts: stills over %.1fs %s - add more distinct stills for these lines (no reuse)" % (max_len, long_))
     return {"pass": not fails, "fails": fails, "shots": len(shots), "median_s": round(med, 3),
             "avg_s": round(sum(d) / len(d), 3), "max_still_s": round(max([x["end"] - x["start"] for x in shots if x.get("mediaType") not in ("video", "lipsync")] or [0]), 3),
-            "long_stills": long_, "reframes": reframes, "cutaways": sum(1 for x in shots if x.get("fast_cutaway"))}
+            "long_stills": long_, "cutaways": sum(1 for x in shots if x.get("fast_cutaway"))}
 
 
 MONTAGE_RE = re.compile(r"\b(day|days|week|weeks|hour|hours|night|morning|attempt|try|tries|again|then|by|first|second|third|one|two|three|four|five|\d+)\b", re.I)
@@ -1278,15 +1198,6 @@ def line_key(x):
     return m.group(1) if m else None
 
 
-def same_line_media(shots, i):
-    """Nearest other shot of the same script line that has media (used to fill a gap instead of holding the neighbour)."""
-    k = line_key(shots[i])
-    if k is None:
-        return None
-    c = [x for j, x in sorted(enumerate(shots), key=lambda t: abs(t[0] - i)) if j != i and x.get("media") and line_key(x) == k]
-    return c[0] if c else None
-
-
 def episode_motion_model(b, a):
     m = (b or {}).get("i2vModel") or (a.i2v if getattr(a, "i2v", "off") != "off" else EPISODE_MOTION_MODEL)
     return m if m in I2V_MODELS else EPISODE_MOTION_MODEL
@@ -1352,6 +1263,129 @@ def _ssim(a, b):
     return float((((2 * mu1 * mu2 + C1) * (2 * s12 + C2)) / ((mu1 ** 2 + mu2 ** 2 + C1) * (s1 + s2 + C2))).mean())
 
 
+# ── Unique shots gate (Nov 16: "each shot should be unique") ───────────────────────────────────────────────────────
+# Every shot must show its own picture. Fails BEFORE any billing/rendering when:
+#  - two shots use the same source file (sha256 of the bytes), or a shot has no picture of its own;
+#  - two shots are near-duplicates: ORB feature match with >= UNIQUE_ORB_INLIERS RANSAC inliers (catches crops, zooms,
+#    upscales, alt takes of one framing, and a still that is a frame of a clip), or a global match on the
+#    equalised 160x90 grey frame (dHash <= UNIQUE_DHASH_MAX bits of 64, or SSIM >= UNIQUE_SSIM_MIN) for low-texture art.
+# Calibrated Nov 16 on 40 real CFA assets (800 ORB features, 640x360): every true duplicate scored 51-800 inliers,
+# every distinct pair <= 13; dHash 0-7 on true duplicates, >= 14 on distinct pairs.
+UNIQUE_ORB_INLIERS = 30
+UNIQUE_ORB_FEATURES = 800
+UNIQUE_DHASH_MAX = 6
+UNIQUE_SSIM_MIN = 0.90
+UNIQUE_CLIP_SAMPLES = (0.05, 0.5, 0.95)   # clip frames compared (start/middle/end)
+
+
+class DuplicateShotError(RuntimeError):
+    """Two shots show the same picture (or a shot has none of its own). Fail loudly; never reuse to fill time."""
+
+
+def _sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for blk in iter(lambda: f.read(1 << 20), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def _asset_frames(path, kind):
+    """Grey frames (640x360) for comparison: the still, or start/middle/end of a clip."""
+    import cv2
+    out = []
+    if kind in ("video", "lipsync") or str(path).lower().endswith((".mp4", ".mov", ".webm", ".m4v")):
+        cap = cv2.VideoCapture(path)
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        for f in UNIQUE_CLIP_SAMPLES:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(n - 1, int(n * f))))
+            ok, fr = cap.read()
+            if ok:
+                out.append(fr)
+        cap.release()
+    else:
+        fr = cv2.imread(path, cv2.IMREAD_COLOR)
+        if fr is not None:
+            out.append(fr)
+    return [cv2.cvtColor(cv2.resize(f, (640, 360), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY) for f in out]
+
+
+def near_duplicate(fa_list, fb_list, _cache=None):
+    """Best match between two assets' frames -> (is_dup, metrics)."""
+    import cv2, numpy as np
+    orb = cv2.ORB_create(UNIQUE_ORB_FEATURES)
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING)
+    best = {"orb_inliers": 0, "dhash": 64, "ssim": -1.0}
+    def feats(g):
+        k = id(g)
+        if _cache is not None and k in _cache:
+            return _cache[k]
+        r = orb.detectAndCompute(cv2.equalizeHist(g), None)
+        if _cache is not None:
+            _cache[k] = r
+        return r
+    for ga in fa_list:
+        for gb in fb_list:
+            sa, sb = cv2.equalizeHist(cv2.resize(ga, (160, 90), interpolation=cv2.INTER_AREA)), cv2.equalizeHist(cv2.resize(gb, (160, 90), interpolation=cv2.INTER_AREA))
+            best["dhash"] = min(best["dhash"], int((_dhash(sa) != _dhash(sb)).sum()))
+            best["ssim"] = max(best["ssim"], round(_ssim(sa, sb), 3))
+            (ka, da), (kb, db) = feats(ga), feats(gb)
+            if da is None or db is None or len(ka) < 8 or len(kb) < 8:
+                continue
+            m = bf.knnMatch(da, db, k=2)
+            good = [x[0] for x in m if len(x) == 2 and x[0].distance < 0.75 * x[1].distance]
+            if len(good) < 8:
+                continue
+            H, mask = cv2.findHomography(np.float32([ka[x.queryIdx].pt for x in good]), np.float32([kb[x.trainIdx].pt for x in good]), cv2.RANSAC, 5.0)
+            if mask is not None:
+                best["orb_inliers"] = max(best["orb_inliers"], int(mask.sum()))
+    dup = best["orb_inliers"] >= UNIQUE_ORB_INLIERS or best["dhash"] <= UNIQUE_DHASH_MAX or best["ssim"] >= UNIQUE_SSIM_MIN
+    return dup, best
+
+
+def uniqueness_gate(shots, d):
+    """Every shot has its own picture; no file is used twice; no two shots are near-duplicates (all pairs)."""
+    missing, unreadable, exact, near, by_hash, frames, meta = [], [], [], [], {}, {}, {}
+    for x in shots:
+        i, m = x.get("index"), x.get("media")
+        if not m:
+            missing.append(i); continue
+        p = m if os.path.isabs(m) else os.path.join(d, m)
+        if not os.path.exists(p):
+            missing.append(i); continue
+        h = _sha256(p)
+        if h in by_hash:
+            exact.append({"shots": [by_hash[h][0], i], "media": [by_hash[h][1], m]})
+            continue
+        by_hash[h] = (i, m)
+        fr = _asset_frames(p, x.get("mediaType") or "image")
+        if not fr:
+            unreadable.append(i); continue
+        frames[i] = fr
+        meta[i] = m
+    ids, cache = list(frames), {}
+    for k, i in enumerate(ids):
+        for j in ids[k + 1:]:
+            dup, met = near_duplicate(frames[i], frames[j], cache)
+            if dup:
+                near.append(dict(met, shots=[i, j], media=[meta[i], meta[j]]))
+    parts = []
+    if missing:
+        parts.append("shot%s %s %s no picture of its own (generate one; nothing is reused)" % ("s" if len(missing) > 1 else "", ", ".join(map(str, missing)), "have" if len(missing) > 1 else "has"))
+    if unreadable:
+        parts.append("shot%s %s could not be read to verify uniqueness (re-export the picture)" % ("s" if len(unreadable) > 1 else "", ", ".join(map(str, unreadable))))
+    for e in exact:
+        parts.append("shots %d and %d use the same file (%s)" % (e["shots"][0], e["shots"][1], e["media"][1]))
+    for e in near:
+        parts.append("shots %d and %d are near-duplicates (%s vs %s: %d ORB inliers, dHash %d, SSIM %.2f)" % (
+            e["shots"][0], e["shots"][1], e["media"][0], e["media"][1], e["orb_inliers"], e["dhash"], e["ssim"]))
+    ok = not parts
+    return {"pass": ok, "missing": missing, "unreadable": unreadable, "exact": exact, "near": near, "compared": len(ids),
+            "thresholds": {"orb_inliers_min": UNIQUE_ORB_INLIERS, "dhash_max": UNIQUE_DHASH_MAX, "ssim_min": UNIQUE_SSIM_MIN},
+            "message": "" if ok else "UNIQUE SHOTS GATE FAILED: " + "; ".join(parts) + ". Generate a new, distinct still for each colliding shot."}
+
+
 EDGE_FRAC = 0.04          # edge band width checked on each side
 EDGE_DARK_Y = 14.0        # band mean luma below this (while the interior is brighter) = black bar
 EDGE_SHARP_MIN = 0.2      # band Laplacian energy / interior energy below this = blurred band (v6 blurred fill 0.05-0.14; real art >= 0.5)
@@ -1411,8 +1445,8 @@ def edge_gate(path, every=0.5):
 
 
 def similarity_gate(path, shots):
-    """Consecutive shots must show new visual information: fail pairs that read as the same frame re-angled,
-    unless the plan marks an intentional match cut."""
+    """Consecutive shots must show new visual information: fail pairs that read as the same frame re-angled
+    (no exemptions; the source-level uniqueness_gate already compares every pair)."""
     import cv2
     cap = cv2.VideoCapture(path)
     def grab(t):
@@ -1432,7 +1466,7 @@ def similarity_gate(path, shots):
         ss = round(_ssim(fa, fb), 3)
         same = a.get("media") and a.get("media") == b.get("media")
         sim = same or dh < SIM_DHASH_MIN or ss > SIM_SSIM_MAX
-        ok = (not sim) or b.get("plan_link") == "match"
+        ok = not sim   # unique shots: a planned match cut must still show a new picture
         pairs.append({"i": i, "dhash": dh, "ssim": ss, "same_media": bool(same), "ok": ok})
         if not ok:
             fails.append(i)
@@ -2369,7 +2403,7 @@ def main():
     ap.add_argument("--music-style", default=None, help="score style: " + ", ".join(MUSIC_STYLES) + ", none")
     ap.add_argument("--no-score", action="store_true", help="do not compose an ElevenLabs score (use --music file if given)")
     ap.add_argument("--no-beat-grades", action="store_true", help="one grade for the whole episode (no per-beat cool/sterile/golden)")
-    ap.add_argument("--no-drift-split", action="store_true", help="keep long stills as one shot (no 3-4 s drift parts)")
+    ap.add_argument("--no-drift-split", action="store_true", help="(no-op: stills are never split into re-shown parts)")
     ap.add_argument("--no-whisper", action="store_true", help="skip the Whisper caption alignment / line check")
     ap.add_argument("--raw-transitions", action="store_true", help="use the EDL transitions as-is (no smoothing policy)")
     ap.add_argument("--music", help="optional background music file (ducked under the voice)")
@@ -2481,10 +2515,7 @@ def main():
     if a.no_end_card or not CAPTIONS_ON:   # no text: the end card (text only) goes too
         edl["end_card"]["enabled"] = False
     PHRASE = b.get("shotPlan") == "phrase"   # tool planned one new image per phrase: no re-angled splits of a still
-    if not PHRASE and not FAST:
-        edl["shots"] = split_punch_ins(edl["shots"], words)
-    if not a.no_drift_split and not PHRASE and not FAST:
-        edl["shots"] = split_drift(edl["shots"], words, segs=segs)
+    # unique shots (Nov 16): a still is never split into wide/punch-in/drift parts of itself
     by_media = {s.get("media"): s for s in segs if s.get("mediaType") == "lipsync" and s.get("media")}
     for x in edl["shots"]:
         if x.get("mediaType") == "lipsync" and x.get("media") in by_media:
@@ -2522,8 +2553,20 @@ def main():
     log("EDL from", source, "| problems:", problems or "none")
 
     # shots
-    clips, last_media = [], None
+    clips = []
     shots = edl["shots"]
+    # hard uniqueness gate BEFORE anything is billed (i2v, music) or rendered: every shot has its own, distinct picture
+    ug = uniqueness_gate(shots, d)
+    bare = [s["index"] for s in segs if not s.get("media")]
+    if bare:   # a line with no picture of its own would be covered by another line's picture: refuse, never fill
+        ug["pass"] = False; ug["missing_lines"] = bare
+        ug["message"] = (ug["message"] or "UNIQUE SHOTS GATE FAILED: ").rstrip(". ") + ("; " if ug["message"] else "") + \
+            "line%s %s %s no picture of its own (generate one; nothing is reused). Generate a new, distinct still for each colliding shot." % (
+                "s" if len(bare) > 1 else "", ", ".join(map(str, bare)), "have" if len(bare) > 1 else "has")
+    log("uniqueness gate:", "PASS" if ug["pass"] else "FAIL", ug.get("message") or "")
+    if not ug["pass"]:
+        json.dump({"uniqueness": ug, "cut_style": CUT}, open(os.path.join(a.out, "report.json"), "w"), indent=1)
+        raise DuplicateShotError(ug["message"])
     i2v_info = {"mode": a.i2v, "clips": 0, "est_usd": 0.0}
     if PHRASE:
         mode = episode_motion_model(b, a)
@@ -2646,32 +2689,20 @@ def main():
         for x in shots:
             if x.get("media"):
                 x["_depth"] = dmap.get(os.path.join(d, x["media"]))
+    if any(x.get("mediaType") == "video" and x.get("_upscaled") is not None for x in shots):
+        ug = uniqueness_gate(shots, d)   # generated clips are pictures too: re-check before rendering
+        log("uniqueness gate (after motion):", "PASS" if ug["pass"] else "FAIL", ug.get("message") or "")
+        if not ug["pass"]:
+            json.dump({"uniqueness": ug, "cut_style": CUT, "i2v": i2v_info}, open(os.path.join(a.out, "report.json"), "w"), indent=1)
+            raise DuplicateShotError(ug["message"])
     if not PHRASE:
         assign_directions(shots)
     for i, shot in enumerate(shots):
         nxt = shots[i + 1]["transition_duration"] if i + 1 < len(shots) else 0.0
         src, kind = None, "image"
-        if shot.get("media"):
-            src, kind = os.path.join(d, shot["media"]), shot.get("mediaType") or "image"
-            last_media = (src, kind)
-        elif same_line_media(shots, i):  # a gap is filled from ITS OWN line (tighter crop), never by holding the neighbour's shot
-            sm = same_line_media(shots, i)
-            src, kind = os.path.join(d, sm["media"]), sm.get("mediaType") or "image"
-            shot["motion"] = "zoom_in"; shot["fallback_same_line"] = True
-            log("gap shot", i, "filled from its own line:", sm["media"])
-        elif last_media:  # last resort: hold the previous visual rather than going black (reported as a hole)
-            src, kind = last_media
-            shot["held_neighbour"] = True
-            # never the same frame frozen twice in a row: a tight punch-in, moving the other way
-            shot["motion"] = "punch_in"; shot["focus"] = "top"
-            shot["_dir"] = -(shots[i - 1].get("_dir") or 1) if i else -1
-            log("HOLE: shot", i, "holds the neighbouring shot (no image on its line) - punch-in reframe; hole gate fails")
-        else:  # nothing before it (missing opening scene): borrow the next available visual
-            nx = next((x for x in shots[i + 1:] if x.get("media")), None)
-            if nx:
-                src, kind = os.path.join(d, nx["media"]), nx.get("mediaType") or "image"
-        if kind == "lipsync" and shot.get("mediaType") != "lipsync":
-            kind = "video"  # a borrowed talking clip is just footage here
+        if not shot.get("media"):   # unreachable: uniqueness_gate refuses shots without their own picture before rendering
+            raise DuplicateShotError("shot %d has no picture of its own" % (i + 1))
+        src, kind = os.path.join(d, shot["media"]), shot.get("mediaType") or "image"
         out = os.path.join(work, "shot_%03d.mp4" % i)
         f0 = round(shot["start"] * FPS)
         f1 = round((shot["end"] + nxt) * FPS) if i + 1 < len(shots) else round(total * FPS) + 2
@@ -2858,6 +2889,7 @@ def main():
         log("edge gate:", "PASS" if gate["edges"]["pass"] else "FAIL", gate["edges"]["bad"][:4])
     except Exception as e:
         gate["edges"] = {"pass": None, "error": str(e)[:120]}
+    gate["uniqueness"] = ug
     gate["holes"] = {"pass": not any(x.get("held_neighbour") for x in shots), "held": [x.get("index") for x in shots if x.get("held_neighbour")]}
     log("hole gate:", "PASS" if gate["holes"]["pass"] else "FAIL", gate["holes"]["held"])
     if key and not os.environ.get("CFA_NO_FIDELITY"):   # v8: every still must act out its own line (action, object, emotion)

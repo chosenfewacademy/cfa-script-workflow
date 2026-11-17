@@ -5087,6 +5087,7 @@ function updateStartFrameAction(){
   const btn    = document.getElementById('btn-set-startframe');
   if(!wrap || !target || !btn) return;
   const s = sceneData[currentScene];
+  wrap.style.display = 'none'; return;   // unique shots: no "use this still as the next clip's start frame"
   if(!s || s.tag !== 'IMAGE' || !s.resultURL){ wrap.style.display = 'none'; return; }
   const nextVideoIdx = findNextVideoSceneIdx();
   if(nextVideoIdx === -1){ wrap.style.display = 'none'; return; }
@@ -5103,7 +5104,9 @@ function updateStartFrameAction(){
   }
 }
 
-function setAsStartFrameForNext(){
+// Unique shots: a still is never recycled as another shot's opening frame (the clip would open on the same picture).
+function setAsStartFrameForNext(){ return false; }
+function setAsStartFrameForNext_removed(){
   const s = sceneData[currentScene];
   if(!s || s.tag !== 'IMAGE' || !s.resultURL) return; // never set a video as a start frame
   const nextVideoIdx = findNextVideoSceneIdx();
@@ -5269,6 +5272,40 @@ async function exportFinalEditBundle(){
   }catch(e){ say('Export failed: '+(e&&e.message||e)); }
   finally{ if(btn) btn.disabled=false; }
 }
+// ── Unique shots (Nov 16: "Don't reuse the same shot over and over again, each shot should be unique") ──
+// Every pair of shots is compared (not just neighbours), stills AND clips (start/middle/end frames):
+// identical bytes (SHA-256) or a near-identical picture (64-bit dHash distance <= UNIQUE_DHASH_MAX) blocks the export.
+// The renderer repeats the check with feature matching (crops, punch-ins, alternate takes) before anything is billed.
+const UNIQUE_DHASH_MAX=6;
+async function blobSha256(b){ const h=await crypto.subtle.digest('SHA-256', await b.arrayBuffer()); return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function dhashFromSource(src,w,h){ const c=document.createElement('canvas'); c.width=9; c.height=8; const g=c.getContext('2d'); g.drawImage(src,0,0,w,h,0,0,9,8);
+  const d=g.getImageData(0,0,9,8).data, v=[]; for(let i=0;i<72;i++) v.push(d[i*4]*0.3+d[i*4+1]*0.59+d[i*4+2]*0.11);
+  const bits=[]; for(let y=0;y<8;y++) for(let x=0;x<8;x++) bits.push(v[y*9+x+1]>v[y*9+x]?1:0); return bits; }
+async function blobFrameHashes(b,kind){
+  if(kind!=='video'){ const im=await createImageBitmap(b); try{ return [dhashFromSource(im,im.width,im.height)]; }finally{ im.close&&im.close(); } }
+  const u=URL.createObjectURL(b);
+  try{ const v=document.createElement('video'); v.muted=true; v.preload='auto'; v.src=u;
+    await new Promise((res,rej)=>{ v.onloadeddata=res; v.onerror=()=>rej(new Error('clip did not load')); setTimeout(()=>rej(new Error('clip load timeout')),15000); });
+    const out=[]; for(const f of [0.05,0.5,0.95]){ await new Promise(res=>{ v.onseeked=res; v.currentTime=Math.max(0,(v.duration||0)*f); setTimeout(res,4000); }); if(v.videoWidth) out.push(dhashFromSource(v,v.videoWidth,v.videoHeight)); }
+    return out; }finally{ URL.revokeObjectURL(u); } }
+async function uniqueShotCollisions(picks){
+  const pairs=[], unverified=[], seen={}, hashed=[];
+  for(const p of picks){
+    let h=''; try{ h=await blobSha256(p.blob); }catch(e){}
+    if(h && seen[h]){ pairs.push({a:seen[h],b:p.shot,why:'same file'}); continue; }
+    if(h) seen[h]=p.shot;
+    let fr=[]; try{ fr=await blobFrameHashes(p.blob,p.kind); }catch(e){ fr=[]; }
+    if(!fr.length){ unverified.push(p.shot); continue; }
+    for(const q of hashed){ let best=64; for(const a of q.fr) for(const b of fr) best=Math.min(best,hamming(a,b));
+      if(best<=UNIQUE_DHASH_MAX) pairs.push({a:q.shot,b:p.shot,why:'near-duplicate picture (dHash '+best+')'}); }
+    hashed.push({shot:p.shot,fr});
+  }
+  return {pairs, unverified};
+}
+function uniqueShotMessage(uq){
+  return 'Not exported: every shot must be unique. '+uq.pairs.slice(0,6).map(p=>'Shots '+p.a+' and '+p.b+': '+p.why).join('; ')+(uq.pairs.length>6?' (+'+(uq.pairs.length-6)+' more)':'')+
+    '. Generate a new, distinct still for shot '+uq.pairs[0].b+' (different angle, framing, subject or place) - nothing is reused.';
+}
 // Builds the final-edit bundle (zip Blob) — shared by the download export and the Grok render service upload.
 async function buildFinalEditZip(say){
   if(!sceneData.length){ say('No scenes yet.'); return null; }
@@ -5283,7 +5320,7 @@ async function buildFinalEditZip(say){
     return null;
   }
   {
-    const enc=new TextEncoder(), files=[], segs=[], missing=[];
+    const enc=new TextEncoder(), files=[], segs=[], missing=[], picks=[];
     const lines=sceneData.map(x=>x.line);
     const times=lineTimes()||(voWords.length?computeBeatTimes(lines,voWords):[]);
     for(let i=0;i<sceneData.length;i++){
@@ -5297,6 +5334,7 @@ async function buildFinalEditZip(say){
           const b=await r.blob(); kind=s.resultType==='video'?'video':'image';
           media='media/scene_'+n+'.'+extFromBlob(b,s.resultURL,kind);
           files.push({name:media,data:new Uint8Array(await b.arrayBuffer())});
+          picks.push({shot:i+1,blob:b,kind});
         }catch(e){ missing.push(i+1); media=null; }
       } else missing.push(i+1);
       const t=times[i]||(beatLen(s)?{start:s.tStart,end:s.tEnd}:null);
@@ -5306,6 +5344,11 @@ async function buildFinalEditZip(say){
         media, mediaType:media?(kind==='video'&&s.lipsync?'lipsync':kind):'', model:s.resultModel||'', prompt:s.prompt||'', setting:s.sceneDesc||'', sfx:s.sfx||'', overlay:beatOverlayText(s), motion:s.motion||'', planMotion:s.planMotion||null, planLink:s.planLink||null, planDir:s.planDir||null, planShot:s.planShot||null, oneChar:s.oneChar||null, shot:s.shot||'', pace:s.pace||'',
         start:t?t.start:null, end:t?t.end:null});
     }
+    // UNIQUE SHOTS (Nov 16): every shot needs its OWN picture - nothing is held, borrowed or reused to fill a gap
+    if(missing.length){ say('Not exported: shot'+(missing.length>1?'s ':' ')+missing.join(', ')+(missing.length>1?' have':' has')+' no picture of '+(missing.length>1?'their':'its')+' own. Every shot must be unique; nothing is reused to fill the gap. Generate a new, distinct still for '+(missing.length>1?'each':'it')+' first.'); try{ jumpToScene(missing[0]-1); }catch(e){} return null; }
+    say('Checking every shot is unique…');
+    const uq=await uniqueShotCollisions(picks);
+    if(uq.pairs.length){ say(uniqueShotMessage(uq)); try{ jumpToScene(uq.pairs[0].b-1); }catch(e){} return null; }
     say('Packing bundle…');
     const voName='voiceover.'+(/wav/.test(voBlob.type)?'wav':'mp3');
     files.push({name:voName,data:new Uint8Array(await voBlob.arrayBuffer())});
@@ -5325,7 +5368,7 @@ async function buildFinalEditZip(say){
     files.push({name:'beats.srt',data:enc.encode(srt.join('\n'))});
     const zip=buildZip(files);
     return {zip, title, name:'CFA_FinalEdit_'+(episode?'EP'+String(episode).padStart(2,'0')+'_':'')+title.replace(/[^a-z0-9]+/gi,'_').slice(0,50)+'.zip',
-      note:(missing.length?' — scenes without media: '+missing.join(', ')+' (renderer will hold the previous shot)':'')+(voWords.length?'':' — no beat timings (re-run voiceover for exact sync)')};
+      note:(uq.unverified.length?' — shot'+(uq.unverified.length>1?'s ':' ')+uq.unverified.join(', ')+' could not be compared in the browser; the renderer\u2019s uniqueness gate checks them':'')+(voWords.length?'':' — no beat timings (re-run voiceover for exact sync)')};
   }
 }
 
@@ -5387,10 +5430,9 @@ async function sendToGrokRender(){
   const missing=sceneData.map((x,i)=>x.resultURL?0:i+1).filter(Boolean);
   const stills=clipBeatsHoldingStills();
   if(stills.length && !confirm('Clip beat'+(stills.length>1?'s ':' ')+stills.join(', ')+(stills.length>1?' are':' is')+' marked VIDEO but '+(stills.length>1?'hold still images':'holds a still image')+' — the render would show a still where a clip belongs.\n\nOK = send anyway, Cancel = go back and generate the clip'+(stills.length>1?'s':'')+'.')){ jumpToScene(sceneData.findIndex((x,i)=>i+1===stills[0])); return; }
-  // test clip: a shot with no image inside the window would repeat its neighbour (same background twice) - fail loudly instead
-  if(testClipCfg().on){ const f=testClipFrom(), l=testClipLimit(); const hole=sceneData.slice(f,l).map((x,k)=>x.resultURL?0:f+k+1).filter(Boolean);
-    if(hole.length && localStorage.getItem('cfa_allow_holes')!=='1'){ say('Not sent: shot'+(hole.length>1?'s ':' ')+hole.join(', ')+' in the test window '+(hole.length>1?'have':'has')+' no image, so the render would repeat the neighbouring shot. Regenerate '+(hole.length>1?'them':'it')+' first.'); return; } }
-  if(missing.length && !confirm('Scene'+(missing.length>1?'s ':' ')+missing.join(', ')+(missing.length>1?' have':' has')+' no image or clip yet. Grok will hold the neighbouring shot over '+(missing.length>1?'them':'it')+'.\n\nOK = send anyway, Cancel = go back and generate '+(missing.length>1?'them':'it')+'.')) return;
+  // unique shots: a shot with no picture of its own is never covered by a neighbour - refuse, no override
+  { const f=testClipCfg().on?testClipFrom():0, l=testClipCfg().on?testClipLimit():sceneData.length; const hole=missing.filter(n=>n-1>=f&&n-1<l);
+    if(hole.length){ say('Not sent: shot'+(hole.length>1?'s ':' ')+hole.join(', ')+(hole.length>1?' have':' has')+' no picture of '+(hole.length>1?'their':'its')+' own. Every shot must be unique; nothing is reused to fill the gap. Generate a new, distinct still for '+(hole.length>1?'each':'it')+' first.'); return; } }
   if(!budgetPreflight('xai',0.05,'the Grok final edit')) return;
   btn.disabled=true;
   try{
@@ -5726,7 +5768,7 @@ async function enterSceneGeneration(){
     if(dialogueOn()) sceneData.forEach(x=>{ const sp=splitTag(x.line).speaker; x.speaker=sp||'NARRATOR';
       if(sp && sp!=='NARRATOR' && fullNarr()){ const c=CHARACTER_REGISTRY.speakers[sp]?.cast; if(c && c!=='NONE') x.characters=c; }
       if(sp && sp!=='NARRATOR' && talkOn()){ x.tag='TALK'; const c=CHARACTER_REGISTRY.speakers[sp]?.cast; if(c && c!=='NONE') x.characters=c; } });
-    sceneData.forEach((x,i)=>{ const p=prevByLine.get(normLine(x.line)); if(p){ sceneData[i]=Object.assign({},p,{line:x.line,locked:true}); } });
+    { const used=new Set(); sceneData.forEach((x,i)=>{ const k=normLine(x.line), p=prevByLine.get(k); if(p && !used.has(k)){ used.add(k); sceneData[i]=Object.assign({},p,{line:x.line,locked:true}); } }); }   // unique shots: a repeated line gets its own new still, never the same one twice
     applyMotionMode();
     assignBeatTimes(); // VO timings (if the voiceover was generated) → per-scene start/end
     if(fastCuts()){ try{ applyPhraseShots(testClipOn()?testClipLimit():null); }catch(e){ console.warn('Fast Cuts split failed, v8 shots kept:',e.message); } }
@@ -5819,9 +5861,10 @@ Rules:
 - sfx: a short ambient sound description for the shot (room tone, street, shop bell, keyboard), no music, no voices.
 - NARRATOR vs CHARACTER shots: a beat spoken by a CHARACTER (TALK / a character line) is an on-screen speaker shot of that character (medium or close-up, shot / reverse-shot between speakers, the listener's reaction allowed). A NARRATOR beat is NEVER a talking face: use an animated wide or establishing shot (slow push-in, pan or drift; people moving in the space) of the place, a time-passing shot, or B-roll of the key object (the phone, the notebook, the shop door).
 - ALWAYS MOVING (action-video feel): every shot has visible motion that ACTS OUT its line: the action being described, the speaker's gesture (points at the phone, shrugs, leans in, counts on fingers), or the listener's reaction (eyebrows up, a slow exhale, a laugh). Never "static"; a camera move alone is not enough.
-- CONTINUITY: consecutive shots in the same place use the SAME "place" text exactly (the next clip starts from the previous clip's last frame); keep screen direction (who is left/right) and the camera's travel direction ("dir": left|right|in|out|up|down|hold) consistent inside a place, and cut on motion (the next shot continues the movement). Lighting stays the episode LOOK unless the place or time changes.
+- CONTINUITY: consecutive shots in the same place use the SAME "place" text exactly; keep screen direction (who is left/right) and the camera's travel direction ("dir": left|right|in|out|up|down|hold) consistent inside a place, and cut on motion (the next shot continues the movement). Lighting stays the episode LOOK unless the place or time changes.
 - Dialogue coverage: alternate speaker close-ups with LISTENER REACTION shots on punchlines, surprises and the reveal; give each character line a "gesture" that fits the words.
 - SHOT VARIETY (required): give every shot a "shot" type from ECU (extreme close-up: eyes, a fingertip, a single key), CU (face), MCU, OTS (over-the-shoulder onto the phone/laptop/other person), INSERT (the object the line is about: a clock face, a phone screen seen as shapes and colours, hands on a keyboard, a wallet, a notebook), WIDE (the place, people moving in it). Rotate them: never the same type 3 shots in a row, at least one INSERT every 6 shots, WIDE only to establish or breathe.
+- UNIQUE SHOTS (required): no two shots in the episode may show the same frame. Each shot differs from EVERY other shot in at least two of: camera angle, shot size/framing, subject, location. Never repeat, re-crop, punch into, re-angle or re-take another shot's image; the same place is fine only from a new angle on a new subject.
 - EVERY SHOT DEPICTS ITS LINE: the frame shows the specific person, object or action the line is about (a line about the clock shows the clock; a line about Marcus's warning shows Marcus); never a generic shot of someone sitting.
 - PACE: mark each shot "pace":"tense" (crisis, complication, countdown, climax, montage) or "calm" (setup, reflection, resolution). Tense beats are cut at about 2 seconds, calm beats hold 3-4 seconds with a slow drift.
 - Pacing (viral story rules): something visibly changes every 3-5 seconds; open with a fast, tense first frame on the problem; hold steady on the reveal beat (the turn) and give it the most striking frame of the episode.
@@ -5853,7 +5896,24 @@ function shotPlanIssues(shots, data){
     { const hit=LINE_OBJECTS.filter(([nm,inLine])=>inLine.test(ln)&&!/\b(not|never|no)\s*$/i.test(ln.split(inLine)[0].slice(-12))); if(hit.length&&!hit.some(([nm,,inImg])=>inImg.test(img))) miss.push((i+1)+' ('+hit[0][0]+')'); }
     for(const who of ['Jordan','Marcus','Dee','Priya','Okafor']) if(new RegExp('\\b'+who+'\\b').test(ln)&&!new RegExp('\\b'+who+'\\b').test(img)&&x.characters!=='NONE'&&!/^\s*(JORDAN|MARCUS|DEE|PRIYA|MR\. OKAFOR):/.test(ln)){ if(!miss.some(m=>m.startsWith((i+1)+' '))) miss.push((i+1)+' ('+who+')'); break; } });
   if(miss.length) out.push('shot does not show what its line is about: beats '+miss.slice(0,8).join(', '));
-  return {issues:out, mismatched:miss.map(m=>parseInt(m,10))};
+  const dup=promptDupPairs(shots.map(sh=>({n:parseInt(sh.n,10)||0,text:(normShot(sh.shot)||'')+' '+(sh.place||'')+' '+(sh.image||'')})));
+  if(dup.length) out.push('UNIQUE SHOTS: '+dup.slice(0,6).map(p=>'shots '+p.a+' and '+p.b).join(', ')+' describe the same frame — change the angle, framing, subject or place so every shot is unique');
+  return {issues:out, mismatched:miss.map(m=>parseInt(m,10)), dup};
+}
+// Two shot descriptions that are (nearly) the same frame: same shot size + place + subject words.
+const UNIQUE_PROMPT_JACCARD=0.7;
+const PROMPT_STOP=new Set('the a an and with of in on at to his her their its is are into from for by while as this that one two very soft warm light lighting shot frame close medium wide insert over shoulder'.split(' '));
+function promptWords(p){ return new Set(String(p||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>2&&!PROMPT_STOP.has(w))); }
+function promptDupPairs(list){ const ws=list.map(x=>promptWords(x.text)), out=[];
+  for(let i=0;i<list.length;i++) for(let j=i+1;j<list.length;j++){ const A=ws[i], B=ws[j]; if(!A.size||!B.size) continue;
+    let n=0; A.forEach(w=>{ if(B.has(w)) n++; }); const jac=n/(A.size+B.size-n);
+    if(String(list[i].text).trim()===String(list[j].text).trim() || jac>=UNIQUE_PROMPT_JACCARD) out.push({a:list[i].n,b:list[j].n,jac:+jac.toFixed(2)}); }
+  return out; }
+// Prompt note for EVERY shot in both cut styles: this frame must differ from every other shot (named), never a repeat.
+function uniqueShotNote(i){
+  const s=sceneData[i]; if(!s) return '';
+  const others=[]; for(let d=1; d<sceneData.length && others.length<6; d++) for(const k of [i-d,i+d]){ const x=sceneData[k]; if(!x||k<0) continue; const desc=String(x.prompt||x.sceneDesc||'').replace(/\s+/g,' ').trim(); if(desc && others.length<6) others.push('shot '+(k+1)+': '+desc.slice(0,110)); }
+  return '\n[UNIQUE SHOT: shot '+(i+1)+' must be a picture no other shot in this episode has. Change at least two of camera angle, shot size/framing, subject and location compared with every other shot'+(others.length?' ('+others.join(' | ')+')':'')+'. Never a repeat, re-crop, punch-in, alternate take or re-angle of another shot; same place only from a new angle on a new subject.'+(s.distinctNote?' '+s.distinctNote:'')+']';
 }
 async function directorPass(data){
   const beats=data.map((x,i)=>'['+(i+1)+'] '+x.tag+' | on screen: '+(x.characters||'NONE')+(castInScene(x).length?', '+castInScene(x).join(', '):'')+' | '+String(x.line).replace(/^\s*\d+\.\s*/,''));
@@ -5883,6 +5943,10 @@ async function directorPass(data){
     const el=document.getElementById('prompt-ready-'+i); if(el){el.textContent='✓ prompt';el.style.display='';}
     n++;
   }
+  // unique shots: a director prompt that repeats another shot's frame is re-written per beat (told which shot it repeated)
+  for(const p of promptDupPairs(data.map((x,i)=>({n:i+1,text:(x.shot||'')+' '+(x.sceneDesc||'')+' '+String(x.prompt||'').replace(look,'')})).filter(x=>x.text.trim()))){
+    const x=data[p.b-1]; if(!x || x.locked&&x.prompt) continue;
+    x.directed=false; x.prompt=''; x.distinctNote='Shot '+p.b+' was planned as the same frame as shot '+p.a+'; show a different subject, angle and framing.'; n--; }
   saveWorkflowState();
   return n;
 }
@@ -6077,7 +6141,6 @@ async function similarShotPairs(limit){
   const lim=limit==null?sceneData.length:limit, hs=[], bad=[];
   for(let i=0;i<lim;i++){ const s=sceneData[i]; try{ hs[i]=s.resultURL&&s.resultType!=='video'?await imgDHash(s.resultURL):null; }catch(e){ hs[i]=null; } }
   for(let i=1;i<lim;i++){ const same=sceneData[i].resultURL&&sceneData[i].resultURL===sceneData[i-1].resultURL;
-    if(sceneData[i].planLink==='match') continue;
     if(same || (hs[i]&&hs[i-1]&&hamming(hs[i],hs[i-1])<PS_SIM_MIN)) bad.push({i,d:same?0:hamming(hs[i],hs[i-1])}); }
   return bad;
 }
@@ -6102,7 +6165,7 @@ async function generatePromptForScene(i){
 
   // Build the user message — add a Character Note when a secondary person is in the scene
   // so the AI knows to describe them as a distinct new individual, not a variation of Marcus/Jordan
-  let userMsg = s.line + sceneContextNote(i) + phraseShotNote(i);
+  let userMsg = s.line + sceneContextNote(i) + phraseShotNote(i) + uniqueShotNote(i);
   const secondary = detectSecondaryChar(s.line);
   if(secondary){
     const mainChar =
@@ -6223,13 +6286,8 @@ function loadScene(i){
     const sceneSlot=document.getElementById('slot-scene'); if(sceneSlot && !sceneRefs['scene']) sceneSlot.classList.remove('has-image');
   }
 
-  // Start frame (video scenes): saved one, else most recent completed image before this scene
-  if(isVideo){
-    if(!s.startFrameManual){
-      const best=bestStartFrameFor(i);
-      if(best) s.savedStartFrameURL = best;
-    }
-  }
+  // Start frame (video scenes): only this shot's own (generated for it or uploaded for it) - never another shot's still
+  if(isVideo && s.savedStartFrameURL && sceneData.some((x,k)=>k!==i && x.resultURL===s.savedStartFrameURL)) s.savedStartFrameURL='';
   clearStartFrameSlotUI();
   if(isVideo && s.savedStartFrameURL){
     sceneRefs['startframe']={url:s.savedStartFrameURL};
@@ -7025,10 +7083,7 @@ async function applyEnhancedVersion(){
       if(chip) chip.textContent = sceneData[idx].resultModel;
     }
 
-    // Update next video scene's start frame to the enhanced version
-    for(let j=idx+1; j<sceneData.length; j++){
-      if(sceneData[j].tag==='VIDEO'){ sceneData[j].savedStartFrameURL=httpsUrl; break; }
-    }
+    // unique shots: the enhanced still belongs to this shot only (never pushed into the next clip's start frame)
 
     // Close panel & clean up
     const panel = document.getElementById('gpt-enhance-panel');
@@ -7520,16 +7575,11 @@ async function falImageRequest(model, prompt, refImages){
   if(!url) throw new Error('No result returned — try again.');
   return {url, label:IMAGE_MODEL_LABELS[model]};
 }
-// After an image result: auto-set it as start frame of the next VIDEO scene (unless set manually)
+// After an image result: the still belongs to THIS shot only. (It used to become the next clip's start frame,
+// so the clip opened on the same picture - removed for unique shots.)
 function applyImageResult(idx, url, label){
   const s=sceneData[idx];
   s.resultURL=url; s.resultType='image'; s.resultModel=label;
-  for(let j=idx+1;j<sceneData.length;j++){
-    if(sceneData[j].tag==='VIDEO' && !sceneData[j].startFrameManual){
-      const best=bestStartFrameFor(j);
-      if(best){ sceneData[j].savedStartFrameURL=best; sceneData[j].startFrameManual=false; }
-    }
-  }
 }
 // Character continuity for clips: Kling image-to-video takes its look from the start frame,
 // so a VIDEO beat with Jordan must start from an image that was generated with Jordan's
@@ -7551,7 +7601,10 @@ async function lastFrameUrl(url){
   }finally{ URL.revokeObjectURL(ou); }
 }
 function sceneCharSet(c){ return c==='BOTH'||c==='BOTH_JM'?['MARCUS','JORDAN']:c==='NONE'||!c?[]:[c]; }
-function bestStartFrameFor(j){
+// Unique shots: no shot borrows another shot's still as its opening frame; a clip that needs one gets its own,
+// newly generated from the character sheets (normal priced, budget-gated flow).
+function bestStartFrameFor(j){ return ''; }
+function bestStartFrameFor_removed(j){
   const want=sceneCharSet(sceneData[j]?.characters);
   const imgs=[];
   for(let k=j-1;k>=0;k--){ const x=sceneData[k]; if(x.tag==='IMAGE'&&x.resultURL&&x.resultType!=='video') imgs.push(x); }
@@ -7792,14 +7845,8 @@ async function generateScene(){
       genCost=getEstimatedCost();
       // A clip of Marcus/Jordan with no earlier still of them: make an opening frame from
       // their reference sheets first, so image-to-video keeps their look.
-      if(!startFrameURL){
-        const prev=sceneData[idx-1];
-        if(prev && prev.resultType==='video' && prev.resultURL && samePlace(prev,s)){
-          try{ document.getElementById('s6-gen-label').textContent='Continuing from the previous clip’s last frame (same place)…';
-            const u=await lastFrameUrl(prev.resultURL); if(u){ startFrameURL=u; s.savedStartFrameURL=u; s.startFromPrev=true; sceneRefs['startframe']={url:u}; }
-          }catch(e){ console.warn('last-frame seed failed:',e.message); }
-        }
-      }
+      // unique shots: never seed this clip with the previous clip's last frame (it would open on the same picture)
+      if(startFrameURL && sceneData.some((x,k)=>k!==idx && x.resultURL===startFrameURL)){ startFrameURL=''; delete sceneRefs['startframe']; s.savedStartFrameURL=''; }
       if(!startFrameURL && (s.characters!=='NONE' || selectedVideoModel==='kling-o1v')){
         document.getElementById('s6-gen-label').textContent='Making a start frame from the character references (Kling O1)…';
         const order=s.characters==='BOTH_JM'?[['Jordan',JORDAN_B64],['Marcus',MARCUS_B64]]:s.characters==='BOTH'?[['Marcus',MARCUS_B64],['Jordan',JORDAN_B64]]:s.characters==='MARCUS'?[['Marcus',MARCUS_B64]]:[['Jordan',JORDAN_B64]];
