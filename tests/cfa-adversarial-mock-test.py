@@ -1,7 +1,7 @@
 import re
 # Headless adversarial test: every external API (xAI, fal, ElevenLabs) is mocked via request
 # interception, so it costs $0. Run: pip install playwright && python3 tests/cfa-adversarial-mock-test.py [group ...]
-# Groups: happy xaierr nokey abort trunc xss inputs prompts fal vo storage reload settings timing batch (default all)
+# Groups: happy xaierr nokey abort trunc xss inputs prompts fal vo storage reload settings timing batch fastcuts phrase ... (default all)
 # Optional: CHROME=/usr/bin/google-chrome to use a system Chrome.
 import asyncio, json, re, base64, sys
 from playwright.async_api import async_playwright
@@ -1149,6 +1149,7 @@ async def main():
             check('bundle: speaker + locked voice_id on every segment', segs and all(g['voice_id']==LOCK[g['speaker']] for g in segs), [(g.get('speaker'),g.get('voice_id')) for g in segs])
             check('bundle: talking shot exported as lipsync, text without tag', segs and segs[1]['mediaType']=='lipsync' and not segs[1]['text'].startswith('JORDAN'), segs[1] if segs else None)
             check('bundle: format, music style and voice lock recorded', bj.get('format_type')=='dialogue' and bj.get('musicStyle')=='cinematic' and bj.get('voiceLock')==LOCK, {k:bj.get(k) for k in ('format_type','musicStyle')})
+            check('bundle: cut style recorded, v8 by default', bj.get('cutStyle')=='v8', bj.get('cutStyle'))
             check('bundle: segment start = line audio start (lip-sync anchor)', segs and abs(segs[1]['start']-await J(pg,"()=>voLines[1].start"))<1e-6)
             # resume keeps TALK + lip-sync fields + director fields; drops lines with a non-locked voice id
             await J(pg,"()=>{sceneData[0].sfx='door bell';sceneData[0].overlay='Sent is not arrived';saveWorkflowState();}")
@@ -1297,6 +1298,38 @@ async def main():
             check('testclip: hard cap includes music reserve and cannot be overridden', r['small'] and not r['big'] and not r['after'] and r['alerts']==2, r)
             check('testclip: toggle in render panel', r['ui'])
             check('testclip: no page errors', not [e for e in errs if 'pageerror' in e], errs)
+            await ctx.close()
+        if want('fastcuts'):
+            for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)
+            ctx,pg,errs=await newpage(b)
+            LINES="""['1. JORDAN: Three percent left, and these twelve words are still only on the screen.',
+               "2. NARRATOR: Dee's two hundred dollars had to reach the parts supplier by five in the afternoon. A miss meant the shop lost its discount and the next order slipped a week.",
+               '3. JORDAN: That payment is in my wallet. This screen will not wait.',
+               '4. NARRATOR: Jordan already knew a private key controls access, and that the key must stay secret.',
+               '5. NARRATOR: But Marcus had lost a photo that way, when his first backup landed in a cloud album.']"""
+            PLAN="()=>{sceneData.length=0; "+LINES+".forEach((l,i)=>sceneData.push({line:l,tag:'IMAGE',characters:'JORDAN',prompt:'p',resultURL:i==1?'blob:x':null})); const n=applyPhraseShots(5); return {n, L:sceneData.map(x=>x.line), note:phraseShotNote(2), max:stillMaxFor('Dee felt the panic rise'), min:stillMinS(), style:cutStyle()};}"
+            v8=await J(pg,PLAN)
+            ui=await J(pg,"""()=>{openSettings(); const s=document.getElementById('sm-cut'); const lab=s&&s.closest('label');
+              return {has:!!s, val:s&&s.value, opts:s?[...s.options].map(o=>[o.value,o.textContent]):[], label:lab?lab.textContent.trim().slice(0,9):''};}""")
+            check('fastcuts: Settings has a "Cut style" selector (v8 default, Fast Cuts option)', ui['has'] and ui['label']=='Cut style' and ui['val']=='v8' and [o[0] for o in ui['opts']]==['v8','fast_cuts'] and ui['opts'][1][1].startswith('Fast Cuts'), ui)
+            check('fastcuts: v8 is the default and its limits are unchanged (5 s cap, 6 s emotional, 2 s min, no fast note)', v8['style']=='v8' and v8['max']==6 and v8['min']==2 and 'FAST CUTS' not in v8['note'], v8)
+            await J(pg,"()=>{const s=document.getElementById('sm-cut'); s.value='fast_cuts'; s.dispatchEvent(new Event('change'));}")
+            fc=await J(pg,PLAN)
+            wc=lambda x: len(x.split(':',1)[1].split())
+            check('fastcuts: choosing Fast Cuts is saved', await J(pg,"()=>localStorage.getItem('cfa_cut_style')")=='fast_cuts' and fc['style']=='fast_cuts')
+            check('fastcuts: 3 s still cap (emotional lines too), 1 s minimum', fc['max']==3 and fc['min']==1, fc)
+            check('fastcuts: more, shorter shots than v8 for the same lines (<= ~3 s of words each)', len(fc['L'])>len(v8['L']) and all(wc(x)<=9 for x in fc['L']), [len(fc['L']),len(v8['L']),[wc(x) for x in fc['L']]])
+            check('fastcuts: shot prompts ask for exactly what the words say, a new place when the story moves, no captions', 'FAST CUTS' in fc['note'] and 'only what these exact words describe' in fc['note'] and 'new place' in fc['note'] and 'No captions' in fc['note'] and 'reference sheet' in fc['note'], fc['note'])
+            await persist_reload(pg, errs)
+            r=await J(pg,"()=>{openSettings(); return [cutStyle(), document.getElementById('sm-cut').value];}")
+            check('fastcuts: setting survives a reload', r==['fast_cuts','fast_cuts'], r)
+            src=await J(pg,"()=>buildFinalEditZip.toString()")
+            check('fastcuts: export bundle carries cutStyle for the renderer', 'cutStyle:cutStyle()' in src)
+            await J(pg,"()=>{localStorage.setItem('cfa_cut_style','bogus')}")
+            check('fastcuts: unknown stored value falls back to v8', await J(pg,"()=>cutStyle()")=='v8')
+            await J(pg,"()=>{const s=document.getElementById('sm-cut'); s.value='v8'; s.dispatchEvent(new Event('change'));}")
+            check('fastcuts: switching back restores v8', await J(pg,"()=>[cutStyle(), stillMaxFor('The parts left the supplier at five')]")==['v8',5])
+            check('fastcuts: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
         if want('phrase'):
             for k in SC: SC[k]={'xai':'ok','fal':'ok','el':'ok'}.get(k,0 if k in('delay','falDelay') else None)

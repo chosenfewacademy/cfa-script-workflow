@@ -2161,6 +2161,7 @@ select option{background:var(--surface2)}
           <label style="font-size:11px">Narration <select class="inp" id="sm-narr" onchange="smSaveFormat()" aria-label="Narration ratio"><option value="full">Full narration (Bill narrates 100%, quoting characters)</option><option value="sparse">Sparse (≤15% narrator)</option><option value="hybrid">Hybrid (25–35%: narrated cold open, bridges, closing)</option></select></label>
           <label style="font-size:11px">Look <select class="inp" id="sm-look" onchange="smSaveFormat()" aria-label="Look"><option value="3d">3D animated (Pixar-style model sheets)</option><option value="2d">2D illustrated (original)</option></select></label>
           <label style="font-size:11px">Music <select class="inp" id="sm-music" onchange="smSaveFormat()" aria-label="Music style"><option value="cinematic">Cinematic (piano + strings)</option><option value="lofi">Lo-fi</option><option value="orchestral">Orchestral</option><option value="acoustic">Acoustic</option><option value="electronic">Soft electronic</option><option value="none">No music</option></select></label>
+          <label style="font-size:11px" title="v8 is the locked default. Fast Cuts keeps the v8 look (no captions) but cuts to a new picture every 1-3 s, each showing exactly what is being said.">Cut style <select class="inp" id="sm-cut" onchange="smSaveFormat()" aria-label="Cut style"><option value="v8">v8 (default): 3–5 s shots, slow drift</option><option value="fast_cuts">Fast Cuts: new shot every 1–3 s, each shows exactly what’s said</option></select></label>
         </div>
         <div style="font-size:10.5px;color:var(--muted);margin:6px 0 2px">Character voices are <b>locked</b> (ElevenLabs eleven_v4). Every line is voiced with its speaker&rsquo;s locked voice.</div>
         <div id="sm-voice-lock" style="font-size:11px"></div>
@@ -3938,6 +3939,7 @@ function smSaveFormat(){
   safeSetItem('cfa_talk_mode', document.getElementById('sm-talk').value);
   { const n=document.getElementById('sm-narr'); if(n) safeSetItem('cfa_narr_mode', n.value); }
   safeSetItem('cfa_music_style', document.getElementById('sm-music').value);
+  { const c=document.getElementById('sm-cut'); if(c) safeSetItem('cfa_cut_style', CUT_STYLES.includes(c.value)?c.value:'v8'); }
   { const l=document.getElementById('sm-look'); if(l && l.value!==(look3d()?'3d':'2d')){ safeSetItem('cfa_look', l.value); applyLook(); } }
   flashOk('sm-format-ok');
 }
@@ -3946,6 +3948,7 @@ function loadFormatUI(){
   const t=document.getElementById('sm-talk'); if(t) t.value=talkMode();
   { const n=document.getElementById('sm-narr'); if(n) n.value=narrMode(); }
   const m=document.getElementById('sm-music'); if(m) m.value=musicStyle();
+  { const c=document.getElementById('sm-cut'); if(c) c.value=cutStyle(); }
   { const l=document.getElementById('sm-look'); if(l) l.value=look3d()?'3d':'2d'; }
   renderVoiceLockUI();
 }
@@ -5314,7 +5317,7 @@ async function buildFinalEditZip(say){
       script:finalScript||'',segmentedScript:segScript||'',voiceover:voName,srt:'beats.srt',
       duration:voWords.length?voWords[voWords.length-1][2]:null,words:voWords,segments:segs,
       voicePace:{pace:voPace,speed:VO_PACES[voPace].speed},
-      format_type:scriptFormat(), musicStyle:musicStyle(), shotPlan:phrasePlanOn()?'phrase':'beat', charRefs:phrasePlanOn()?await i2vCharRefs():{},
+      format_type:scriptFormat(), musicStyle:musicStyle(), cutStyle:cutStyle(), shotPlan:phrasePlanOn()?'phrase':'beat', charRefs:phrasePlanOn()?await i2vCharRefs():{},
       voiceLock:Object.fromEntries(Object.entries(voiceLock()).map(([k,v])=>[k,v.voiceId]))};
     files.unshift({name:'bundle.json',data:enc.encode(JSON.stringify(bundle,null,1))});
     files.push({name:'script.txt',data:enc.encode(finalScript||'')});
@@ -5726,6 +5729,7 @@ async function enterSceneGeneration(){
     sceneData.forEach((x,i)=>{ const p=prevByLine.get(normLine(x.line)); if(p){ sceneData[i]=Object.assign({},p,{line:x.line,locked:true}); } });
     applyMotionMode();
     assignBeatTimes(); // VO timings (if the voiceover was generated) → per-scene start/end
+    if(fastCuts()){ try{ applyPhraseShots(testClipOn()?testClipLimit():null); }catch(e){ console.warn('Fast Cuts split failed, v8 shots kept:',e.message); } }
     // Persist initial sceneData so a refresh during prompt generation doesn't lose classifications
     saveWorkflowState();
 
@@ -5960,10 +5964,17 @@ function planLinkFor(prev,cur,prevSpk,curSpk){
 // Still length cap: no single still holds longer than STILL_MAX_S; a long phrase becomes 2+ distinct shots (2-4 s each).
 const STILL_MAX_S=5, STILL_MIN_S=2, STILL_MAX_EMO_S=6;   // baseline test_clip_vision held 5-7 s stills and read best (Oct 29)
 const EMOTIONAL_RE=/\b(feel|felt|fear|afraid|scared|worr\w*|hope\w*|proud|sad|angry|nervous|heart|tears?|sigh\w*|realiz\w*|knew|lost|alone|ashamed|relie\w*|panic\w*|calm\w*|trust\w*|regret\w*|smile\w*|cry|cried)\b/i;
-function stillMaxFor(text){ return EMOTIONAL_RE.test(String(text||''))?STILL_MAX_EMO_S:STILL_MAX_S; }
+// Cut style (opt-in): 'v8' (default, locked) or 'fast_cuts' (Nov 16 ad study: a new picture every 1-3 s, each showing
+// exactly what the words say at that moment, new places as the story moves; hard cuts; never captions). Same v8 look.
+const CUT_STYLES=['v8','fast_cuts'], FAST_STILL_MAX_S=3, FAST_STILL_MIN_S=1;
+function cutStyle(){ const m=safeGetItem('cfa_cut_style'); return CUT_STYLES.includes(m)?m:'v8'; }
+function fastCuts(){ return cutStyle()==='fast_cuts'; }
+function stillMinS(){ return fastCuts()?FAST_STILL_MIN_S:STILL_MIN_S; }
+const FAST_CUTS_NOTE=' FAST CUTS: this picture is on screen for only 1-3 seconds; show literally and only what these exact words describe, as one instantly readable image (one clear subject, no clutter). If the story has moved to a new place or moment, show the new place. No captions or on-screen words.';
+function stillMaxFor(text){ if(fastCuts()) return FAST_STILL_MAX_S; return EMOTIONAL_RE.test(String(text||''))?STILL_MAX_EMO_S:STILL_MAX_S; }
 function voWordRate(){ if(voWords.length>8){ const d=voWords[voWords.length-1][2]-voWords[0][1]; if(d>1) return Math.min(4,Math.max(1.8,voWords.length/d)); } return 2.6; }
 function capStillPiece(text){
-  const r=voWordRate(), maxW=Math.max(5,Math.floor(stillMaxFor(text)*r)), minW=Math.max(3,Math.round(STILL_MIN_S*r));
+  const r=voWordRate(), maxW=Math.max(5,Math.floor(stillMaxFor(text)*r)), minW=Math.max(fastCuts()?2:3,Math.round(stillMinS()*r));
   const w=String(text).trim().split(/\s+/); if(w.length<=maxW) return [String(text).trim()];
   const n=Math.ceil(w.length/maxW), out=[]; let st=0;
   for(let k=1;k<n;k++){ const tgt=Math.round(w.length*k/n); let best=tgt, bs=-1;
@@ -5976,7 +5987,7 @@ function stillLengthViolations(from,to){ const bad=[]; for(let i=from||0;i<(to==
 function shotKey(x){ const m=String(x?.line||'').match(/^\s*(\d+)\.\s*([A-Z][A-Z .']*:)?/); return m?m[1]+'|'+(m[2]||''):null; }
 function shotLen(x){ return (x&&x.tEnd!=null&&x.tStart!=null)?x.tEnd-x.tStart:beatLen(x); }
 function mergeShortShots(lim){ lim=lim==null?sceneData.length:Math.min(lim,sceneData.length);
-  for(let i=0;i<lim;i++){ const x=sceneData[i]; if(x.tag!=='IMAGE'||x.planShot==='action') continue; const L=shotLen(x); if(!(L>0&&L<STILL_MIN_S)) continue;
+  for(let i=0;i<lim;i++){ const x=sceneData[i]; if(x.tag!=='IMAGE'||x.planShot==='action') continue; const L=shotLen(x); if(!(L>0&&L<stillMinS())) continue;
     const k=shotKey(x); const cand=[i-1,i+1].filter(j=>j>=0&&j<lim&&sceneData[j].tag==='IMAGE'&&sceneData[j].planShot!=='action'&&shotKey(sceneData[j])===k&&L+shotLen(sceneData[j])<=stillMaxFor(splitTag(x.line||'').text)+0.5).sort((a,b)=>shotLen(sceneData[a])-shotLen(sceneData[b]));
     if(!cand.length) continue; const j=cand[0], a=Math.min(i,j), b=Math.max(i,j), A=sceneData[a], B=sceneData[b];
     const pre=String(A.line).match(/^\s*\d+\.\s*([A-Z][A-Z .']*:\s*)?/)[0];
@@ -6051,7 +6062,7 @@ function phraseShotNote(i){
   const pv=i?sceneData[i-1]:null, nw=pv?psNew(splitTag(pv.line).text,splitTag(s.line).text):[];
   return '\n[NEW SHOT: show the new visual information in this line'+(nw.length?' ('+nw.slice(0,6).join(', ')+')':'')+' as its own subject and composition'+
     (pv&&(pv.sceneDesc||pv.prompt)?'. It must NOT be a re-angle or re-crop of the previous shot ('+String(pv.sceneDesc||pv.prompt).slice(0,160)+')':'')+
-    (s.distinctNote?'. '+s.distinctNote:'')+(s.oneChar?'. ONE CHARACTER ONLY: show '+s.oneChar[0]+s.oneChar.slice(1).toLowerCase()+' alone in frame (no second person, not even partly visible)':'')+(offscreenCast(s).length?'. '+offscreenCast(s).join(' and ')+(offscreenCast(s).length>1?' are':' is')+' only mentioned and stays OFF-SCREEN: do not show '+offscreenCast(s).join(' or ')+', not even a hand, shoulder or silhouette':'')+'. '+emotionNote(s)+(subjectNote(s)?'. '+subjectNote(s):'')+(s.planShot==='action'?'. Pose them mid-action, clearly doing what the line describes':'')+(beatNeedsText(s)?'. Writing only if the line needs it: at most one or two short words, large, clear and correctly spelled':'. No written words, signs or labels anywhere')+'. Crisp and clean: correct anatomy and hands, no distortion. Keep the character exactly as in the reference sheet (same face, hair, skin tone, outfit), mouth closed.]';
+    (s.distinctNote?'. '+s.distinctNote:'')+(s.oneChar?'. ONE CHARACTER ONLY: show '+s.oneChar[0]+s.oneChar.slice(1).toLowerCase()+' alone in frame (no second person, not even partly visible)':'')+(offscreenCast(s).length?'. '+offscreenCast(s).join(' and ')+(offscreenCast(s).length>1?' are':' is')+' only mentioned and stays OFF-SCREEN: do not show '+offscreenCast(s).join(' or ')+', not even a hand, shoulder or silhouette':'')+'. '+emotionNote(s)+(subjectNote(s)?'. '+subjectNote(s):'')+(s.planShot==='action'?'. Pose them mid-action, clearly doing what the line describes':'')+(beatNeedsText(s)?'. Writing only if the line needs it: at most one or two short words, large, clear and correctly spelled':'. No written words, signs or labels anywhere')+(fastCuts()?'.'+FAST_CUTS_NOTE.replace(/\.$/,''):'')+'. Crisp and clean: correct anatomy and hands, no distortion. Keep the character exactly as in the reference sheet (same face, hair, skin tone, outfit), mouth closed.]';
 }
 // Similarity check on generated images (8x8 difference hash); consecutive pairs below the threshold are re-angles.
 const PS_SIM_MIN=10;
