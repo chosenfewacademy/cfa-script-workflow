@@ -15,8 +15,12 @@ def free_port():
 def media(d):
     def ff(*a): subprocess.run(["ffmpeg", "-y", "-v", "error"] + list(a), check=True)
     ff("-f", "lavfi", "-i", "sine=f=220:d=9", "-ac", "1", os.path.join(d, "vo.mp3"))
-    for k, c in enumerate(["0x2b4c7e", "0x7e2b4c", "0x4c7e2b"]):
-        ff("-f", "lavfi", "-i", "color=c=%s:s=640x360:d=1" % c, "-frames:v", "1", os.path.join(d, "s%d.png" % k))
+    import random
+    from PIL import Image
+    for k in range(3):   # unique shots: every shot is a genuinely different picture (the tool and renderer refuse look-alikes)
+        r = random.Random(1000 + k); im = Image.new("RGB", (64, 36))
+        im.putdata([(r.randrange(256), r.randrange(256), r.randrange(256)) for _ in range(64 * 36)])
+        im.resize((640, 360), Image.NEAREST).save(os.path.join(d, "s%d.png" % k))
     ff("-f", "lavfi", "-i", "testsrc=s=640x360:d=3:r=24", "-pix_fmt", "yuv420p", os.path.join(d, "v.mp4"))
 
 async def main():

@@ -35,6 +35,9 @@ python3 tools/render/render.py bundle.zip -o out/ --music bed.mp3               
 
 Output length equals the voiceover length (title and end cards overlay picture, they don't add time).
 
+## Unique shots (hard gate, both cut styles)
+Every shot must have its own picture. Before any billing or rendering, `uniqueness_gate` refuses a line/shot with no picture, an unreadable picture, identical bytes in two shots (SHA-256) or any near-duplicate pair across the whole episode (ORB ≥ 30 inliers, dHash ≤ 6, or SSIM ≥ 0.90; clips sampled at 5/50/95 %), naming the colliding shots. Nothing is held, borrowed, reframed or re-shown to fill time. See `docs/V8_LOCKED_STYLE.md`.
+
 ## Test
 `python3 tools/render/test_render.py` — $0, synthetic bundle, renders 16:9 and 9:16 with music, checks duration == voice,
 audio present, −14 LUFS ±1, every word captioned at its spoken time, no "crypto" on screen, EDL validator/fallback.

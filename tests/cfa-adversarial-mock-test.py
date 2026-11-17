@@ -18,6 +18,29 @@ _ORIGIN='http://127.0.0.1:%d/'%_HTTPD.server_address[1]
 LINEMP3=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'fixtures_line.mp3'),'rb').read()
 CLIP=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'fixtures_clip.mp4'),'rb').read()
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+# Unique shots: each mocked fal.media URL serves its OWN picture (seeded noise), so distinct shots are genuinely distinct.
+# A URL ending in _dupN serves the same bytes as plain N would not - see uniq_png(): same seed key = same picture.
+import hashlib as _hl, io as _io, subprocess as _sp, tempfile as _tf
+_UNIQ={}
+def _seed(u):
+    k=u.split('?')[0].rsplit('/',1)[-1]; k=re.sub(r'_dup\d*(?=\.)','',k)   # x_dup.png = same picture as x.png (byte-identical)
+    return int(_hl.sha256(k.encode()).hexdigest()[:8],16)
+def uniq_png(u):
+    s=_seed(u)
+    if ('p',s) not in _UNIQ:
+        from PIL import Image; import random
+        r=random.Random(s); im=Image.new('RGB',(64,36))
+        im.putdata([(r.randrange(256),r.randrange(256),r.randrange(256)) for _ in range(64*36)])
+        b=_io.BytesIO(); im.save(b,'PNG'); _UNIQ[('p',s)]=b.getvalue()
+    return _UNIQ[('p',s)]
+def uniq_clip(u):
+    s=_seed(u)
+    if ('v',s) not in _UNIQ:
+        d=_tf.mkdtemp(); p=os.path.join(d,'n.png'); open(p,'wb').write(uniq_png(u)); src=os.path.join(d,'c.mp4'); open(src,'wb').write(CLIP)
+        o=os.path.join(d,'o.mp4')
+        _sp.run(['ffmpeg','-v','error','-y','-i',src,'-loop','1','-i',p,'-filter_complex','[1:v]scale=320:180:flags=neighbor,format=yuv420p[n];[0:v][n]overlay=shortest=1','-c:v','libx264','-pix_fmt','yuv420p','-r','25',o],check=True)
+        _UNIQ[('v',s)]=open(o,'rb').read()
+    return _UNIQ[('v',s)]
 SC={'xai':'ok','fal':'ok','el':'ok','delay':0,'script':None,'cls':None,'falDelay':0}
 cnt={'xai':0,'falgen':0,'upload':0}
 results=[]
@@ -119,8 +142,8 @@ async def fal_route(route):
         if SC['fal']=='uploadfail': return await route.fulfill(status=500,content_type='application/json',body='{}')
         return await route.fulfill(status=200,content_type='application/json',body=json.dumps({'upload_url':'https://upload.mock/put/'+str(cnt['upload']),'file_url':'https://v3b.fal.media/files/up_'+str(cnt['upload'])+'.jpg'}))
     if 'upload.mock' in u: return await route.fulfill(status=200,body='')
-    if 'fal.media' in u and u.split('?')[0].endswith('.mp4'): return await route.fulfill(status=200,content_type='video/mp4',headers={'Access-Control-Allow-Origin':'*'},body=CLIP)
-    if 'fal.media' in u: return await route.fulfill(status=200,content_type='image/png',body=PNG)
+    if 'fal.media' in u and u.split('?')[0].endswith('.mp4'): return await route.fulfill(status=200,content_type='video/mp4',headers={'Access-Control-Allow-Origin':'*'},body=uniq_clip(u))
+    if 'fal.media' in u: return await route.fulfill(status=200,content_type='image/png',body=uniq_png(u))
     if u.startswith('https://queue.fal.run/') and '/requests/' in u:
         rid=u.split('/requests/')[1].split('/')[0]; Q=SC.get('falQ') or {}; job=Q.get(rid)
         if job is None: return await route.fulfill(status=404,content_type='application/json',body='{"detail":"not found"}')
@@ -376,7 +399,7 @@ async def main():
             await J(pg,"()=>{currentScene=0;loadScene(0);}"); await pg.wait_for_timeout(400)
             await J(pg,"()=>{generateScene(); setTimeout(()=>jumpToScene(2),200);}"); await pg.wait_for_timeout(3500)
             st=await J(pg,"()=>({r0:!!sceneData[0].resultURL,r2:!!sceneData[2].resultURL,sf1:sceneData[1].savedStartFrameURL===sceneData[0].resultURL,shown:!!document.querySelector('#s6-result-content img')})")
-            check('switch mid-gen: result on scene 1 only + start frame for scene 2', st['r0'] and not st['r2'] and st['sf1'] and not st['shown'], st)
+            check('switch mid-gen: result on scene 1 only; its still is NOT recycled as scene 2\'s start frame (unique shots)', st['r0'] and not st['r2'] and not st['sf1'] and not st['shown'], st)
             SC['delay']=0
             # Veo without start frame
             await J(pg,"()=>{sceneData[1].savedStartFrameURL='';sceneData[1].characters='NONE';sceneData[1].startFrameManual=true;sceneData[0].resultURL='';jumpToScene(1);setVideoModel('veo31');}")
@@ -445,7 +468,7 @@ async def main():
             ctx,pg,errs=await newpage(b,pre="localStorage.setItem('cfa_workflow_state_v1',"+json.dumps(json.dumps(old))+");")
             await J(pg,"()=>resumeSavedSession()"); await pg.wait_for_timeout(600)
             st=await J(pg,"()=>({cur:currentScene,sf:sceneRefs.startframe?.url||'',vm:selectedVideoModel,dur:sceneDuration,seg:document.getElementById('sgo').value.length>0,veoBtn:document.querySelector('.duration-toggle .dur-btn.active')?.textContent})")
-            check('old format: resumes on scene 2 with start frame + Veo 8s', st['cur']==1 and st['sf'].endswith('old.png') and st['vm']=='veo31' and st['dur']==8 and st['seg'], st)
+            check('old format: resumes on scene 2 + Veo 8s; a start frame that is shot 1\'s still is dropped (unique shots)', st['cur']==1 and st['sf']=='' and st['vm']=='veo31' and st['dur']==8 and st['seg'], st)
             await J(pg,"()=>jumpToScene(0)"); await J(pg,"()=>jumpToScene(2)"); await pg.wait_for_timeout(300)
             m=await J(pg,"()=>selectedImageModel"); await J(pg,"()=>jumpToScene(0)"); m2=await J(pg,"()=>selectedImageModel")
             check('old format: imagen restored to kling for character scene', m=='imagen4' and m2=='kling-o1', (m,m2))
@@ -536,7 +559,7 @@ async def main():
             check('batch: stop honoured, ≤3 in flight', st['peak']<=3 and st['done']==3 and not st['running'] and 'stopped' in st['e6'].lower(), st)
             await J(pg,"()=>generateAllImages()"); await pg.wait_for_timeout(1500)
             st=await J(pg,"()=>({done:sceneData.filter(s=>s.resultURL).length,sf:sceneData[3].savedStartFrameURL===sceneData[2].resultURL,vid:!!sceneData[3].resultURL,noprompt:!!sceneData[6].resultURL,models:sceneData.map(s=>s.resultModel),spend:sessionSpend,btn:document.getElementById('btn-gen-all').textContent})")
-            check('batch: all prompted images done, video/no-prompt skipped, start frame set', st['done']==5 and st['sf'] and not st['vid'] and not st['noprompt'], st)
+            check('batch: all prompted images done, video/no-prompt skipped, no still recycled as a start frame', st['done']==5 and not st['sf'] and not st['vid'] and not st['noprompt'], st)
             check('batch: concept scenes no longer text-only — every still is Kling o1 with the style anchor', st['models'][2].startswith('Kling o1') and st['models'][0].startswith('Kling o1'), st['models'])
             SC['fal']='500'; g0=cnt['falgen']; await J(pg,"()=>{sceneData[0].resultURL='';sceneData[1].resultURL='';renderSceneDots();generateAllImages();}")
             for _ in range(40):
@@ -612,11 +635,11 @@ async def main():
             check('continuity: pronoun beats inherit the named character, concept beats stay NONE', r==['JORDAN','JORDAN','NONE','BOTH','BOTH','NONE'], r)
             r=await J(pg,"""()=>{sceneData=[{tag:'IMAGE',characters:'JORDAN',resultURL:'https://x/j.png',resultType:'image'},{tag:'IMAGE',characters:'NONE',resultURL:'https://x/c.png',resultType:'image'},{tag:'VIDEO',characters:'JORDAN'},{tag:'VIDEO',characters:'NONE'},{tag:'VIDEO',characters:'MARCUS'}];
               return [bestStartFrameFor(2),bestStartFrameFor(3),bestStartFrameFor(4)];}""")
-            check('continuity: character clips start from a frame with that character, never a concept still', r==['https://x/j.png','https://x/c.png',''], r)
+            check('unique shots: a clip never borrows another shot\'s still as its start frame', r==['','',''], r)
             r=await J(pg,"""()=>{sceneData=[{tag:'IMAGE',characters:'NONE',resultURL:'',resultType:''},{tag:'VIDEO',characters:'NONE'},{tag:'IMAGE',characters:'JORDAN',resultURL:'',resultType:''},{tag:'VIDEO',characters:'JORDAN'}];
               applyImageResult(0,'https://x/c.png','m'); const a=sceneData[3].savedStartFrameURL||''; applyImageResult(2,'https://x/j.png','m');
               return [sceneData[1].savedStartFrameURL,a,sceneData[3].savedStartFrameURL];}""")
-            check('continuity: new images update start frames of later clips by character', r==['https://x/c.png','','https://x/j.png'], r)
+            check('unique shots: a new image is never pushed into a later clip\'s start frame', not any(r), r)
             await J(pg,"""()=>{sceneData=[{line:'1. Dee has the laptop open.',tag:'IMAGE',characters:'NONE',prompt:'Dee at laptop',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
               {line:'2. A chart.',tag:'IMAGE',characters:'NONE',prompt:'chart',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
               {line:'3. Marcus walks in.',tag:'VIDEO',characters:'MARCUS',prompt:'Marcus walks in',sceneDesc:'',done:false,resultURL:'',resultType:'',resultModel:'',savedStartFrameURL:''},
@@ -859,9 +882,10 @@ async def main():
             r=await J(pg,"()=>{const keep=currentScene; sceneData[keep].prompt=sceneData[keep].prompt||'A test prompt'; document.getElementById('s6-prompt').value=''; jumpToScene(keep); return document.getElementById('s6-prompt').value}")
             check('audit: jumping to the scene already on screen still fills its prompt (empty-prompt clip bug)', len(r.strip())>0, r)
             r=await J(pg,"()=>{const oc=window.confirm,D=[];window.confirm=m=>{D.push(m);return false}; sessionStorage.setItem('cfa_render_url','http://127.0.0.1:9');sessionStorage.setItem('cfa_render_token','t'); const u=sceneData[0].resultURL; sceneData[0].resultURL=''; sendToGrokRender(); sceneData[0].resultURL=u; window.confirm=oc; sessionStorage.removeItem('cfa_render_url'); return D}")
-            check('audit: sending with scenes missing asks first', len(r)==1 and 'no image or clip' in r[0], r)
+            fe=await J(pg,"()=>document.getElementById('fe-status').textContent")
+            check('unique shots: sending with a shot missing refuses outright (no "hold the neighbour" override)', r==[] and 'no picture of its own' in fe and 'nothing is reused' in fe, (r,fe))
             r=await J(pg,"()=>{const save=JSON.stringify(sceneData); sceneData=[{tag:'IMAGE',characters:'JORDAN',resultURL:'u_good',styleQA:{match:true,identityMatch:true}},{tag:'IMAGE',characters:'JORDAN',resultURL:'u_bad',styleQA:{match:false,identityMatch:false}},{tag:'VIDEO',characters:'JORDAN'}]; const v=bestStartFrameFor(2); sceneData=JSON.parse(save); return v}")
-            check('audit: a clip never starts from an off-model still', r=='u_good', r)
+            check('audit: a clip never starts from another shot\'s still (on- or off-model)', r=='', r)
             # ── API budget trackers ──
             await J(pg,"()=>{localStorage.removeItem('cfa_budget_cfg');localStorage.removeItem('cfa_budget_spent');budgetCfg={};budgetSpent={xai:0,fal:0,eleven:0,openai:0};budgetLive={};}")
             SC['elsub']=None; SC['falbal']='27.0106725'
@@ -1141,7 +1165,8 @@ async def main():
             msg=await J(pg,"async()=>{const s=sceneData[2]; voLines[2].voiceId='AAAAAAAAAAAAAAAAAAAA'; s.lineAudioURL=''; try{await talkClip(2,s,'https://v3b.fal.media/files/x.png',()=>{});return 'no error'}catch(e){return e.message}}")
             check('LOCKED VOICES: lip-sync refuses a line voiced with a non-locked id', 'locked voice' in msg, msg)
             await J(pg,"()=>{voLines[2].voiceId='"+LOCK['MARCUS']+"'}")
-            # export bundle
+            # export bundle (every shot needs its own picture: give the not-yet-generated beats distinct mocked stills)
+            await J(pg,"()=>sceneData.forEach((s,i)=>{ if(!s.resultURL){ s.resultURL='https://v3b.fal.media/files/own'+i+'.png'; s.resultType='image'; } })")
             z=await J(pg,"""async()=>{const r=await buildFinalEditZip(()=>{}); if(!r) return null; let s=''; const u=r.zip instanceof Blob?new Uint8Array(await r.zip.arrayBuffer()):r.zip; for(let i=0;i<u.length;i+=8192) s+=String.fromCharCode.apply(null,u.subarray(i,i+8192)); return btoa(s);}""")
             import zipfile, io
             bj=json.loads(zipfile.ZipFile(io.BytesIO(base64.b64decode(z))).read('bundle.json')) if z else {}
@@ -1329,6 +1354,20 @@ async def main():
             check('fastcuts: unknown stored value falls back to v8', await J(pg,"()=>cutStyle()")=='v8')
             await J(pg,"()=>{const s=document.getElementById('sm-cut'); s.value='v8'; s.dispatchEvent(new Event('change'));}")
             check('fastcuts: switching back restores v8', await J(pg,"()=>[cutStyle(), stillMaxFor('The parts left the supplier at five')]")==['v8',5])
+            for st in ('v8','fast_cuts'):
+                r=await J(pg,"""async(st)=>{ localStorage.setItem('cfa_cut_style',st); const keep=sceneData, keepLLM=llmComplete;
+                  sceneData=[{line:'1. Jordan opens the app.',tag:'IMAGE',characters:'JORDAN'},{line:'2. Jordan checks the balance.',tag:'IMAGE',characters:'JORDAN'},{line:'3. Marcus waits.',tag:'IMAGE',characters:'MARCUS'},{line:'4. The shop is quiet.',tag:'IMAGE',characters:'NONE'}];
+                  const dupImg='Jordan sits at the shop counter holding his phone, worried, bike parts behind him.';
+                  llmComplete=async()=>({text:JSON.stringify({look:{lighting:'warm',palette:'teal',mood:'tense'},shots:[
+                    {n:1,shot:'MCU',place:'bike shop counter',image:dupImg,motion:'',dir:'in'},{n:2,shot:'MCU',place:'bike shop counter',image:dupImg,motion:'',dir:'in'},
+                    {n:3,shot:'CU',place:'shop back room',image:'Marcus leans on a workbench by the window, arms crossed, watching the door.',motion:'',dir:'in'},
+                    {n:4,shot:'WIDE',place:'empty shop floor',image:'Rows of bikes on stands under hanging lights, nobody at the till.',motion:'',dir:'in'}]})});
+                  let n=0; try{ n=await directorPass(sceneData); }finally{ llmComplete=keepLLM; }
+                  const res={n, d2:sceneData[1].directed, p2:sceneData[1].prompt, why:sceneData[1].distinctNote||'', d1:sceneData[0].directed, issues:sceneData.shotPlanIssues||[],
+                    note:uniqueShotNote(1), cut:cutStyle(), sys:/UNIQUE SHOTS \(required\)/.test(SYS_DIRECTOR) && !/starts from the previous clip's last frame/.test(SYS_DIRECTOR), gen:/uniqueShotNote\(i\)/.test(generatePromptForScene.toString())};
+                  sceneData=keep; localStorage.removeItem('cfa_cut_style'); return res; }""", st)
+                check('unique shots ['+st+']: a director frame that repeats another shot is sent back for a new prompt, naming the shot it repeated', r['cut']==st and r['n']==3 and r['d1'] and not r['d2'] and r['p2']=='' and 'same frame as shot 1' in r['why'] and any('UNIQUE SHOTS' in i for i in r['issues']), r)
+                check('unique shots ['+st+']: every per-shot prompt demands a picture no other shot has (angle, framing, subject, place)', 'UNIQUE SHOT' in r['note'] and 'shot 1:' in r['note'] and 'camera angle, shot size/framing, subject and location' in r['note'] and 'Never a repeat, re-crop, punch-in, alternate take' in r['note'] and r['gen'] and r['sys'], r['note'])
             check('fastcuts: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             await ctx.close()
         if want('phrase'):
@@ -1518,6 +1557,14 @@ async def main():
             await J(pg,"()=>exportFinalEditBundle()")
             check('export: no voiceover in memory asks for the MP3', 'voiceover' in await J(pg,"()=>document.getElementById('fe-status').textContent") and await J(pg,"()=>document.getElementById('fe-vo-pick').style.display")=='')
             await J(pg,"()=>{voAudioURL=URL.createObjectURL(new Blob([new Uint8Array([73,68,51,4,0,0,0,0,0,0])],{type:'audio/mpeg'}));}")
+            await J(pg,"()=>exportFinalEditBundle()"); await pg.wait_for_timeout(300)
+            fe=await J(pg,"()=>document.getElementById('fe-status').textContent")
+            check('unique shots: export with shot 3 missing is refused (never held from a neighbour)', 'shot 3 has no picture of its own' in fe and 'nothing is reused' in fe, fe)
+            await J(pg,"()=>{sceneData[2].resultURL='https://v3b.fal.media/files/a_dup.png'; sceneData[2].resultType='image';}")
+            await J(pg,"()=>exportFinalEditBundle()"); await pg.wait_for_timeout(600)
+            fe=await J(pg,"()=>document.getElementById('fe-status').textContent")
+            check('unique shots: same picture under another URL (identical bytes) is refused, naming shots 1 and 3', 'Shots 1 and 3: same file' in fe and 'distinct still for shot 3' in fe, fe)
+            await J(pg,"()=>{sceneData[2].resultURL='https://v3b.fal.media/files/c.png';}")
             async with pg.expect_download(timeout=15000) as dl:
                 await J(pg,"()=>exportFinalEditBundle()")
             d=await dl.value; zp=await d.path()
@@ -1526,10 +1573,33 @@ async def main():
             check('export: zip valid (CRCs ok)', z.testzip() is None, names)
             check('export: zip contents', all(n in names for n in ['bundle.json','media/scene_001.png','media/scene_002.mp4','voiceover.mp3','script.txt','segments.txt','beats.srt']), names)
             bj=json.loads(z.read('bundle.json'))
-            check('export: bundle metadata', bj['format']=='cfa-final-edit-bundle' and bj['episode']==7 and bj['title'] and len(bj['segments'])==3 and bj['voicePace']['pace'] in ('slow','normal','expressive') and bj['segments'][1]['start']==1.2 and bj['segments'][2]['media'] is None, bj['segments'])
+            check('export: bundle metadata', bj['format']=='cfa-final-edit-bundle' and bj['episode']==7 and bj['title'] and len(bj['segments'])==3 and bj['voicePace']['pace'] in ('slow','normal','expressive') and bj['segments'][1]['start']==1.2 and bj['segments'][2]['media']=='media/scene_003.png', bj['segments'])
             check('export: srt has timed beats', '00:00:01,200 --> 00:00:03,300' in z.read('beats.srt').decode())
             check('export: filename', d.suggested_filename.startswith('CFA_FinalEdit_EP07_'), d.suggested_filename)
-            check('export: status reports missing media', 'scenes without media: 3' in await J(pg,"()=>document.getElementById('fe-status').textContent"))
+            check('export: all-unique shots export (status has no missing-media note)', 'without media' not in await J(pg,"()=>document.getElementById('fe-status').textContent"))
+            # near-duplicates (not byte-identical): all pairs, stills and clips, both cut styles
+            u=await J(pg,"""async()=>{
+              const mk=(seed,tweak)=>{ const c=document.createElement('canvas'); c.width=160; c.height=90; const g=c.getContext('2d'); let s=seed;
+                const rnd=()=>{ s=(s*16807)%2147483647; return s/2147483647; };
+                for(let y=0;y<90;y+=10) for(let x=0;x<160;x+=10){ const v=Math.floor(rnd()*255); g.fillStyle='rgb('+v+','+v+','+v+')'; g.fillRect(x,y,10,10); }
+                if(tweak){ g.fillStyle='rgba(255,255,255,0.06)'; g.fillRect(0,0,160,90); }
+                return new Promise(r=>c.toBlob(r, tweak==='jpg'?'image/jpeg':'image/png', 0.8)); };
+              const A=await mk(7), A2=await mk(7,'jpg'), B=await mk(99), C=await mk(1234), D=await mk(555);
+              const cr=await fetch('https://v3b.fal.media/files/clipx.mp4').then(r=>r.blob()), cr2=await fetch('https://v3b.fal.media/files/clipy.mp4').then(r=>r.blob());
+              const out={};
+              for(const st of ['v8','fast_cuts']){ localStorage.setItem('cfa_cut_style',st);
+                const near=await uniqueShotCollisions([{shot:1,blob:A,kind:'image'},{shot:2,blob:B,kind:'image'},{shot:3,blob:C,kind:'image'},{shot:4,blob:A2,kind:'image'}]);
+                const ok=await uniqueShotCollisions([{shot:1,blob:A,kind:'image'},{shot:2,blob:B,kind:'image'},{shot:3,blob:C,kind:'image'},{shot:4,blob:D,kind:'image'},{shot:5,blob:cr,kind:'video'},{shot:6,blob:cr2,kind:'video'}]);
+                const vdup=await uniqueShotCollisions([{shot:1,blob:cr,kind:'video'},{shot:2,blob:B,kind:'image'},{shot:3,blob:new Blob([await cr.arrayBuffer()],{type:'video/mp4'}),kind:'video'}]);
+                out[st]={near:near.pairs, ok:ok.pairs, okU:ok.unverified, vdup:vdup.pairs, msg:uniqueShotMessage(near), cut:cutStyle()}; }
+              localStorage.removeItem('cfa_cut_style'); return out; }""")
+            for st in ('v8','fast_cuts'):
+                r=u[st]
+                check('unique shots ['+st+']: re-encoded near-duplicate of shot 1 (non-adjacent shot 4) fails, message names shots 1 and 4', r['cut']==st and len(r['near'])==1 and r['near'][0]['a']==1 and r['near'][0]['b']==4 and 'near-duplicate' in r['near'][0]['why'] and 'Shots 1 and 4' in r['msg'], r)
+                check('unique shots ['+st+']: duplicate clip (same bytes) fails', len(r['vdup'])==1 and r['vdup'][0]['a']==1 and r['vdup'][0]['b']==3 and r['vdup'][0]['why']=='same file', r['vdup'])
+                check('unique shots ['+st+']: all-unique stills + clips pass', r['ok']==[] and r['okU']==[], r)
+            r=await J(pg,"()=>[typeof bestStartFrameFor==='function'&&bestStartFrameFor(1)==='', setAsStartFrameForNext()===false, !/cfa_allow_holes/.test(sendToGrokRender.toString()), !/hold the neighbou?ring|renderer will hold/i.test(buildFinalEditZip.toString()+sendToGrokRender.toString())]")
+            check('unique shots: no start-frame recycling, no hole override, no neighbour-hold path', all(r), r)
             check('export: no page errors', not [e for e in errs if 'pageerror' in e], errs)
             n=await J(pg,"""()=>{sceneData[1].resultURL='https://v3b.fal.media/files/b.png'; sceneData[1].resultType='image'; let asked=''; const oc=window.confirm; window.confirm=m=>{asked=m; return false;}; exportFinalEditBundle(); window.confirm=oc; currentScene=1; renderResultMedia(sceneData[1].resultURL,'image'); return [clipBeatsHoldingStills(), asked, !!document.querySelector('.clip-still-warn')]}""")
             check('clip beat holding a still is flagged (list, confirm, warning)', n[0]==[2] and 'holds a still' in n[1] and n[2], n)

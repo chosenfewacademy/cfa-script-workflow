@@ -30,11 +30,12 @@ shots = [{"index": 1, "beats": [1], "start": 0.0, "end": 6.0, "duration": 6.0, "
          {"index": 3, "beats": [3], "start": 8.0, "end": 15.0, "duration": 7.0, "media": "media/e.png", "mediaType": "image", "text": "z", "transition_in": "cut", "transition_duration": 0.0}]
 out = R.split_fast_cuts([dict(x) for x in shots], words, segs)
 d = [x["end"] - x["start"] for x in out]
-check("every shot 1-3 s", all(1.0 - 1e-6 <= v <= 3.0 + 1e-6 for v in d), d)
+check("every shot with enough pictures is 1-3 s", all(1.0 - 1e-6 <= v <= 3.0 + 1e-6 for x, v in zip(out, d) if x["beats"] != [3]), d)
 check("timeline covered with no gaps", abs(out[0]["start"]) < 1e-6 and abs(out[-1]["end"] - 15.0) < 1e-6 and all(abs(a["end"] - b["start"]) < 1e-6 for a, b in zip(out, out[1:])))
 check("long beat with cutaways shows a new picture per part", [x["media"] for x in out if x["beats"] == [1]] == ["media/a.png", "media/b.png", "media/c.png"], [x["media"] for x in out])
 check("cutaway parts are marked", sum(1 for x in out if x.get("fast_cutaway")) == 2)
-check("a beat with no cutaways falls back to flagged reframes", any(x.get("fast_reframe") for x in out if x["beats"] == [3]) and not any(x.get("fast_reframe") for x in out if x["beats"] == [1]))
+check("a beat with no cutaways is never reframed or re-shown: it stays one picture", [x["media"] for x in out if x["beats"] == [3]] == ["media/e.png"] and not any(x.get("fast_reframe") for x in out))
+check("no picture appears in two shots", len({x["media"] for x in out}) == len(out), [x["media"] for x in out])
 check("every join is a hard cut (no dissolves eating 1-3 s shots)", all(x["transition_in"] == "cut" and x["transition_duration"] == 0.0 for x in out[1:]))
 check("each part carries its own words as its line", out[1]["line"] and out[1]["line"] != out[0]["line"] and out[0]["line"].startswith("w0"), [x["line"] for x in out[:3]])
 check("indexes renumbered", [x["index"] for x in out] == list(range(1, len(out) + 1)))
@@ -51,7 +52,9 @@ R.apply_shot_plan([dict(x) for x in sp], spg)
 fsp = R.apply_shot_plan([dict(x) for x in sp], spg, R.FAST_SNAP_MIN)
 check("fast cuts: a short quote's cut still lands on its first word", abs(fsp[1]["start"] - 2.3) < 1e-6 and abs(R.apply_shot_plan([dict(x) for x in sp], spg)[1]["start"] - 2.0) < 1e-6, [x["start"] for x in fsp])
 g = R.fast_cuts_gate(out)
-check("gate passes a 1-3 s cut", g["pass"] and g["median_s"] <= 3.0 and g["reframes"], g)
+check("gate fails the 7 s still that had no distinct pictures, naming it", not g["pass"] and g["long_stills"] == [len(out)] and "add more distinct stills" in g["fails"][0], g)
+g = R.fast_cuts_gate([x for x in out if x["beats"] != [3]])
+check("gate passes a 1-3 s cut", g["pass"] and g["median_s"] <= 3.0, g)
 g2 = R.fast_cuts_gate([dict(shots[0]), dict(shots[2])])
 check("gate fails 6-7 s stills", not g2["pass"] and g2["long_stills"] == [1, 3], g2)
 
@@ -60,8 +63,10 @@ d0 = tempfile.mkdtemp()
 def ff(*a): subprocess.run(["ffmpeg", "-y", "-v", "error", *a], check=True)
 os.makedirs(os.path.join(d0, "b", "media"))
 cols = ["red", "green", "blue", "yellow", "purple", "orange"]
+sys.path.insert(0, HERE)
+from test_unique_shots import unique_still
 for i, c in enumerate(cols):
-    ff("-f", "lavfi", "-i", "testsrc2=s=2720x1536:d=1", "-vf", "drawbox=x=%d:y=200:w=900:h=900:color=%s:t=fill" % (200 + i * 250, c), "-frames:v", "1", os.path.join(d0, "b", "media", "s%d.png" % i))
+    unique_still(os.path.join(d0, "b", "media", "s%d.png" % i), seed=100 + i)
 ff("-f", "lavfi", "-i", "sine=f=200:d=12", "-ar", "44100", os.path.join(d0, "b", "voiceover.mp3"))
 W = [["word%d" % i, round(i * 0.4, 2), round(i * 0.4 + 0.3, 2)] for i in range(30)]
 bundle = {"format": "cfa-final-edit-bundle", "version": 1, "title": "fast cuts test", "voiceover": "voiceover.mp3", "words": W, "cutStyle": "fast_cuts",
